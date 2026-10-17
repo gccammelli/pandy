@@ -30,6 +30,8 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.media3.exoplayer)
             implementation(libs.androidx.activity.compose)
+            implementation(libs.paho.mqtt)
+            implementation(libs.media3.exoplayer.rtsp)
             implementation(libs.media3.exoplayer.hls)
             implementation(libs.media3.ui)
             implementation(libs.ktor.client.okhttp)

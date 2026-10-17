@@ -53,7 +53,8 @@ import io.github.gccammelli.pandy.Repo
 import io.github.gccammelli.pandy.UiState
 import io.github.gccammelli.pandy.VideoPlayer
 import io.github.gccammelli.pandy.autoMapping
-import io.github.gccammelli.pandy.printCached
+import io.github.gccammelli.pandy.ensureOnPrinter
+import io.github.gccammelli.pandy.startPrint
 import io.github.gccammelli.pandy.printHistory
 import io.github.gccammelli.pandy.sliceInfo
 import io.github.gccammelli.pandy.timelapses
@@ -69,8 +70,8 @@ fun MeTab(st: UiState) {
             PandaMark(Modifier.size(52.dp))
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                T(if (Repo.demo) "Demo" else "Home Assistant", 18.sp, weight = FontWeight.Bold)
-                T(if (Repo.demo) "A pretend printer" else Repo.haUrl ?: "", 12.sp, C.Sub)
+                T(if (Repo.demo) "Demo" else if (Repo.direct) "Direct connection" else "Home Assistant", 18.sp, weight = FontWeight.Bold)
+                T(if (Repo.demo) "A pretend printer" else if (Repo.direct) (Repo.lan?.ip ?: "") + if (Repo.haUrl != null) " + Home Assistant" else "" else Repo.haUrl ?: "", 12.sp, C.Sub)
             }
             T("${st.printers?.size ?: 0} printer${if (st.printers?.size == 1) "" else "s"}", 12.sp, C.Sub)
         }
@@ -108,7 +109,7 @@ private fun Shortcut(icon: ImageVector, label: String, modifier: Modifier, onCli
 @Composable
 fun HistoryScreen(p: Printer) {
     var reload by remember { mutableStateOf(0) }
-    val files by produceState<Result<List<CachedFile>>?>(null, p.serial, reload) { value = runCatching { Repo.ha!!.printHistory(p.serial) } }
+    val files by produceState<Result<List<CachedFile>>?>(null, p.serial, reload) { value = runCatching { needHa().printHistory(p.serial) } }
     var open by remember { mutableStateOf<CachedFile?>(null) }
     Page("History", { Nav.back() }) {
         when (val r = files) {
@@ -118,7 +119,7 @@ fun HistoryScreen(p: Printer) {
                 else Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
                     list.forEach { f -> HistoryRow(f) { open = f }; Gap(10.dp) }
                 }
-            }, { e -> Empty(e.message ?: "Couldn't load the history") })
+            }, { e -> if (Repo.extras == null) NeedsHa("Printing history") else Empty(e.message ?: "Couldn't load the history") })
         }
     }
     open?.let { f -> ReprintSheet(p, f) { open = null } }
@@ -147,7 +148,7 @@ fun sizeText(b: Long) = when { b >= 1_048_576 -> "${(b / 104_857.6).toInt() / 10
 @Composable
 fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
     val err = errorToast()
-    val info by produceState<io.github.gccammelli.pandy.SliceInfo?>(null, f.path) { value = Repo.ha!!.sliceInfo(f) }
+    val info by produceState<io.github.gccammelli.pandy.SliceInfo?>(null, f.path) { value = Repo.extras?.sliceInfo(f) }
     var timelapse by remember { mutableStateOf(false) }
     var leveling by remember { mutableStateOf(true) }
     var flow by remember { mutableStateOf(false) }
@@ -158,7 +159,8 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
         busy = true
         val mapping = info?.let { autoMapping(p, it.filaments) }
         Repo.act({ err(it); busy = false }) {
-            printCached(p, f, info?.plate ?: 1, mapping, timelapse, leveling, flow)
+            val path = needHa().ensureOnPrinter(p.serial, f)
+            startPrint(p, path, info?.plate ?: 1, mapping, timelapse, leveling, flow)
             busy = false
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { close(); Nav.stack.clear(); Nav.tab = 1 }
         }
@@ -219,9 +221,9 @@ fun FilesScreen(p: Printer) {
             }
         }
         val files by produceState<List<CachedFile>?>(null, tab) {
-            value = runCatching { if (tab == 0) Repo.ha!!.timelapses(p.serial) else Repo.ha!!.printHistory(p.serial) }.getOrDefault(emptyList())
+            value = if (Repo.extras == null) emptyList() else runCatching { if (tab == 0) Repo.extras!!.timelapses(p.serial) else Repo.extras!!.printHistory(p.serial) }.getOrDefault(emptyList())
         }
-        when (val list = files) {
+        if (Repo.extras == null) NeedsHa("Timelapses and models") else when (val list = files) {
             null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = C.Accent) }
             else -> if (list.isEmpty()) Empty("No content yet") else Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
                 list.chunked(2).forEach { row ->
@@ -243,7 +245,7 @@ fun FilesScreen(p: Printer) {
         }
     }
     playing?.let { f ->
-        val url = remember(f) { Repo.ha!!.base + f.url }
+        val url = remember(f) { Repo.extras!!.base + f.url }
         Sheet({ playing = null }, f.title, centeredTitle = true, confirm = null) {
             Box(Modifier.fillMaxWidth().aspectRatio(16 / 9f).clip(RoundedCornerShape(8.dp)).background(Color.Black)) {
                 if (Repo.demo) T("The demo has no video", 13.sp, Color.White, modifier = Modifier.align(Alignment.Center))
@@ -267,11 +269,16 @@ fun SettingsScreen() {
                 listOf("system" to "Follow system", "light" to "Light", "dark" to "Dark").forEach { (k, l) -> Radio(ThemeMode.mode == k, l) { Repo.setTheme(k) } }
             }
             Gap(16.dp)
-            T("Home Assistant", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
+            T("Connection", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
             Group {
-                if (!Repo.demo) NavRow("Address", value = Repo.haUrl, chevron = false)
-                NavRow("Slicer for MakerWorld prints", value = if (Repo.setting("slicer") == "off") "Off" else "Pandy Slicer add-on") { pl.openUrl(io.github.gccammelli.pandy.guide("docs/slicer.md")) }
-                NavRow(if (Repo.demo) "Leave the demo" else "Log out", labelColor = C.Red, chevron = false) { Nav.stack.clear(); Repo.logout() }
+                if (Repo.direct) Repo.lan?.let { c -> NavRow("Printer", value = "${c.model} · ${c.ip}", chevron = false) }
+                if (!Repo.demo) {
+                    if (Repo.haUrl != null) NavRow("Home Assistant", value = Repo.haUrl + if (Repo.direct) "" else "  (printer too)", chevron = false)
+                    else NavRow("Home Assistant", value = "Add (optional)") { Nav.go(Screen.AddHa) }
+                    if (Repo.direct && Repo.haUrl != null) NavRow("Remove Home Assistant", labelColor = C.Red, chevron = false) { Repo.removeHa(); Nav.back() }
+                }
+                NavRow("Slicer for MakerWorld prints", value = "Pandy Slicer add-on") { pl.openUrl(io.github.gccammelli.pandy.guide("docs/slicer.md")) }
+                NavRow(if (Repo.demo) "Leave the demo" else "Disconnect", labelColor = C.Red, chevron = false) { Nav.stack.clear(); Repo.logout() }
             }
         }
     }
@@ -311,3 +318,19 @@ fun WebScreen(url: String, title: String) = Page(title, { Nav.back() }) {
     io.github.gccammelli.pandy.WebPage(url, Modifier.fillMaxSize(), onDownload = null)
 }
 
+
+fun needHa() = Repo.extras ?: throw io.github.gccammelli.pandy.ApiException(io.github.gccammelli.pandy.DirectPrinter.NEEDS_HA)
+
+/** What a Home Assistant-only feature shows in direct mode, with the way to add Home Assistant. */
+@Composable
+fun NeedsHa(what: String) = Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Gap(60.dp)
+    Icon(Icons.Outlined.History, null, Modifier.size(64.dp), tint = C.Track)
+    Gap(16.dp)
+    T("$what comes from Home Assistant", 16.sp, weight = FontWeight.Medium, align = androidx.compose.ui.text.style.TextAlign.Center)
+    Gap(8.dp)
+    T("Pandy talks to your printer directly. Add Home Assistant with the Bambu Lab integration to also get print history, cached files, timelapses and printing MakerWorld models.",
+        14.sp, C.Sub, align = androidx.compose.ui.text.style.TextAlign.Center, lh = 20.sp)
+    Gap(20.dp)
+    AccentButton("Add Home Assistant", Modifier.padding(horizontal = 24.dp)) { Nav.go(Screen.AddHa) }
+}

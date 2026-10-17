@@ -337,7 +337,8 @@ fun tempColor(now: Double?, target: Double?): Color {
 }
 
 fun nozzleType(t: String?) = when (t) {
-    "hardened_steel" -> "Hardened steel"; "stainless_steel" -> "Stainless steel"; "brass" -> "Brass"
+    "hardened_steel" -> "Hardened steel"; "stainless_steel" -> "Stainless steel"; "brass" -> "Brass"; "tungsten_carbide" -> "Tungsten carbide"
+    "high_flow_hardened_steel" -> "High flow hardened steel"; "high_flow_stainless_steel" -> "High flow stainless steel"
     null -> ""; else -> t.replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
 
@@ -410,7 +411,9 @@ fun SlotTile(s: Spool?, label: String, modifier: Modifier) = Column(modifier, ho
 fun HaImage(path: String?, modifier: Modifier) {
     if (path == null) return
     val img by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, path) {
-        value = runCatching { Repo.ha?.bytes(path)?.let { io.github.gccammelli.pandy.decodeImage(it, 600) } }.getOrNull()
+        // Cached files come from Home Assistant even in direct mode.
+        val from = if (path.startsWith("/api/bambu_lab/")) Repo.extras else Repo.ha
+        value = runCatching { from?.bytes(path)?.let { io.github.gccammelli.pandy.decodeImage(it, 600) } }.getOrNull()
     }
     img?.let { androidx.compose.foundation.Image(it, null, modifier, contentScale = androidx.compose.ui.layout.ContentScale.Fit) }
 }

@@ -351,20 +351,23 @@ suspend fun HaBackend.sliceInfo(f: CachedFile): SliceInfo? = runCatching {
 }.getOrNull()
 
 /**
- * Starts a cached print: the integration first copies the file back onto the printer if it isn't there any more,
- * then the printer starts it. [amsMapping] is the AMS tray (0-based, AMS 1 = 0–3) for each filament of the print.
+ * Makes sure a cached print is on the printer's storage (the integration copies it back if it's gone) and returns
+ * its path there, as print_project_file wants it.
  */
-suspend fun HaBackend.printCached(p: Printer, f: CachedFile, plate: Int, amsMapping: List<Int>?, timelapse: Boolean, bedLeveling: Boolean, flowCali: Boolean) {
-    val r = post("/api/bambu_lab/ensure_cache_file", buildJsonObject { put("serial", p.serial); put("cache_path", f.path); put("expected_size", f.size) }.toString())
+suspend fun HaBackend.ensureOnPrinter(serial: String, f: CachedFile): String {
+    val r = post("/api/bambu_lab/ensure_cache_file", buildJsonObject { put("serial", serial); put("cache_path", f.path); put("expected_size", f.size) }.toString())
     val st = runCatching { json.parseToJsonElement(r).jsonObject }.getOrNull()
-    val path = if (st?.s("status") == "use_legacy_path") st.s("detail")!!.trimStart('/') else f.printerPath
+    return if (st?.s("status") == "use_legacy_path") st.s("detail")!!.trimStart('/') else f.printerPath
+}
+
+/** Starts a print file that is on the printer. [amsMapping]: the AMS tray (0-based, AMS 1 = 0–3) for each filament. */
+suspend fun HaBackend.startPrint(p: Printer, path: String, plate: Int, amsMapping: List<Int>?, timelapse: Boolean, bedLeveling: Boolean, flowCali: Boolean) =
     bambu("print_project_file", p, buildJsonObject {
         put("filepath", path); put("plate", plate); put("timelapse", timelapse); put("bed_leveling", bedLeveling)
         put("flow_cali", flowCali); put("vibration_cali", false); put("layer_inspect", true)
         put("use_ams", amsMapping != null)
         if (amsMapping != null) put("ams_mapping", amsMapping.joinToString(","))
     })
-}
 
 /** For each filament of a print, the loaded tray that matches best: same type and nearest colour; null if none fits. */
 fun autoMapping(p: Printer, filaments: List<Map<String, String>>): List<Int>? {

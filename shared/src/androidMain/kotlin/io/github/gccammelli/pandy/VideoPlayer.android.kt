@@ -49,11 +49,25 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 @OptIn(UnstableApi::class)
 @Composable
 actual fun VideoPlayer(url: String, muted: Boolean, modifier: Modifier, onError: (String) -> Unit, controls: Boolean, loop: Boolean, headers: Map<String, String>) {
+    // "rtsps://…#SERIAL": a Bambu printer's own camera (direct mode), RTSP inside TLS checked against Bambu's CAs.
+    val rtsps = url.startsWith("rtsps://")
+    val tls by androidx.compose.runtime.produceState<javax.net.ssl.SSLSocketFactory?>(null, url) {
+        if (rtsps) value = runCatching { BambuTls.factory(url.substringAfter('#', "")) }.getOrNull()
+    }
+    if (rtsps && tls == null) return Box(modifier)
+    VideoPlayerInner(url, muted, modifier, onError, controls, loop, headers, tls)
+}
+
+@OptIn(UnstableApi::class)
+@Composable
+private fun VideoPlayerInner(url: String, muted: Boolean, modifier: Modifier, onError: (String) -> Unit, controls: Boolean, loop: Boolean, headers: Map<String, String>, tls: javax.net.ssl.SSLSocketFactory?) {
     val ctx = LocalContext.current
     val player = remember(url) {
-        ExoPlayer.Builder(ctx).setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(ctx,
-            androidx.media3.datasource.DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers))).setLoadErrorHandlingPolicy(RetryEarlyParts)).build().apply {
-            setMediaItem(MediaItem.Builder().setUri(url)
+        val sources = if (tls != null) androidx.media3.exoplayer.rtsp.RtspMediaSource.Factory().setForceUseRtpTcp(true).setSocketFactory(tls)
+        else DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(ctx,
+            androidx.media3.datasource.DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers))).setLoadErrorHandlingPolicy(RetryEarlyParts)
+        ExoPlayer.Builder(ctx).setMediaSourceFactory(sources).build().apply {
+            setMediaItem(MediaItem.Builder().setUri(if (tls != null) url.substringBefore('#') else url)
                 // Stay close to the live edge (Home Assistant serves low-latency HLS).
                 .setLiveConfiguration(MediaItem.LiveConfiguration.Builder().setTargetOffsetMs(2_500).build()).build())
             playWhenReady = true

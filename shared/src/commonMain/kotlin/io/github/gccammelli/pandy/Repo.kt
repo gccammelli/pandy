@@ -21,7 +21,14 @@ data class UiState(val on: Boolean = false, val printers: List<Printer>? = null,
 object Repo {
     private lateinit var store: PlatformStorage
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    /** Where printer state and controls come from: the printer itself (direct mode, the default), Home Assistant, or the demo. */
     var ha: HaBackend? = null
+        private set
+    /**
+     * Home Assistant for what only it can do (print history, cached files, timelapses, slicing MakerWorld models):
+     * optional in direct mode, the same connection in Home Assistant mode.
+     */
+    var extras: HaBackend? = null
         private set
     val state = MutableStateFlow(UiState())
     private var liveJob: Job? = null
@@ -32,21 +39,48 @@ object Repo {
     fun authHeaders(): Map<String, String> = token?.let { mapOf("Authorization" to "Bearer $it") }.orEmpty()
     val haUrl get() = store.settings.getString("ha_url")
     val demo get() = store.settings.getString("demo") == "true"
+    /** "lan" (direct) or "ha". */
+    val mode get() = store.settings.getString("mode") ?: if (haUrl != null) "ha" else "lan"
+    val direct get() = !demo && mode == "lan"
+    val lan: LanConfig? get() = store.settings.getString("lan_serial")?.let { sn ->
+        LanConfig(store.settings.getString("lan_ip") ?: return null, sn, store.secrets.get("lan_code") ?: return null, store.settings.getString("lan_model") ?: modelName(null, sn), store.settings.getString("lan_name") ?: "")
+    }
 
     fun init(s: PlatformStorage) {
         if (::store.isInitialized) return
         store = s
         io.github.gccammelli.pandy.ui.ThemeMode.mode = s.settings.getString("theme") ?: "system"
-        val url = s.settings.getString("ha_url")
         token = s.secrets.get("ha_token")
+        val url = haUrl
         val t = token
-        if (demo) ha = FakeHomeAssistant()
-        else if (url != null && t != null) ha = HaHttp(url, t)
+        val haConn = if (url != null && t != null) HaHttp(url, t) else null
+        when {
+            demo -> { ha = FakeHomeAssistant(); extras = ha }
+            mode == "lan" -> { ha = lan?.let { DirectPrinter(it) }; extras = haConn }
+            else -> { ha = haConn; extras = haConn }
+        }
         if (ha != null) state.value = UiState(on = true)
     }
 
-    /** Checks the address and token by finding the printers once; saves them only if that works. */
-    suspend fun connect(url: String, token: String) {
+    /** Direct mode: checks the printer answers with this access code, then saves it. */
+    suspend fun connectPrinter(c: LanConfig) {
+        val d = DirectPrinter(c)
+        try { withContext(Dispatchers.Default) { d.printers() } } catch (e: Exception) { d.stop(); throw e }
+        stop()
+        (ha as? DirectPrinter)?.stop()
+        store.settings.putString("mode", "lan")
+        store.settings.putString("lan_ip", c.ip); store.settings.putString("lan_serial", c.serial); store.settings.putString("lan_model", c.model); store.settings.putString("lan_name", c.name)
+        store.secrets.set("lan_code", c.code)
+        ha = d
+        state.value = UiState(on = true)
+        start()
+    }
+
+    /**
+     * Adds Home Assistant. [asPrinter]: use it for the printer too (Home Assistant mode: works away from home); otherwise
+     * it only adds history, files and slicing to direct mode.
+     */
+    suspend fun connect(url: String, token: String, asPrinter: Boolean = true) {
         val t = token.filterNot { it.isWhitespace() }
         val b = HaHttp(url, t)
         val found = withContext(Dispatchers.Default) { b.printers() }
@@ -54,25 +88,37 @@ object Repo {
         store.settings.putString("ha_url", b.base)
         store.secrets.set("ha_token", t)
         this.token = t
-        ha = b
-        state.value = UiState(on = true)
-        start()
+        extras = b
+        if (asPrinter) {
+            stop(); (ha as? DirectPrinter)?.stop()
+            store.settings.putString("mode", "ha")
+            ha = b
+            state.value = UiState(on = true)
+            start()
+        }
+    }
+
+    /** Forgets Home Assistant (direct mode keeps working). */
+    fun removeHa() {
+        store.settings.putString("ha_url", null); store.secrets.set("ha_token", null)
+        token = null; extras = null
     }
 
     fun startDemo() {
         store.settings.putString("demo", "true")
-        ha = FakeHomeAssistant()
+        ha = FakeHomeAssistant(); extras = ha
         state.value = UiState(on = true)
         start()
     }
 
     fun logout() {
         stop()
-        store.secrets.set("ha_token", null)
+        (ha as? DirectPrinter)?.stop()
+        store.secrets.set("ha_token", null); store.secrets.set("lan_code", null)
         token = null
         store.settings.clear()
         store.settings.putString("theme", io.github.gccammelli.pandy.ui.ThemeMode.mode)
-        ha = null
+        ha = null; extras = null
         state.value = UiState()
     }
 
