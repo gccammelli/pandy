@@ -10,7 +10,7 @@ MakerWorld (in Pandy's Models tab) ──3MF──▶ Pandy ──3MF──▶ P
 ```
 
 It runs on any **x86-64** machine with Docker, or as a **Home Assistant add-on** (Bambu Studio is only published for
-x86-64 Linux, so not on a Raspberry Pi). It needs about 1.5 GB of disk and some CPU for a minute per print.
+x86-64 Linux, so not on a Raspberry Pi). It needs about 2 GB of disk and some CPU for a minute per print.
 
 ## Option A: Home Assistant add-on
 
