@@ -2,88 +2,77 @@
 
 [![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/cammelli)
 
-**Bambu Handy, for printers in LAN-only mode.** Pandy looks and works like Bambu Lab's Handy app, but talks to your
-printer on your own network: no Bambu cloud between your phone and your printer, so it keeps working with LAN-only
-mode switched on.
+**Bambu Handy for printers in LAN-only mode.**
 
-- **Devices**: live camera, the print with its picture, progress and time left, Skip / Pause / Stop; temperatures,
-  fans, light, speed, the XYZ jog pad, extruder, AMS slots with humidity, load and unload; printer messages (HMS).
-- **Skip Parts**: tap a part on the plate picture.
-- **History**: every print file on the printer, with its picture; print one again with your AMS mapped automatically.
-- **Timelapses**: watch them from the printer's storage.
-- **Models**: MakerWorld, signed in with your own account. Download a model's print profile and Pandy slices it
-  (with Bambu Studio, see below) and starts it on your printer.
-- Light and dark themes. A **demo** with a pretend printer, to try everything first.
+Pandy was built from scratch for people who keep their Bambu printer in LAN-only mode but still want the Handy
+features they love. It talks directly to the printer on the local network, without sending printer control through
+Bambu's cloud.
 
-Pandy is not made by or affiliated with Bambu Lab.
+These are demo-mode screens; the demo printer lets you explore the app without a printer:
 
-## What you need
+<p align="center">
+  <img src="docs/images/pandy-demo-device.png" width="280" alt="Pandy device screen showing a demo print">
+  <img src="docs/images/pandy-demo-prepare.png" width="280" alt="Pandy print preparation screen in demo mode">
+</p>
 
-| | Needed for |
-|---|---|
-| A Bambu Lab printer with **LAN Only mode** and **Developer Mode** on, its **access code** | everything |
-| Your phone on the same network as the printer | direct mode (the default) |
-| *Optional:* [Home Assistant](https://www.home-assistant.io/) with the [Bambu Lab integration](https://github.com/greghesp/ha-bambulab) | using Pandy away from home; prints the printer has since deleted |
-| *Optional:* [Pandy Slicer](docs/slicer.md) (a Home Assistant add-on, or Docker on any x86-64 computer) | printing MakerWorld models |
+## Features
 
-Tested on an X1 Carbon. P1, A1, H2 and P2 printers speak the same protocol; their camera works differently (P1 and A1
-send pictures rather than video) and is supported, but less tested.
+- Printer status, progress, temperatures, fans, light, speed, motion controls and HMS messages
+- Pause, stop and skip controls, plus AMS and filament controls
+- Print files, thumbnails, history, reprints and timelapses
+- MakerWorld browsing and print profiles when [Pandy Slicer](docs/slicer.md) is configured
+- Light and dark themes, with a built-in demo printer
+
+## Direct mode
+
+Direct mode is the default and keeps printer traffic on your LAN. You need:
+
+- A Bambu printer with **LAN Only Mode** and **Developer Mode** enabled
+- Its **access code**
+- A phone on the same network as the printer
+
+If the printer does not appear automatically, enter its IP address and serial number. iPhone users normally need to
+do this because iOS restricts the multicast announcements used for discovery.
+
+See [the setup guide](docs/setup.md) for the printer-specific steps.
+
+## Home Assistant is optional
+
+Home Assistant with the [Bambu Lab integration](https://github.com/greghesp/ha-bambulab) can enhance Pandy when you
+want more than a local connection. For example, it can provide:
+
+- Access to the printer while you are away from home, through your Home Assistant remote access
+- Print history, files and timelapses retained in Home Assistant's cache
+- A camera bridge for printer models whose direct camera stream is not available on iOS
+- Home Assistant automations and notifications based on printer state
+
+You can add Home Assistant as an extra source while keeping direct printer control, or use it as Pandy's connection.
+See [the setup guide](docs/setup.md) for both options.
 
 ## Install
 
-**Android**: download `pandy.apk` from the [latest release](https://github.com/gccammelli/pandy/releases/latest) and open
-it on your phone (allow installing from your browser when asked).
+Download the latest release for [Android or iOS](https://github.com/gccammelli/pandy/releases/latest).
 
-**iPhone**: download `pandy.ipa` from the same release and install it with [SideStore](https://sidestore.io) or
-[AltStore](https://altstore.io), which sign it with your own Apple ID (Pandy isn't on the App Store). On iPhone:
+- Android: install the APK.
+- iPhone: install the IPA with [iLoader](https://iloader.app/), [SideStore](https://sidestore.io) or
+  [AltStore](https://altstore.io), signed with your own Apple ID. Pandy is not on the App Store.
 
-- type the printer's IP address on the first screen: iOS keeps apps from hearing the printer's announcements unless
-  Apple grants them a special permission;
-- the X1 and H2 live camera needs Home Assistant (iOS can't play the printer's own RTSP video); P1 and A1 cameras work
-  directly.
+## Build
 
-## Set up
-
-1. **On the printer**: Settings › Network (X1, H2) or Settings › WLAN (P1, A1): turn on **LAN Only Mode** and
-   **Developer Mode**, and note the **Access Code**.
-2. **In Pandy**: your printer appears under *Printers on this Wi-Fi* (printers announce themselves every few seconds).
-   Pick it, type the access code, **Connect**. If it doesn't appear, type its IP address and serial number (both on the
-   printer's screen).
-
-That's it. More in [docs/setup.md](docs/setup.md), including adding Home Assistant.
-
-## How it works
-
-Pandy speaks the printer's own local protocols, the ones Bambu Studio uses in LAN mode:
-
-- **MQTT over TLS** (port 8883) for the printer's state and every control,
-- **FTPS** (port 990) for print files, thumbnails and timelapses,
-- the **camera**: RTSP over TLS (port 322) on X1 and H2, a picture stream (port 6000) on P1 and A1.
-
-The printer's certificate is checked against Bambu's device certificate authorities and must carry the printer's
-serial number, so Pandy knows it's talking to your printer. Your access code stays on the phone (encrypted with the
-Android Keystore, or in the iOS Keychain).
-
-Home Assistant is optional: added in Me › Settings, it supplies print history and files from its own cache; used as the
-connection (choose it on the first screen) it lets Pandy work away from home.
-
-## Building
-
-```
-./gradlew assembleDebug       # app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest   # tests
+```bash
+./gradlew assembleDebug
+./gradlew testDebugUnitTest
 ```
 
-Kotlin Multiplatform with Compose: the screens and logic are shared (`shared/`), `app/` is the Android app and
-`iosApp/` the iOS one. The iOS app builds on a Mac (`iosApp/iosApp.xcodeproj`), or on GitHub Actions: Actions › Build ›
-Run workflow makes an unsigned `pandy.ipa`. On Linux, `./gradlew :shared:compileKotlinIosArm64 -Ppandy.ios` checks the
-iOS code compiles.
+Pandy is Kotlin Multiplatform with Compose: shared screens and logic live in `shared/`, Android in `app/`, and iOS in
+`iosApp/`. On Linux, the iOS source can be checked with:
 
-## Credits
+```bash
+./gradlew :shared:compileKotlinIosArm64 -Ppandy.ios
+```
 
-- Protocol details and Bambu's CA certificates from the [Home Assistant Bambu Lab integration](https://github.com/greghesp/ha-bambulab) (MIT).
-- Slicing by [Bambu Studio](https://github.com/bambulab/BambuStudio) (AGPL-3.0), run unmodified in its own container.
+Pandy is not made by or affiliated with Bambu Lab. Protocol details and Bambu's CA certificates come from the
+[Home Assistant Bambu Lab integration](https://github.com/greghesp/ha-bambulab) (MIT). Pandy Slicer uses
+[Bambu Studio](https://github.com/bambulab/BambuStudio) (AGPL-3.0), unmodified in its own container.
 
 Developed by Giancarlo Cammelli. MIT licence.
-
-Like it? [Buy me a coffee](https://buymeacoffee.com/cammelli) (also in the app, under **Me**).

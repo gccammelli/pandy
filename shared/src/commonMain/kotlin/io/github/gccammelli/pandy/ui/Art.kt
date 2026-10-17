@@ -1,26 +1,43 @@
 package io.github.gccammelli.pandy.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.layout.ContentScale
+import io.github.gccammelli.pandy.decodeImage
+import io.github.gccammelli.pandy.res.Res
 
 /*
  * Drawn stand-ins for Handy's product photos (Bambu's renders aren't ours to ship). Sizes are fractions of the
  * canvas so they scale with the card.
  */
 
-/** Pandy's mark: a white, pane-built panda cut from the magenta field. */
+/** Pandy's mark: the same artwork used by the app icons. */
 @Composable
-fun PandaMark(modifier: Modifier) = Canvas(modifier) {
+fun PandaMark(modifier: Modifier) {
+    val image = produceState<ImageBitmap?>(null) {
+        value = runCatching { decodeImage(Res.readBytes("files/pandy_icon.png"), 1024) }.getOrNull()
+    }.value
+    if (image != null) Image(image, "Pandy", modifier.clip(RoundedCornerShape(percent = 22)), contentScale = ContentScale.FillBounds)
+    else PandaMarkFallback(modifier)
+}
+
+@Composable
+private fun PandaMarkFallback(modifier: Modifier) = Canvas(modifier) {
     val unit = size.minDimension
     val left = (size.width - unit) / 2f
     val top = (size.height - unit) / 2f
