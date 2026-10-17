@@ -243,7 +243,11 @@ class LanJob(val key: String, val cover: ByteArray?, val pick: ByteArray?, val o
 data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String)
 
 /** The printer reached directly, presented as a small Home Assistant (see the file comment). */
-class DirectPrinter(val config: LanConfig) : HaBackend {
+/**
+ * [strict]: fail if the printer doesn't answer (when it's being set up); otherwise an unreachable printer just shows as
+ * offline while the connection keeps retrying, as Handy shows it.
+ */
+class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) : HaBackend {
     override val base = "lan://${config.ip}"
     private var report = JsonObject(emptyMap())
     private var rows: List<LanRow> = emptyList()
@@ -376,9 +380,13 @@ class DirectPrinter(val config: LanConfig) : HaBackend {
     private fun firmware(): String? = (report.o("info")?.get("module") as? JsonArray)?.mapNotNull { it as? JsonObject }
         ?.firstOrNull { it.str("name") == "ota" }?.str("sw_ver")
 
+    /** Devices in the registry last handed out; when the printer reports a different set (an AMS appeared), the stream restarts. */
+    private var registered = emptySet<String>()
+
     private fun registries(): Pair<JsonArray, JsonArray> {
         val ents = entities()
         rows = ents.map { it.first }
+        registered = rows.map { it.device }.toSet()
         val devices = buildJsonArray {
             fun d(id: String, model: String, ident: String, via: String?) = add(buildJsonObject {
                 put("id", "${config.serial}_$id"); put("name", if (via == null) config.model else model); put("model", model)
@@ -452,7 +460,9 @@ class DirectPrinter(val config: LanConfig) : HaBackend {
 
     private suspend fun awaitFirst() {
         try { withTimeout(15_000) { firstReport.await() } }
-        catch (e: Exception) { throw ApiException("Couldn't reach the printer at ${config.ip}: ${e.message ?: "no answer"}. Check its IP address and access code, and that LAN mode (with Developer Mode) is on.") }
+        catch (e: Exception) {
+            if (strict || e.message?.contains("access code") == true) throw ApiException("Couldn't reach the printer at ${config.ip}: ${e.message ?: "no answer"}. Check its IP address and access code, and that LAN mode (with Developer Mode) is on.")
+        }
     }
 
     override suspend fun stream(subscribe: JsonObject, onEvent: (JsonObject) -> Unit) {
@@ -464,7 +474,8 @@ class DirectPrinter(val config: LanConfig) : HaBackend {
             while (true) {
                 changed.receive()
                 val ents = entities()
-                if (ents.map { it.first } != rows) rows = ents.map { it.first }
+                rows = ents.map { it.first }
+                if (rows.map { it.device }.toSet() != registered) throw ApiException("The printer's parts changed") // the caller reconnects and re-reads the registry
                 onEvent(buildJsonObject { putJsonObject("a") { ents.forEach { (_, e) -> put(e.id, buildJsonObject { put("s", e.state); put("a", e.attrs) }) } } })
                 delay(300) // at most ~3 updates a second
             }

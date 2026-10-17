@@ -81,10 +81,12 @@ class MainActivity : ComponentActivity(), PlatformUi {
     /** Debug builds: `adb shell am start -n …/.MainActivity --es screen control` opens a screen directly (for testing). */
     private fun debugOpen(i: Intent?) {
         if (!BuildConfig.DEBUG) return
+        // `--es print_url http://…/model.3mf`: hands the MakerWorld print sheet a file, as a download from the web view would.
+        i?.getStringExtra("print_url")?.let { u -> Nav.stack.clear(); Nav.tab = 0; io.github.gccammelli.pandy.ui.debugDownload.value = WebDownload(u, u.substringAfterLast('/'), null); return }
         val name = i?.getStringExtra("screen") ?: return
         val screens = mapOf("control" to Screen.Control, "motion" to Screen.Motion, "skip" to Screen.Skip, "live" to Screen.LiveFull,
             "printer" to Screen.PrinterSettings, "assistant" to Screen.Assistant, "files" to Screen.Files, "filament" to Screen.Filament,
-            "history" to Screen.History, "settings" to Screen.Settings, "about" to Screen.About)
+            "history" to Screen.History, "settings" to Screen.Settings, "about" to Screen.About, "slicer" to Screen.Slicer)
         Nav.stack.clear()
         when (name) { "models" -> Nav.tab = 0; "devices" -> Nav.tab = 1; "me" -> Nav.tab = 2; else -> screens[name]?.let { Nav.go(it) } }
     }

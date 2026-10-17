@@ -1,6 +1,7 @@
 package io.github.gccammelli.pandy.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -178,14 +179,14 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
             val map = autoMapping(p, fil)
             fil.forEachIndexed { i, x ->
                 Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(18.dp).clip(CircleShape).background(Color(io.github.gccammelli.pandy.hexColor(x["color"]))))
+                    Box(Modifier.size(18.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(io.github.gccammelli.pandy.hexColor(x["color"]))))
                     Spacer(Modifier.width(8.dp)); T(x["type"] ?: "?", 13.sp, modifier = Modifier.width(60.dp))
                     T("→", 13.sp, C.Sub); Spacer(Modifier.width(8.dp))
                     val t = map?.getOrNull(i)
                     if (t == null) T("External spool", 13.sp, C.Sub)
                     else {
                         val s = p.ams.getOrNull(t / 4)?.second?.getOrNull(t % 4)
-                        Box(Modifier.size(18.dp).clip(CircleShape).background(Color(s?.color ?: 0xFFDDDDDD)))
+                        Box(Modifier.size(18.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(s?.color ?: 0xFFDDDDDD)))
                         Spacer(Modifier.width(8.dp)); T("${'A' + t / 4}${t % 4 + 1} ${s?.type ?: ""}", 13.sp)
                     }
                 }
@@ -283,7 +284,7 @@ fun SettingsScreen() {
                     else NavRow("Home Assistant", value = "Add (optional)") { Nav.go(Screen.AddHa) }
                     if (Repo.direct && Repo.haUrl != null) NavRow("Remove Home Assistant", labelColor = C.Red, chevron = false) { Repo.removeHa(); Nav.back() }
                 }
-                NavRow("Slicer for MakerWorld prints", value = "Pandy Slicer add-on") { pl.openUrl(io.github.gccammelli.pandy.guide("docs/slicer.md")) }
+                if (!Repo.demo) NavRow("Slicer for MakerWorld prints", value = Repo.slicerUrl ?: "Set up") { Nav.go(Screen.Slicer) }
                 NavRow(if (Repo.demo) "Leave the demo" else "Disconnect", labelColor = C.Red, chevron = false) { Nav.stack.clear(); Repo.logout() }
             }
         }

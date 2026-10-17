@@ -52,11 +52,17 @@ expect fun decodeImage(bytes: ByteArray, maxSide: Int): ImageBitmap?
 expect fun VideoPlayer(url: String, muted: Boolean, modifier: androidx.compose.ui.Modifier, onError: (String) -> Unit, controls: Boolean = false, loop: Boolean = false, headers: Map<String, String> = emptyMap())
 
 /**
- * A web page (MakerWorld). [onDownload] gets each file the page downloads (address, suggested file name, cookies for
- * that address) instead of the browser saving it; null lets downloads go nowhere.
+ * A file a web page handed over: an address to fetch (with the page's [cookies] for it), or the [bytes] themselves
+ * when the page made the file in the browser (a blob).
+ */
+class WebDownload(val url: String?, val name: String, val cookies: String?, val bytes: ByteArray? = null)
+
+/**
+ * A web page (MakerWorld). [onDownload] gets each file the page downloads, and each "open in Bambu Studio" link, instead
+ * of the browser saving or following it; null lets downloads go nowhere.
  */
 @androidx.compose.runtime.Composable
-expect fun WebPage(url: String, modifier: androidx.compose.ui.Modifier, onDownload: ((url: String, name: String, cookies: String?) -> Unit)?, state: WebState? = null)
+expect fun WebPage(url: String, modifier: androidx.compose.ui.Modifier, onDownload: ((WebDownload) -> Unit)?, state: WebState? = null)
 
 /** Back navigation inside a [WebPage]: [canGoBack] and [goBack] are filled in by the page. */
 class WebState {

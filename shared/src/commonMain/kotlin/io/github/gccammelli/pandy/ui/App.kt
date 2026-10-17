@@ -64,6 +64,7 @@ sealed interface Screen {
     data object About : Screen
     data class Web(val url: String, val title: String) : Screen
     data object AddHa : Screen
+    data object Slicer : Screen
 }
 
 object Nav {
@@ -106,6 +107,7 @@ fun Root() {
         Screen.About -> AboutScreen()
         is Screen.Web -> WebScreen(s.url, s.title)
         Screen.AddHa -> AddHaScreen()
+        Screen.Slicer -> SlicerScreen()
     }
 }
 

@@ -1,0 +1,64 @@
+# Tests on every push to main. A "v*" tag builds the release APK (signed with the release key from the repository's
+# secrets) and attaches it to a GitHub Release; Actions → Build → Run workflow builds a
+# debug APK for testing.
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test
+        run: ./gradlew testDebugUnitTest
+
+      # Run by hand: debug-signed, so it installs without the release key.
+      - name: Build debug APK
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          ./gradlew assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk pandy.apk
+
+      # Tags: the release APK, signed with the release key (secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS,
+      # KEY_PASSWORD). A fixed-name copy too, so releases/latest/download/pandy.apk always links the newest.
+      - name: Build release APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          PANDY_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          PANDY_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          PANDY_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          [ -n "$KEYSTORE_BASE64" ] || { echo "::error::Add the release key secrets (see README, Building)"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          PANDY_KEYSTORE="$RUNNER_TEMP/release.jks" ./gradlew assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "pandy-${GITHUB_REF_NAME}.apk"
+          cp app/build/outputs/apk/release/app-release.apk pandy.apk
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: apk
+          path: pandy*.apk
+
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pandy-${{ github.ref_name }}.apk
+            pandy.apk
+          generate_release_notes: true

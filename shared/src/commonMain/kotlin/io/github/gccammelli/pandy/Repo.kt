@@ -64,7 +64,7 @@ object Repo {
 
     /** Direct mode: checks the printer answers with this access code, then saves it. */
     suspend fun connectPrinter(c: LanConfig) {
-        val d = DirectPrinter(c)
+        val d = DirectPrinter(c, strict = true)
         try { withContext(Dispatchers.Default) { d.printers() } } catch (e: Exception) { d.stop(); throw e }
         stop()
         (ha as? DirectPrinter)?.stop()
@@ -97,6 +97,21 @@ object Repo {
             state.value = UiState(on = true)
             start()
         }
+    }
+
+    /** Pandy Slicer, for printing MakerWorld models (see Slicer.kt); null until the user sets its address. */
+    val slicer: SlicerClient? get() = store.settings.getString("slicer_url")?.let { SlicerClient(it, store.secrets.get("slicer_token")) }
+    val slicerUrl get() = store.settings.getString("slicer_url")
+
+    fun setSlicer(url: String?, token: String?) {
+        store.settings.putString("slicer_url", url?.trim()?.ifEmpty { null })
+        store.secrets.set("slicer_token", token?.trim()?.ifEmpty { null })
+    }
+
+    /** The printer's LAN details without switching modes: Home Assistant mode needs them to print MakerWorld models. */
+    fun saveLan(c: LanConfig) {
+        store.settings.putString("lan_ip", c.ip); store.settings.putString("lan_serial", c.serial); store.settings.putString("lan_model", c.model)
+        store.secrets.set("lan_code", c.code)
     }
 
     /** Forgets Home Assistant (direct mode keeps working). */
