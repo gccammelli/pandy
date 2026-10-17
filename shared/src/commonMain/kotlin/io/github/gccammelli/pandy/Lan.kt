@@ -263,6 +263,7 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
     private val storage by lazy { printerStorage(config) }
     private var job: LanJob? = null
     private var jobLoading: String? = null
+    private var jobMissAt = 0L
 
     /** When the job changes, finds its 3MF on the printer (as the integration does) and reads its picture and parts. */
     private fun checkJob() {
@@ -270,7 +271,9 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
         val task = p.str("subtask_name").orEmpty()
         val gcode = p.str("gcode_file").orEmpty()
         val key = "$task|$gcode"
-        if (key == job?.key || key == jobLoading || (task.isEmpty() && gcode.isEmpty())) return
+        val now = Clock.System.now().toEpochMilliseconds()
+        // Found, or being looked for; a miss is retried every 30 s (the printer can be busy just as a print starts).
+        if ((key == job?.key && (job?.cover != null || now - jobMissAt < 30_000)) || key == jobLoading || (task.isEmpty() && gcode.isEmpty())) return
         jobLoading = key
         scope.launch {
             val found = runCatching { findJobFile(task, gcode) }.getOrNull()
@@ -281,6 +284,7 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
                 LanJob(key, entry("Metadata/plate_$plate\\.png", "Metadata/plate_\\d+\\.png"), entry("Metadata/pick_$plate\\.png"),
                     entry("Metadata/slice_info\\.config")?.decodeToString()?.let { sliceObjects(it, plate) }.orEmpty())
             }
+            if (job?.cover == null) jobMissAt = Clock.System.now().toEpochMilliseconds()
             jobLoading = null
             onReport?.invoke()
         }
@@ -559,11 +563,16 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
                         "param" to JsonPrimitive("Metadata/plate_${d.s("plate") ?: "1"}.gcode"),
                         "url" to JsonPrimitive(if ("//" in file) file else "file:///sdcard/$file"),
                         "bed_type" to JsonPrimitive("auto"), "timelapse" to JsonPrimitive(d.s("timelapse") == "true"),
-                        "bed_leveling" to JsonPrimitive(d.s("bed_leveling") != "false"), "flow_cali" to JsonPrimitive(d.s("flow_cali") == "true"),
+                        "file" to JsonPrimitive(file.substringAfterLast('/')), "md5" to JsonPrimitive(""), "cfg" to JsonPrimitive("0"),
+                        // Newer firmware reads these (the start G-code's g29_before_print_flag and extrude_cali_flag);
+                        // older firmware reads bed_leveling and flow_cali. Both are sent.
+                        "bed_leveling" to JsonPrimitive(d.s("bed_leveling") != "false"), "auto_bed_leveling" to JsonPrimitive(if (d.s("bed_leveling") != "false") 1 else 0),
+                        "flow_cali" to JsonPrimitive(d.s("flow_cali") == "true"), "extrude_cali_flag" to JsonPrimitive(if (d.s("flow_cali") == "true") 1 else 0),
+                        "nozzle_offset_cali" to JsonPrimitive(2), "ams_mapping2" to JsonPrimitive(""),
                         "vibration_cali" to JsonPrimitive(false), "layer_inspect" to JsonPrimitive(true),
                         "use_ams" to JsonPrimitive(d.s("use_ams") == "true"),
                         "ams_mapping" to JsonArray(d.s("ams_mapping")?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.map { JsonPrimitive(it) } ?: listOf(JsonPrimitive(0))),
-                        "subtask_name" to JsonPrimitive(file.substringAfterLast('/').removeSuffix(".3mf")),
+                        "subtask_name" to JsonPrimitive(file.substringAfterLast('/').removeSuffix(".3mf").removeSuffix(".gcode")),
                         "profile_id" to JsonPrimitive("0"), "project_id" to JsonPrimitive("0"), "subtask_id" to JsonPrimitive("0"), "task_id" to JsonPrimitive("0"),
                     ))
                 })

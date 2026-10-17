@@ -97,7 +97,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit) {
     var failed by remember { mutableStateOf<String?>(null) }
     var plate by remember { mutableStateOf(1) }
     var leveling by remember { mutableStateOf(true) }
-    var flow by remember { mutableStateOf(false) }
+    var flow by remember { mutableStateOf(true) } // on by default, as in Handy
     var timelapse by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
     val name = d.name.removeSuffix(".3mf").removeSuffix(".gcode")

@@ -45,6 +45,67 @@ def version():
         return f"unavailable: {e}"
 
 
+PROFILES = os.path.join(os.path.dirname(BAMBU), "resources", "profiles", "BBL", "machine")
+GCODE_KEYS = ("machine_start_gcode", "machine_end_gcode", "change_filament_gcode", "layer_change_gcode", "time_lapse_gcode")
+
+
+def system_gcodes(machine: str) -> dict:
+    """The custom G-codes of a Bambu system printer preset ("Bambu Lab X1 Carbon 0.4 nozzle"), following its includes
+    (newer presets keep them in separate template files, which the command line doesn't read)."""
+    out = {}
+    try:
+        with open(os.path.join(PROFILES, f"{machine}.json")) as f:
+            d = json.load(f)
+        for inc in d.get("include", []):
+            with open(os.path.join(PROFILES, f"{inc}.json")) as f:
+                out.update({k: v for k, v in json.load(f).items() if k in GCODE_KEYS})
+        out.update({k: v for k, v in d.items() if k in GCODE_KEYS and v})
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+def heal(data: bytes) -> bytes:
+    """Fills in a project's empty printer G-codes (start, end, filament change…) from its system printer preset. Projects
+    built on the command line from stock presets miss them, and printing without start G-code skips homing, leveling
+    and the purge line."""
+    z = zipfile.ZipFile(io.BytesIO(data))
+    try:
+        cfg = json.loads(z.read("Metadata/project_settings.config"))
+    except (KeyError, ValueError):
+        return data
+    missing = [k for k in GCODE_KEYS if len(str(cfg.get(k) or "")) < 100]
+    if not missing:
+        return data
+    fill = system_gcodes(cfg.get("printer_settings_id", ""))
+    changed = {k: fill[k] for k in missing if fill.get(k)}
+    if not changed:
+        return data
+    print(f"Filled in {', '.join(changed)} from '{cfg.get('printer_settings_id')}'")
+    cfg.update(changed)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as out:
+        for info in z.infolist():
+            body = json.dumps(cfg, indent=4).encode() if info.filename == "Metadata/project_settings.config" else z.read(info.filename)
+            out.writestr(info, body)
+    return buf.getvalue()
+
+
+def check_safe(sliced: bytes):
+    """Refuses a sliced file whose plates lack Bambu's printer start sequence (homing, leveling, purge line,
+    calibrations), recognised by its G29 and M1002 commands: a placeholder start G-code makes the printer go straight
+    to the first layer."""
+    z = zipfile.ZipFile(io.BytesIO(sliced))
+    for n in z.namelist():
+        if re.fullmatch(r"Metadata/plate_\d+\.gcode", n):
+            g = z.read(n).decode(errors="replace")
+            first = g.find("; CHANGE_LAYER")
+            head = g[:first if first > 0 else len(g)]
+            if not (re.search(r"^G28\b", head, re.M) and re.search(r"^(G29|M1002)\b", head, re.M)):
+                raise RuntimeError("The sliced file lacks the printer's start sequence (homing, bed leveling, purge "
+                                   "line), so it isn't safe to print. The profile is missing its printer settings.")
+
+
 def slice_3mf(data: bytes, plate: int):
     """Slices one plate (0 = all) and returns (sliced 3mf bytes, summary dict). Raises RuntimeError with Bambu's message."""
     work = tempfile.mkdtemp(prefix="pandy-")
@@ -53,7 +114,7 @@ def slice_3mf(data: bytes, plate: int):
         out_dir = os.path.join(work, "out")
         os.makedirs(out_dir)
         with open(src, "wb") as f:
-            f.write(data)
+            f.write(heal(data))
         out = os.path.join(out_dir, "sliced.gcode.3mf")
         # --export-3mf takes a bare name: Bambu Studio puts it in --outputdir.
         cmd = [BAMBU, "--slice", str(plate), "--export-3mf", "sliced.gcode.3mf", "--outputdir", out_dir, "--uptodate", src]
@@ -69,6 +130,7 @@ def slice_3mf(data: bytes, plate: int):
         with open(out, "rb") as f:
             sliced = f.read()
         sliced = keep_pictures(data, sliced)
+        check_safe(sliced)
         return sliced, summary(sliced, result)
     finally:
         shutil.rmtree(work, ignore_errors=True)

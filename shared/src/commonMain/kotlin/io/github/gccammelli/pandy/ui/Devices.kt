@@ -138,7 +138,8 @@ fun IconBox(icon: ImageVector, onClick: () -> Unit) = Box(Modifier.size(44.dp).c
 @Composable
 private fun Hero(p: Printer) {
     val pages = if (p.camera == null) listOf("printer") else if (p.printing) listOf("live", "printer") else listOf("printer", "live")
-    val pager = rememberPagerState { pages.size }
+    // A fresh pager when printing starts or stops, so it opens on the page that leads (live view while printing).
+    val pager = androidx.compose.runtime.key(p.printing) { rememberPagerState { pages.size } }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.Card)) {
         HorizontalPager(pager, Modifier.fillMaxWidth().aspectRatio(16 / 10f), key = { pages[it] }) { i ->
             when (pages[i]) {

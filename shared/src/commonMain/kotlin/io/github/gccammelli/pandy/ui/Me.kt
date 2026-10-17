@@ -152,7 +152,7 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
     val info by produceState<io.github.gccammelli.pandy.SliceInfo?>(null, f.path) { value = Repo.extras?.sliceInfo(f) }
     var timelapse by remember { mutableStateOf(false) }
     var leveling by remember { mutableStateOf(true) }
-    var flow by remember { mutableStateOf(false) }
+    var flow by remember { mutableStateOf(true) } // on by default, as in Handy
     var busy by remember { mutableStateOf(false) }
     Sheet(close, "Print", centeredTitle = true, confirm = if (busy) "Sending…" else "Send", onConfirm = {
         if (busy) return@Sheet
