@@ -183,11 +183,14 @@ private fun KeyButton(icon: androidx.compose.ui.graphics.vector.ImageVector, onC
 /** Handy's temperature entry: a number field in °C, a picture with a hint, presets and Done. */
 @Composable
 fun TempSheet(title: String, hint: String, presets: List<Int>, current: Double?, range: IntRange, close: () -> Unit, set: (Int) -> Unit) {
-    var text by remember { mutableStateOf(current?.toInt()?.takeIf { it > 0 }?.toString() ?: "") }
+    val start = current?.toInt()?.takeIf { it > 0 }?.toString() ?: ""
+    var field by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(start, androidx.compose.ui.text.TextRange(start.length))) }
+    val text = field.text
+    fun setText(v: String) { field = androidx.compose.ui.text.input.TextFieldValue(v, androidx.compose.ui.text.TextRange(v.length)) }
     val focus = remember { FocusRequester() }
     fun done() { text.toIntOrNull()?.let { set(it.coerceIn(range)) }; close() }
     Sheet(close, title, centeredTitle = true, confirm = null) {
-        OutlinedTextField(text, { t -> text = t.filter { it.isDigit() }.take(3) }, Modifier.fillMaxWidth().focusRequester(focus), singleLine = true,
+        OutlinedTextField(field, { t -> field = t.copy(text = t.text.filter { it.isDigit() }.take(3)) }, Modifier.fillMaxWidth().focusRequester(focus), singleLine = true,
             trailingIcon = { T("°C", 14.sp, C.Sub) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { done() }),
@@ -201,7 +204,7 @@ fun TempSheet(title: String, hint: String, presets: List<Int>, current: Double?,
         Gap(16.dp)
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(C.Fill).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             presets.forEach { v ->
-                T(if (v == 0) "Off" else "$v°C", 13.sp, modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { text = "$v" }.padding(horizontal = 8.dp, vertical = 6.dp))
+                T(if (v == 0) "Off" else "$v°C", 13.sp, modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { setText("$v") }.padding(horizontal = 8.dp, vertical = 6.dp))
             }
             Spacer(Modifier.weight(1f))
             T("Done", 15.sp, C.Accent, FontWeight.Bold, modifier = Modifier.clickable { done() }.padding(8.dp))

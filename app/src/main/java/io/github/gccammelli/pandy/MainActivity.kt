@@ -15,6 +15,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
 import io.github.gccammelli.pandy.ui.AppTheme
 import io.github.gccammelli.pandy.ui.Nav
+import io.github.gccammelli.pandy.ui.Screen
 import io.github.gccammelli.pandy.ui.Root
 
 class MainActivity : ComponentActivity(), PlatformUi {
@@ -33,6 +34,7 @@ class MainActivity : ComponentActivity(), PlatformUi {
                 if (!Nav.back()) { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true }
             }
         })
+        debugOpen(intent)
         setContent { CompositionLocalProvider(LocalPlatform provides this) { AppTheme { Root() } } }
     }
 
@@ -69,6 +71,22 @@ class MainActivity : ComponentActivity(), PlatformUi {
             contentResolver.openOutputStream(uri)!!.use { it.write(jpeg) }
         }
         done(result.exceptionOrNull())
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        debugOpen(intent)
+    }
+
+    /** Debug builds: `adb shell am start -n …/.MainActivity --es screen control` opens a screen directly (for testing). */
+    private fun debugOpen(i: Intent?) {
+        if (!BuildConfig.DEBUG) return
+        val name = i?.getStringExtra("screen") ?: return
+        val screens = mapOf("control" to Screen.Control, "motion" to Screen.Motion, "skip" to Screen.Skip, "live" to Screen.LiveFull,
+            "printer" to Screen.PrinterSettings, "assistant" to Screen.Assistant, "files" to Screen.Files, "filament" to Screen.Filament,
+            "history" to Screen.History, "settings" to Screen.Settings, "about" to Screen.About)
+        Nav.stack.clear()
+        when (name) { "models" -> Nav.tab = 0; "devices" -> Nav.tab = 1; "me" -> Nav.tab = 2; else -> screens[name]?.let { Nav.go(it) } }
     }
 
     override fun landscape(on: Boolean) {
