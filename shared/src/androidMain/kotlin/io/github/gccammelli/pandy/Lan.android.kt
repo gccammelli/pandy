@@ -38,8 +38,16 @@ import kotlin.coroutines.resume
 object BambuTls {
     private val CERTS = listOf("bambu.cert", "bambu_h2c_251122.cert", "bambu_p2s_250626.cert", "bambu_x2c_260425.cert")
     private var trust: X509TrustManager? = null
+    private val contexts = mutableMapOf<String, SSLSocketFactory>()
+    val sslContexts = mutableMapOf<String, SSLContext>()
 
-    suspend fun factory(serial: String): SSLSocketFactory {
+    /**
+     * One context per printer, kept: its session cache lets FTP data connections resume the control connection's TLS
+     * session, which the printer requires.
+     */
+    suspend fun factory(serial: String): SSLSocketFactory = contexts[serial] ?: newFactory(serial).also { contexts[serial] = it }
+
+    private suspend fun newFactory(serial: String): SSLSocketFactory {
         val base = trust ?: run {
             val ks = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null) }
             val cf = CertificateFactory.getInstance("X.509")
@@ -56,7 +64,7 @@ object BambuTls {
                 if (!cn.equals(serial, ignoreCase = true)) throw CertificateException("This printer's certificate is for $cn, not $serial")
             }
         }
-        return SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), null) }.socketFactory
+        return SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), null) }.also { sslContexts[serial] = it }.socketFactory
     }
 }
 

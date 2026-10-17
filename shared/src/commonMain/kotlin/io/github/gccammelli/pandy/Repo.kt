@@ -25,8 +25,8 @@ object Repo {
     var ha: HaBackend? = null
         private set
     /**
-     * Home Assistant for what only it can do (print history, cached files, timelapses, slicing MakerWorld models):
-     * optional in direct mode, the same connection in Home Assistant mode.
+     * Print history, files and timelapses: Home Assistant's file cache when it's added (it keeps prints the printer has
+     * since deleted), else the printer's own storage in direct mode.
      */
     var extras: HaBackend? = null
         private set
@@ -56,7 +56,7 @@ object Repo {
         val haConn = if (url != null && t != null) HaHttp(url, t) else null
         when {
             demo -> { ha = FakeHomeAssistant(); extras = ha }
-            mode == "lan" -> { ha = lan?.let { DirectPrinter(it) }; extras = haConn }
+            mode == "lan" -> { ha = lan?.let { DirectPrinter(it) }; extras = haConn ?: ha }
             else -> { ha = haConn; extras = haConn }
         }
         if (ha != null) state.value = UiState(on = true)
@@ -72,6 +72,7 @@ object Repo {
         store.settings.putString("lan_ip", c.ip); store.settings.putString("lan_serial", c.serial); store.settings.putString("lan_model", c.model); store.settings.putString("lan_name", c.name)
         store.secrets.set("lan_code", c.code)
         ha = d
+        if (extras == null || extras is DirectPrinter) extras = d
         state.value = UiState(on = true)
         start()
     }
@@ -101,7 +102,7 @@ object Repo {
     /** Forgets Home Assistant (direct mode keeps working). */
     fun removeHa() {
         store.settings.putString("ha_url", null); store.secrets.set("ha_token", null)
-        token = null; extras = null
+        token = null; extras = ha as? DirectPrinter
     }
 
     fun startDemo() {

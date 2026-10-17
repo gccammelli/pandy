@@ -130,7 +130,7 @@ fun hmsCode(attr: Long, code: Long): String {
  * The entities the Bambu Lab integration would show for this report, keyed like its registry ("domain", translation
  * key, unique-id suffix, device) so [printersFrom] reads them unchanged. [online]: a report arrived recently.
  */
-fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean): List<Pair<LanRow, Entity>> {
+fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = null): List<Pair<LanRow, Entity>> {
     val p = r.o("print") ?: JsonObject(emptyMap())
     val out = mutableListOf<Pair<LanRow, Entity>>()
     fun add(domain: String, key: String, state: Any?, attrs: JsonObject = JsonObject(emptyMap()), device: String = "printer", uid: String = key) {
@@ -195,6 +195,11 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean): List<Pair<LanRow,
     add("sensor", "ip_address", c.ip)
     add("sensor", "serial", c.serial)
     p.str("sdcard")?.let { add("sensor", "sdcard_status", if (it == "true") "normal" else "missing") }
+    if (job != null) {
+        add("image", "cover_image", job.key, uid = "cover_image")
+        if (job.pick != null) add("image", "pick_image", job.key, uid = "pick_image")
+        add("sensor", "printable_objects", job.objects.size, buildJsonObject { putJsonObject("objects") { job.objects.forEach { (k, v) -> put("$k", v) } } })
+    }
     val skipped = (p["s_obj"] as? JsonArray).orEmpty()
     add("sensor", "skipped_objects", skipped.size, buildJsonObject { put("objects", JsonArray(skipped)) })
 
@@ -232,6 +237,9 @@ private fun trayAttrs(t: JsonObject, name: String, active: Boolean, slot: Int) =
     put("filament_id", t.str("tray_info_idx"))
 }
 
+/** The current job's 3MF, read from the printer's storage: plate picture, pick map and parts. */
+class LanJob(val key: String, val cover: ByteArray?, val pick: ByteArray?, val objects: Map<Int, String>)
+
 data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String)
 
 /** The printer reached directly, presented as a small Home Assistant (see the file comment). */
@@ -244,7 +252,125 @@ class DirectPrinter(val config: LanConfig) : HaBackend {
     private var lastReport = 0L
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private fun entities() = lanEntities(config, report, Clock.System.now().toEpochMilliseconds() - lastReport < 60_000 && link != null)
+    private fun entities() = lanEntities(config, report, Clock.System.now().toEpochMilliseconds() - lastReport < 60_000 && link != null, job)
+
+    // ---------- The printer's storage (FTPS) ----------
+
+    private val storage by lazy { printerStorage(config) }
+    private var job: LanJob? = null
+    private var jobLoading: String? = null
+
+    /** When the job changes, finds its 3MF on the printer (as the integration does) and reads its picture and parts. */
+    private fun checkJob() {
+        val p = report.o("print") ?: return
+        val task = p.str("subtask_name").orEmpty()
+        val gcode = p.str("gcode_file").orEmpty()
+        val key = "$task|$gcode"
+        if (key == job?.key || key == jobLoading || (task.isEmpty() && gcode.isEmpty())) return
+        jobLoading = key
+        scope.launch {
+            val found = runCatching { findJobFile(task, gcode) }.getOrNull()
+            val plate = Regex("""plate_(\d+)\.gcode""").find(gcode)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            job = if (found == null) LanJob(key, null, null, emptyMap()) else {
+                val (path, size) = found
+                suspend fun entry(vararg names: String) = runCatching { zipEntry(size, names.map { Regex(it) }) { o, l -> storage.read(path, o, l) }?.second }.getOrNull()
+                LanJob(key, entry("Metadata/plate_$plate\\.png", "Metadata/plate_\\d+\\.png"), entry("Metadata/pick_$plate\\.png"),
+                    entry("Metadata/slice_info\\.config")?.decodeToString()?.let { sliceObjects(it, plate) }.orEmpty())
+            }
+            jobLoading = null
+            onReport?.invoke()
+        }
+    }
+
+    private suspend fun findJobFile(task: String, gcode: String): Pair<String, Long>? {
+        val names = buildList {
+            if (task.isNotEmpty()) { if (task.endsWith(".3mf")) add(task) else { add("$task.3mf"); add("$task.gcode.3mf") } }
+            val g = gcode.substringAfterLast('/')
+            if (g.isNotEmpty() && g != task && !g.startsWith("plate_")) { if (g.endsWith(".3mf")) add(g) else { add("$g.3mf"); add("$g.gcode.3mf") } }
+        }
+        val dirs = listOf("/cache/" to listCached("/cache"), "/" to listCached("/"))
+        for (n in names) for ((d, files) in dirs) files.firstOrNull { it.name == n }?.let { return d + it.name to it.size }
+        if (task.isEmpty()) dirs.flatMap { (d, f) -> f.filter { it.name.endsWith(".3mf") }.map { d + it.name to it } }.maxByOrNull { it.second.modified }?.let { return it.first to it.second.size }
+        return null
+    }
+
+    /** Print files on the printer, as the integration's print_history API lists cached prints (newest first). */
+    private suspend fun historyJson(): String {
+        listings.clear() // a fresh look when the list is opened
+        val files = listOf("" to listCached("/"), "cache/" to listCached("/cache")).flatMap { (d, l) -> l.filter { !it.dir && it.name.endsWith(".3mf") }.map { d to it } }
+            .sortedByDescending { it.second.modified }
+        return buildJsonObject {
+            putJsonArray("files") {
+                files.forEach { (d, f) ->
+                    add(buildJsonObject {
+                        put("filename", f.name); put("path", "${config.serial}/prints/$d${f.name}"); put("size", f.size); put("modified", f.modified)
+                        put("thumbnail_path", "${config.serial}/prints/$d${f.name}.png")
+                    })
+                }
+            }
+        }.toString()
+    }
+
+    private suspend fun videosJson(): String {
+        val files = storage.list("/timelapse").filter { !it.dir && it.name.endsWith(".mp4") }.sortedByDescending { it.modified }
+        return buildJsonObject {
+            putJsonArray("videos") {
+                files.forEach { f ->
+                    add(buildJsonObject {
+                        put("filename", f.name); put("path", "${config.serial}/timelapse/${f.name}"); put("size", f.size); put("modified", f.modified)
+                        put("thumbnail_path", "${config.serial}/timelapse/thumbnail/${f.name.removeSuffix(".mp4")}.jpg")
+                    })
+                }
+            }
+        }.toString()
+    }
+
+    /** "SERIAL/prints/cache/x.3mf" → "/cache/x.3mf"; "SERIAL/timelapse/…" → "/timelapse/…". */
+    private fun printerPath(cachePath: String): String {
+        val rel = cachePath.substringAfter('/')
+        return "/" + if (rel.startsWith("prints/")) rel.removePrefix("prints/") else rel
+    }
+
+    private val thumbs = mutableMapOf<String, ByteArray>()
+    private val missing = mutableSetOf<String>()
+    private val listings = mutableMapOf<String, Pair<Long, List<FileEntry>>>()
+
+    /** Directory listings, reused for 30 s (a screen of thumbnails would otherwise list the folder once each). */
+    private suspend fun listCached(dir: String): List<FileEntry> {
+        val now = Clock.System.now().toEpochMilliseconds()
+        listings[dir]?.takeIf { now - it.first < 30_000 }?.let { return it.second }
+        return storage.list(dir).also { listings[dir] = now to it }
+    }
+
+    private suspend fun sizeOf(path: String) =
+        listCached(path.substringBeforeLast('/').ifEmpty { "/" }).firstOrNull { it.name == path.substringAfterLast('/') }?.size
+            ?: throw ApiException("Not on the printer any more")
+
+    /** A file the screens ask Home Assistant's file cache for, read from the printer instead. */
+    private suspend fun cachedFile(cachePath: String): ByteArray {
+        thumbs[cachePath]?.let { return it }
+        if (cachePath in missing) throw ApiException("No picture in that file")
+        val out = when {
+            cachePath.endsWith(".3mf.png") -> {
+                val path = printerPath(cachePath.removeSuffix(".png"))
+                zipEntry(sizeOf(path), listOf(Regex("Metadata/plate_1\\.png"), Regex("Metadata/plate_\\d+\\.png"), Regex("Metadata/.*\\.png"))) { o, l -> storage.read(path, o, l) }?.second
+                    ?: run { missing += cachePath; throw ApiException("No picture in that file") } // files sliced on the command line have none
+            }
+            cachePath.endsWith(".3mf.slice_info.config") || cachePath.endsWith(".slice_info.config") -> {
+                val path = printerPath(cachePath.removeSuffix(".slice_info.config") + if (cachePath.endsWith(".3mf.slice_info.config")) "" else ".3mf")
+                zipEntry(sizeOf(path), listOf(Regex("Metadata/slice_info\\.config"))) { o, l -> storage.read(path, o, l) }?.second ?: throw ApiException("No slice info")
+            }
+            else -> storage.read(printerPath(cachePath))
+        }
+        if (out.size < 2_000_000) thumbs[cachePath] = out
+        return out
+    }
+
+    /** A timelapse copied to the phone, for the player. */
+    suspend fun localVideo(cachePath: String): String = cacheFile(cachePath.substringAfterLast('/'), storage.read(printerPath(cachePath)))
+
+    /** Puts a print file on the printer ("/cache/name.3mf") for [print_project_file]. */
+    suspend fun upload(name: String, data: ByteArray, progress: (Float) -> Unit) = storage.write("/cache/$name", data, progress)
 
     /** The printer's firmware version, from its get_version answer (the "ota" module). */
     private fun firmware(): String? = (report.o("info")?.get("module") as? JsonArray)?.mapNotNull { it as? JsonObject }
@@ -297,7 +423,7 @@ class DirectPrinter(val config: LanConfig) : HaBackend {
                         if (msg.o("print") == null && msg.o("info") == null) return@run
                         report = deepMerge(report, msg)
                         lastReport = Clock.System.now().toEpochMilliseconds()
-                        if (msg.o("print")?.str("command") == "push_status") firstReport.complete(Unit)
+                        if (msg.o("print")?.str("command") == "push_status") { firstReport.complete(Unit); checkJob() }
                         onReport?.invoke()
                     }
                 } catch (e: Exception) {
@@ -360,6 +486,7 @@ class DirectPrinter(val config: LanConfig) : HaBackend {
     private fun rowOf(entityId: String?) = rows.firstOrNull { it.id == entityId }
 
     override suspend fun post(path: String, body: String): String {
+        if (path == "/api/bambu_lab/ensure_cache_file") return """{"status":"present"}""" // it's read from the printer, so it's there
         val d = json.parseToJsonElement(body).jsonObject
         val target = d.s("entity_id")
         when (val service = path.removePrefix("/api/services/")) {
@@ -437,7 +564,12 @@ class DirectPrinter(val config: LanConfig) : HaBackend {
         return "[]"
     }
 
-    override suspend fun get(path: String): String = throw ApiException(NEEDS_HA)
+    override suspend fun get(path: String): String = when {
+        path.startsWith("/api/bambu_lab/print_history") -> historyJson()
+        path.startsWith("/api/bambu_lab/videos") -> videosJson()
+        path.startsWith("/api/bambu_lab/file_cache/") -> cachedFile(path.removePrefix("/api/bambu_lab/file_cache/")).decodeToString()
+        else -> throw ApiException(NEEDS_HA)
+    }
 
     // ---------- Camera pictures (P1/A1): one stream kept open while someone is looking ----------
 
@@ -446,6 +578,11 @@ class DirectPrinter(val config: LanConfig) : HaBackend {
     private var camJob: Job? = null
 
     override suspend fun bytes(path: String): ByteArray {
+        if (path.startsWith("/api/image_proxy/")) {
+            val j = job ?: throw ApiException("No job picture")
+            return (if ("pick_image" in path) j.pick else j.cover) ?: throw ApiException("No job picture")
+        }
+        if (path.startsWith("/api/bambu_lab/file_cache/")) return cachedFile(path.removePrefix("/api/bambu_lab/file_cache/"))
         if (!path.startsWith("/api/camera_proxy/")) throw ApiException(NEEDS_HA)
         lastAsked = Clock.System.now().toEpochMilliseconds()
         if (camJob?.isActive != true) camJob = scope.launch {

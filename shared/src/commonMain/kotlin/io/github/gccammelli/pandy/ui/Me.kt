@@ -116,8 +116,8 @@ fun HistoryScreen(p: Printer) {
             null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = C.Accent) }
             else -> r.fold({ list ->
                 if (list.isEmpty()) Column { Empty("No prints yet"); SetupNote("Pandy lists the prints Home Assistant's Bambu Lab integration keeps. Turn on its file cache: Settings → Devices → Bambu Lab → Configure.", "docs/setup.md#file-cache", Modifier.padding(16.dp)) }
-                else Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
-                    list.forEach { f -> HistoryRow(f) { open = f }; Gap(10.dp) }
+                else androidx.compose.foundation.lazy.LazyColumn(contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(list.size, key = { list[it].path }) { i -> HistoryRow(list[i]) { open = list[i] } }
                 }
             }, { e -> if (Repo.extras == null) NeedsHa("Printing history") else Empty(e.message ?: "Couldn't load the history") })
         }
@@ -225,8 +225,9 @@ fun FilesScreen(p: Printer) {
         }
         if (Repo.extras == null) NeedsHa("Timelapses and models") else when (val list = files) {
             null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = C.Accent) }
-            else -> if (list.isEmpty()) Empty("No content yet") else Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
-                list.chunked(2).forEach { row ->
+            else -> if (list.isEmpty()) Empty("No content yet") else androidx.compose.foundation.lazy.LazyColumn(contentPadding = PaddingValues(14.dp)) {
+                val rows = list.chunked(2)
+                items(rows.size) { ri -> val row = rows[ri]
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         row.forEach { f ->
                             Column(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(C.Card).clickable { if (tab == 0) playing = f else open = f }) {
@@ -245,11 +246,16 @@ fun FilesScreen(p: Printer) {
         }
     }
     playing?.let { f ->
-        val url = remember(f) { Repo.extras!!.base + f.url }
+        // From Home Assistant it streams; from the printer it's copied to the phone first (FTPS can't stream).
+        val url by produceState<String?>(null, f) {
+            val x = Repo.extras
+            value = if (x is io.github.gccammelli.pandy.DirectPrinter) runCatching { x.localVideo(f.path) }.getOrNull() else x?.let { it.base + f.url }
+        }
         Sheet({ playing = null }, f.title, centeredTitle = true, confirm = null) {
             Box(Modifier.fillMaxWidth().aspectRatio(16 / 9f).clip(RoundedCornerShape(8.dp)).background(Color.Black)) {
                 if (Repo.demo) T("The demo has no video", 13.sp, Color.White, modifier = Modifier.align(Alignment.Center))
-                else VideoPlayer(url, muted = true, modifier = Modifier.fillMaxSize(), onError = {}, controls = true, headers = Repo.authHeaders())
+                else if (url == null) CircularProgressIndicator(Modifier.align(Alignment.Center), color = C.Accent)
+                else VideoPlayer(url!!, muted = true, modifier = Modifier.fillMaxSize(), onError = {}, controls = true, headers = Repo.authHeaders())
             }
             Gap(20.dp)
         }

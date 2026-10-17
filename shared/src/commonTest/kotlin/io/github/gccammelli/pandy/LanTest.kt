@@ -88,3 +88,21 @@ class LanFirmwareTest {
         assertEquals("25.0", e["chamber_temp"]); assertEquals("Demo X1C", e["printer_name"])
     }
 }
+
+class StorageTest {
+    @Test fun listing() {
+        val l = parseList(listOf(
+            "-rw-r--r--    1 1002     1002      2192122 Aug 30  2025 (Unsaved).gcode.3mf",
+            "-rw-r--r--    1 1002     1002      3251394 Aug 09 07:58 6-Shot Disc.gcode.3mf",
+            "drwxr-xr-x    2 1002     1002         8192 Dec 26 15:31 thumbnail",
+        ), 2026, 10)
+        assertEquals(FileEntry("(Unsaved).gcode.3mf", 2192122, "2025-08-30T00:00", false), l[0])
+        assertEquals("6-Shot Disc.gcode.3mf", l[1].name); assertEquals("2026-08-09T07:58", l[1].modified)
+        assertEquals("2025-12-26T15:31", l[2].modified); assertTrue(l[2].dir) // December with a time, seen in October: last year
+    }
+
+    @Test fun sliceInfo() {
+        val xml = """<config><plate><metadata key="index" value="1"/><object identify_id="270" name="clip.stl" skipped="false"/><object identify_id="281" name="clip.stl" skipped="false"/></plate></config>"""
+        assertEquals(mapOf(270 to "clip.stl", 281 to "clip.stl"), sliceObjects(xml, 1))
+    }
+}
