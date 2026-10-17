@@ -45,8 +45,9 @@ class SlicerClient(url: String, private val token: String?) {
     }
 
     /** Slices [plate] of a 3MF and puts it on the printer [to]; returns its path there and the plate's details. */
-    suspend fun sliceAndUpload(data: ByteArray, plate: Int, name: String, to: LanConfig): Pair<String, SlicedPlate?> {
-        val r = http.post("$base/slice?plate=$plate&upload=1&name=${name.encodeURLParam()}") {
+    suspend fun sliceAndUpload(data: ByteArray, plate: Int, name: String, to: LanConfig, printer: String? = null): Pair<String, SlicedPlate?> {
+        val target = printer?.let { "&printer=${it.encodeURLParam()}" }.orEmpty()
+        val r = http.post("$base/slice?plate=$plate&upload=1&name=${name.encodeURLParam()}$target") {
             auth()
             header("X-Printer-Ip", to.ip); header("X-Printer-Serial", to.serial); header("X-Printer-Code", to.code)
             setBody(data)
@@ -100,6 +101,16 @@ suspend fun readProject(data: ByteArray): Project {
     val plates = plateIds.map { (i, n) -> ProjectPlate(i, n, data.entry("Metadata/plate_${i}\\.png")) }
     return Project(plates, (settings?.get("printer_model") as? JsonPrimitive)?.contentOrNull, types.mapIndexed { i, t -> t to (colours.getOrNull(i) ?: "#888888") },
         data.entry("Metadata/plate_\\d+\\.gcode\\.md5", "Metadata/plate_\\d+\\.gcode") != null)
+}
+
+/**
+ * The Bambu Studio printer preset for a printer ("Bambu Lab X1 Carbon 0.4 nozzle"), so the slicer can re-target a
+ * profile made for another printer, as Bambu Studio's printer switch does.
+ */
+fun printerPreset(model: String, nozzle: String?): String {
+    val base = when (model) { "X1C" -> "X1 Carbon"; else -> model }
+    val n = nozzle?.toDoubleOrNull()?.let { if (it == it.toInt().toDouble()) "$it" else it.toString() } ?: "0.4"
+    return "Bambu Lab $base $n nozzle"
 }
 
 /** Bambu's printer names in project files ("Bambu Lab X1 Carbon") → the short names Pandy uses ("X1C"). */

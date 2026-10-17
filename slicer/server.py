@@ -2,6 +2,8 @@
 
 GET  /health                   -> {"ok": true, "version": "..."}
 POST /slice?plate=1            body: the .3mf -> the sliced .gcode.3mf (headers X-Pandy-Result: JSON summary)
+     &printer=<preset>         re-targets the project to that Bambu printer preset first ("Bambu Lab X1 Carbon 0.4 nozzle"),
+                               keeping the designer's changed settings, as Bambu Studio's printer switch does
 POST /slice?plate=1&upload=1   same, then puts the file on the printer over FTPS and answers JSON
                                {"path": "cache/<name>.gcode.3mf", "plate": 1, ...}; the printer's address, serial and
                                access code come in the X-Printer-Ip, X-Printer-Serial and X-Printer-Code headers.
@@ -45,7 +47,8 @@ def version():
         return f"unavailable: {e}"
 
 
-PROFILES = os.path.join(os.path.dirname(BAMBU), "resources", "profiles", "BBL", "machine")
+BBL = os.path.join(os.path.dirname(BAMBU), "resources", "profiles", "BBL")
+PROFILES = os.path.join(BBL, "machine")
 GCODE_KEYS = ("machine_start_gcode", "machine_end_gcode", "change_filament_gcode", "layer_change_gcode", "time_lapse_gcode")
 
 
@@ -63,6 +66,48 @@ def system_gcodes(machine: str) -> dict:
     except (OSError, ValueError):
         pass
     return out
+
+
+def conversion(data: bytes, target: str):
+    """Bambu Studio command-line arguments that re-target a project to the printer preset [target] ("Bambu Lab X1
+    Carbon 0.4 nozzle"), the way Studio's printer switch does: the target's printer preset (its G-code templates
+    merged in), the target's version of the project's process preset with the designer's changed settings applied on
+    top, and the target's versions of the filament presets when they all exist. Returns (args, from_printer) or
+    ([], None) when the project is already for [target]."""
+    cfg = json.loads(zipfile.ZipFile(io.BytesIO(data)).read("Metadata/project_settings.config"))
+    source = cfg.get("printer_settings_id", "")
+    if not target or source == target:
+        return [], None
+    try:
+        with open(os.path.join(PROFILES, f"{target}.json")) as f:
+            machine = json.load(f)
+    except OSError:
+        raise RuntimeError(f"Bambu Studio has no printer preset called {target}")
+    for inc in machine.pop("include", []):
+        with open(os.path.join(PROFILES, f"{inc}.json")) as f:
+            machine.update({k: v for k, v in json.load(f).items() if k not in ("name", "instantiation")})
+    # Presets are found by name inside Bambu Studio's profile folders, so the merged ones are written there.
+    machine_file = os.path.join(PROFILES, f"pandy {target}.json")
+    with open(machine_file, "w") as f:
+        json.dump(machine, f)
+    default_process = machine.get("default_print_profile", "")
+    suffix = default_process.split(" @", 1)[1] if " @" in default_process else ""
+    base = cfg.get("print_settings_id", "").split(" @", 1)[0]
+    process_name = f"{base} @{suffix}" if os.path.exists(os.path.join(BBL, "process", f"{base} @{suffix}.json")) else default_process
+    changed = [k for k in (cfg.get("different_settings_to_system") or [""])[0].split(";") if k and k in cfg]
+    process = {"type": "process", "from": "User", "name": "pandy process", "inherits": process_name, "print_settings_id": "pandy process",
+               "compatible_printers": [target],
+               **{k: cfg[k] for k in changed}}
+    process_file = os.path.join(BBL, "process", "pandy process.json")
+    with open(process_file, "w") as f:
+        json.dump(process, f)
+    args = ["--load-settings", f"{machine_file};{process_file}"]
+    filaments = [f.split(" @", 1)[0] + f" @{suffix}" for f in cfg.get("filament_settings_id", [])]
+    files = [os.path.join(BBL, "filament", f"{f}.json") for f in filaments]
+    if files and all(os.path.exists(f) for f in files):
+        args += ["--load-filaments", ";".join(files)]
+    print(f"Converting from {source} to {target}: process {process_name} + {changed}, filaments {'converted' if '--load-filaments' in args else 'kept'}")
+    return args, source
 
 
 def heal(data: bytes) -> bytes:
@@ -106,7 +151,7 @@ def check_safe(sliced: bytes):
                                    "line), so it isn't safe to print. The profile is missing its printer settings.")
 
 
-def slice_3mf(data: bytes, plate: int):
+def slice_3mf(data: bytes, plate: int, target: str = ""):
     """Slices one plate (0 = all) and returns (sliced 3mf bytes, summary dict). Raises RuntimeError with Bambu's message."""
     work = tempfile.mkdtemp(prefix="pandy-")
     try:
@@ -117,7 +162,8 @@ def slice_3mf(data: bytes, plate: int):
             f.write(heal(data))
         out = os.path.join(out_dir, "sliced.gcode.3mf")
         # --export-3mf takes a bare name: Bambu Studio puts it in --outputdir.
-        cmd = [BAMBU, "--slice", str(plate), "--export-3mf", "sliced.gcode.3mf", "--outputdir", out_dir, "--uptodate", src]
+        extra, source = conversion(data, target)
+        cmd = [BAMBU, *extra, "--slice", str(plate), "--export-3mf", "sliced.gcode.3mf", "--outputdir", out_dir, "--uptodate", src]
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=SLICE_TIMEOUT, cwd=work)
         result = {}
         rj = os.path.join(out_dir, "result.json")
@@ -131,7 +177,10 @@ def slice_3mf(data: bytes, plate: int):
             sliced = f.read()
         sliced = keep_pictures(data, sliced)
         check_safe(sliced)
-        return sliced, summary(sliced, result)
+        info = summary(sliced, result)
+        if source:
+            info["converted_from"] = source
+        return sliced, info
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -271,7 +320,7 @@ class Handler(BaseHTTPRequestHandler):
         if not LOCK.acquire(timeout=SLICE_TIMEOUT):
             return self._json(503, {"error": "Busy slicing something else"})
         try:
-            sliced, info = slice_3mf(data, plate)
+            sliced, info = slice_3mf(data, plate, q.get("printer", ""))
         except subprocess.TimeoutExpired:
             return self._json(504, {"error": "Slicing took too long"})
         except RuntimeError as e:

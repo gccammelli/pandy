@@ -71,9 +71,13 @@ const val MAKERWORLD = "https://makerworld.com/en"
 fun MakerWorld(modifier: Modifier) {
     val web = remember { WebState() }
     var download by debugDownload
-    WebPage(MAKERWORLD, modifier, onDownload = { download = it }, state = web)
+    val st by Repo.state.collectAsState()
+    WebPage(MAKERWORLD, modifier, onDownload = { download = it }, state = web, printer = st.printer()?.model?.let(::makerWorldName))
     download?.let { d -> PrintModelSheet(d) { download = null } }
 }
+
+/** Pandy's model names → MakerWorld's ("X1C" → "X1 Carbon"). */
+fun makerWorldName(model: String) = if (model == "X1C") "X1 Carbon" else model
 
 /** The file handed to the print sheet (also set by debug builds' launcher, for testing without a MakerWorld sign-in). */
 val debugDownload = mutableStateOf<WebDownload?>(null)
@@ -123,7 +127,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit) {
         scope.launch {
             runCatching {
                 if (Repo.lan == null) Repo.saveLan(to)
-                val (path, sliced) = withContext(Dispatchers.Default) { slicer!!.sliceAndUpload(bytes, plate, name, to) }
+                val (path, sliced) = withContext(Dispatchers.Default) { slicer!!.sliceAndUpload(bytes, plate, name, to, io.github.gccammelli.pandy.printerPreset(p.model, p.state("sensor.nozzle_diameter"))) }
                 step = Step.Starting
                 val mapping = sliced?.let { amsMappingFor(p, it.filaments) }
                 withContext(Dispatchers.Default) { Repo.ha!!.startPrint(p, path, plate, mapping, timelapse, leveling, flow) }
@@ -156,7 +160,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit) {
                 }
             }
             val made = shortModel(pr.printerModel)
-            if (made != null && made != p.model) { Gap(12.dp); T("This profile was made for the $made, not your ${p.model}. Pick the profile for your printer on the model's page if MakerWorld has one.", 13.sp, C.Orange, lh = 18.sp) }
+            if (made != null && made != p.model) { Gap(12.dp); T("Made for the $made: it's converted for your ${p.model} when sliced, keeping the designer's settings, as MakerWorld and Bambu Studio do.", 13.sp, C.Sub, lh = 18.sp) }
             if (pr.filaments.isNotEmpty()) {
                 Gap(16.dp)
                 T("Filament", 14.sp, weight = FontWeight.Medium)

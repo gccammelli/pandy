@@ -24,33 +24,53 @@ private const val PRINT_BUTTON_JS = """
 (function(){
   if (window.__pandy) return; window.__pandy = true;
   // MakerWorld's split button: <div><span class="primaryButton"><span>Open in Bambu Handy</span></span><div class="icon-box">⌄</div></div>.
-  // The label reads "Print" on Pandy's magenta; the arrow keeps MakerWorld's menu. Tapping Print asks MakerWorld's own
-  // API (the one its "Download 3MF" uses, signed in through this page) for the selected profile's file link and hands
-  // it to Pandy, which downloads it: no simulated clicks, no copy of the file inside the page.
+  // It reads "Print" on Pandy's magenta (a stylesheet, so pressed and hover states and re-renders keep it); the arrow
+  // keeps MakerWorld's menu. Tapping Print picks the profile to print and asks MakerWorld's own API (the one its
+  // "Download 3MF" uses, signed in through this page) for its file link, which Pandy downloads.
+  const css = document.createElement('style');
+  css.textContent = `
+    div:has(> span.primaryButton), div:has(> span.primaryButton):hover, div:has(> span.primaryButton):active { background: #AE006D !important; border-color: #AE006D !important; }
+    div:has(> span.primaryButton) span.primaryButton, div:has(> span.primaryButton) span.primaryButton * { background: transparent !important; color: #fff !important; }
+    div:has(> span.primaryButton) > .icon-box, div:has(> span.primaryButton) > .icon-box:hover { background: #7E004F !important; }`;
+  (document.head || document.documentElement).appendChild(css);
   const LABEL = /^(open in bambu (handy|studio)|print)$/i;
+  const product = i => i && i.extention && i.extention.modelInfo && i.extention.modelInfo.compatibility && i.extention.modelInfo.compatibility.devProductName;
+  // The selected profile if it was made for this printer, else the model's profile made for it, else the selected one.
+  async function choose(){
+    const selected = +((location.hash.match(/profileId-(\d+)/) || [])[1] || 0);
+    const design = (location.pathname.match(/models\/(\d+)/) || [])[1];
+    const mine = window.__pandyPrinter;
+    let list = [], fallback = null;
+    try {
+      const d = await (await fetch('/api/v1/design-service/design/' + design, { credentials: 'include' })).json();
+      list = d.instances || []; fallback = d.defaultInstanceId;
+    } catch (e) {}
+    const sel = list.find(i => i.id === selected);
+    if (!mine || !list.length || (sel && product(sel) === mine)) return { id: selected || fallback };
+    const made = list.find(i => product(i) === mine);
+    if (made) return { id: made.id, note: 'Printing the ' + mine + ' profile: ' + made.title };
+    return { id: selected || fallback };
+  }
   let busy = false;
   async function print(){
-    const id = (location.hash.match(/profileId-(\d+)/) || [])[1];
-    if (!id) { PandyBridge.problem('Pick a print profile first (the list above the button).'); return; }
     if (busy) return; busy = true;
     try {
-      const r = await fetch('/api/v1/design-service/instance/' + id + '/f3mf?type=download', { credentials: 'include' });
+      const c = await choose();
+      if (!c.id) { PandyBridge.problem('Pick a print profile first (the list above the button).'); return; }
+      const r = await fetch('/api/v1/design-service/instance/' + c.id + '/f3mf?type=download', { credentials: 'include' });
       if (r.status === 401 || r.status === 403) { PandyBridge.problem('Sign in to MakerWorld first (top right).'); return; }
       const j = await r.json();
       if (!r.ok || !j.url) { PandyBridge.problem(j.message || j.error || ('MakerWorld answered ' + r.status)); return; }
-      PandyBridge.file(j.name || ('profile-' + id + '.3mf'), j.url);
+      if (c.note) PandyBridge.problem(c.note);
+      PandyBridge.file(j.name || ('profile-' + c.id + '.3mf'), j.url);
     } catch (e) { PandyBridge.problem('Couldn\'t get the file from MakerWorld: ' + e); }
     finally { busy = false; }
   }
   function patch(){
     for (const label of document.querySelectorAll('span.primaryButton')) {
       if (!LABEL.test((label.textContent || '').trim())) continue;
-      const box = label.parentElement;
       const leaf = [...label.querySelectorAll('span')].pop() || label;
       if (leaf.textContent !== 'Print') leaf.textContent = 'Print';
-      box.style.setProperty('background', '#AE006D', 'important');
-      const arrow = box.querySelector('.icon-box');
-      if (arrow) arrow.style.setProperty('background', '#7E004F', 'important');
       if (label.__pandy) continue;
       label.__pandy = true;
       label.addEventListener('click', e => { e.preventDefault(); e.stopImmediatePropagation(); print(); }, true);
@@ -69,7 +89,7 @@ private val SLICER_SCHEMES = setOf("bambustudioopen", "bambustudio", "orcaslicer
 
 @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
 @Composable
-actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -> Unit)?, state: WebState?) {
+actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -> Unit)?, state: WebState?, printer: String?) {
     var view: WebView? = null
     AndroidView({ ctx ->
         // Debug builds: the page can be inspected from a computer (chrome://inspect), to keep up with MakerWorld's changes.
@@ -106,7 +126,10 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                 }
 
                 override fun onPageFinished(v: WebView, u: String?) {
-                    if (u?.contains("makerworld.com") == true) v.evaluateJavascript(PRINT_BUTTON_JS, null)
+                    if (u?.contains("makerworld.com") == true) {
+                        v.evaluateJavascript("window.__pandyPrinter = ${org.json.JSONObject.quote(printer.orEmpty())};", null)
+                        v.evaluateJavascript(PRINT_BUTTON_JS, null)
+                    }
                 }
 
                 override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {

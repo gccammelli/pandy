@@ -31,3 +31,11 @@ class ProjectTest {
         assertEquals("Cube%20%2B%20Sphere%20%C3%A9", "Cube + Sphere é".encodeURLParam())
     }
 }
+
+class PresetTest {
+    @Test fun presets() {
+        kotlin.test.assertEquals("Bambu Lab X1 Carbon 0.4 nozzle", printerPreset("X1C", "0.4"))
+        kotlin.test.assertEquals("Bambu Lab A1 mini 0.2 nozzle", printerPreset("A1 mini", "0.2"))
+        kotlin.test.assertEquals("Bambu Lab P1S 0.4 nozzle", printerPreset("P1S", null))
+    }
+}
