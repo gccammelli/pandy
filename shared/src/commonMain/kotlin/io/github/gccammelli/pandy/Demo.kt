@@ -70,6 +70,11 @@ class FakeHomeAssistant : HaBackend {
         add("button", "pause", "unknown"); add("button", "resume", "unknown"); add("button", "stop", "unknown")
         add("camera", "camera", "streaming")
         add("switch", "camera", "on")
+        add("switch", "printing_monitor", "on")
+        add("switch", "buildplate_marker_detector", "on")
+        add("switch", "first_layer_inspector", "on")
+        add("switch", "auto_recovery", "on")
+        add("switch", "auto_switch_filament", "off")
         add("light", "chamber_light", "on")
         add("fan", "cooling_fan", "on", buildJsonObject { put("percentage", 100) })
         add("fan", "aux_fan", "on", buildJsonObject { put("percentage", 70) })
@@ -89,14 +94,14 @@ class FakeHomeAssistant : HaBackend {
         add("sensor", "current_layer", 0); add("sensor", "total_layers", 312)
         add("sensor", "subtask_name", "Articulated Panda Keychain")
         add("sensor", "gcode_file", "/data/Metadata/plate_1.gcode")
-        add("sensor", "printer_name", "My X1C")
+        add("sensor", "printer_name", "Demo X1C")
         add("sensor", "print_weight", 38.4); add("sensor", "print_length", 12.7)
         add("sensor", "print_bed_type", "textured_plate")
         add("sensor", "nozzle_diameter", 0.4); add("sensor", "nozzle_type", "hardened_steel")
         add("sensor", "printable_objects", 3, buildJsonObject { putJsonObject("objects") { put("101", "Panda body"); put("102", "Panda head"); put("103", "Bamboo stick") } })
         add("sensor", "skipped_objects", 0, buildJsonObject { putJsonArray("objects") {} })
         add("sensor", "wifi_signal", -52)
-        add("sensor", "ip_address", "10.1.2.42"); add("sensor", "serial", "00M00A000000000")
+        add("sensor", "ip_address", "192.0.2.42"); add("sensor", "serial", "00M000000000000")
         add("sensor", "total_usage_hours", 412.6)
         add("sensor", "sdcard_status", "normal")
         add("sensor", "active_tray", "Bambu PLA Basic")
@@ -108,6 +113,10 @@ class FakeHomeAssistant : HaBackend {
         add("sensor", "humidity_index", 2, device = amsDev, uid = "AMS_1_humidity_index")
         add("sensor", "humidity", 23, device = amsDev, uid = "AMS_1_humidity")
         add("sensor", "ams_temp", 27.0, device = amsDev, uid = "AMS_1_temperature")
+        add("switch", "ams_read_on_insertion", "on", device = amsDev, uid = "AMS_1_ams_read_on_insertion")
+        add("switch", "ams_read_on_startup", "on", device = amsDev, uid = "AMS_1_ams_read_on_startup")
+        add("switch", "ams_remaining_estimation", "on", device = amsDev, uid = "AMS_1_ams_remaining_estimation")
+        add("switch", "ams_auto_refill", "off", device = amsDev, uid = "AMS_1_ams_auto_refill")
         add("sensor", "external_spool", "Generic PLA", tray("Generic PLA", "PLA", "#F98C36FF", -1), extDev, "ExternalSpool_external_spool")
         layerFromProgress()
     }
@@ -139,16 +148,16 @@ class FakeHomeAssistant : HaBackend {
             put("via_device_id", via); put("name_by_user", JsonNull)
             putJsonArray("identifiers") { add(buildJsonArray { add(JsonPrimitive("bambu_lab")); add(JsonPrimitive(ident)) }) }
         })
-        d(dev, "X1C_00M00A000000000", "X1C", "00M00A000000000", null)
-        d(amsDev, "X1C_00M00A000000000_AMS_1", "AMS", "00M00A000000000_AMS_1", dev)
-        d(extDev, "X1C_00M00A000000000_ExternalSpool", "External Spool", "00M00A000000000_ExternalSpool", dev)
+        d(dev, "X1C_00M000000000000", "X1C", "00M000000000000", null)
+        d(amsDev, "X1C_00M000000000000_AMS_1", "AMS", "00M000000000000_AMS_1", dev)
+        d(extDev, "X1C_00M000000000000_ExternalSpool", "External Spool", "00M000000000000_ExternalSpool", dev)
     }
 
     private fun entityRegistry() = buildJsonArray {
         rows.forEach { r ->
             add(buildJsonObject {
                 put("entity_id", id(r)); put("device_id", r.device); put("platform", "bambu_lab")
-                put("translation_key", r.key); put("unique_id", "X1C_00M00A000000000_${r.uid}"); put("disabled_by", JsonNull)
+                put("translation_key", r.key); put("unique_id", "X1C_00M000000000000_${r.uid}"); put("disabled_by", JsonNull)
             })
         }
     }
@@ -265,6 +274,17 @@ class FakeHomeAssistant : HaBackend {
                 set("number", "target_bed_temperature", 55); set("sensor", "target_bed_temp", 55)
                 set("sensor", "skipped_objects", 0, buildJsonObject { putJsonArray("objects") {} })
             }
+            "bambu_lab/calibration" -> set("sensor", "stage", "calibrating")
+            "bambu_lab/xcam_control_set" -> d.s("module_name")?.let { module ->
+                rows.firstOrNull { it.device == dev && it.key == module }?.let { setById(id(it), if (d.s("enable") == "true") "on" else "off") }
+            }
+            "bambu_lab/print_option" -> listOf("auto_recovery", "auto_switch_filament", "filament_tangle_detect", "nozzle_blob_detect", "air_print_detect", "sound_enable")
+                .firstOrNull { d[it] != null }?.let { option -> d.s(option)?.let { value -> rows.firstOrNull { it.key == option }?.let { setById(id(it), if (value == "true") "on" else "off") } } }
+            "bambu_lab/ams_user_setting" -> {
+                val ams = d.s("ams_id")?.toIntOrNull() ?: 0
+                listOf("ams_read_on_startup" to "startup_read_option", "ams_read_on_insertion" to "tray_read_option", "ams_remaining_estimation" to "calibrate_remain_flag")
+                    .forEach { (key, field) -> rows.firstOrNull { it.device == amsDev && it.key == key }?.let { setById(id(it), if (d.s(field) == "true") "on" else "off") } }
+            }
             "switch/turn_on", "switch/turn_off" -> setById(target!!, if (service.endsWith("on")) "on" else "off")
             else -> {} // move_axis, extrude_retract, load/unload: nothing to show in the demo
         }
@@ -282,7 +302,7 @@ class FakeHomeAssistant : HaBackend {
 }
 
 private fun demoFile(name: String, size: Long, day: String, kind: String = "prints", ext: String = ".3mf") =
-    """{"filename":"$size-$name$ext","path":"00M00A000000000/$kind/$size-$name$ext","size":$size,"modified":"${day}T14:32:10","thumbnail_path":"00M00A000000000/$kind/$size-$name.png"}"""
+    """{"filename":"$size-$name$ext","path":"00M000000000000/$kind/$size-$name$ext","size":$size,"modified":"${day}T14:32:10","thumbnail_path":"00M000000000000/$kind/$size-$name.png"}"""
 
 private val DEMO_HISTORY = """{"files":[${listOf(
     demoFile("Articulated Panda Keychain", 2_412_331, "2026-10-16"),

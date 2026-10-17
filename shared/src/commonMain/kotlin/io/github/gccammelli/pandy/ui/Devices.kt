@@ -58,6 +58,7 @@ import io.github.gccammelli.pandy.Repo
 import io.github.gccammelli.pandy.Spool
 import io.github.gccammelli.pandy.UiState
 import io.github.gccammelli.pandy.button
+import io.github.gccammelli.pandy.isSingleSlot
 import io.github.gccammelli.pandy.light
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -158,7 +159,8 @@ private fun Hero(p: Printer) {
 
 @Composable
 private fun PrinterPage(p: Printer) = Box(Modifier.fillMaxSize().background(C.Card).padding(10.dp)) {
-    PrinterArt(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 4.dp), ams = p.info.ams.isNotEmpty(), lit = p.lightOn)
+    val amsColors = p.ams.firstOrNull()?.second.orEmpty().map { Color(if (it?.known == true) it.color else 0xFFDDDDDD) }
+    PrinterArt(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 4.dp), ams = p.info.ams.isNotEmpty(), lit = p.lightOn, amsColors = amsColors)
     TempChip(Icons.Outlined.Settings, "nozzle", p.nozzle, p.nozzleTarget, Modifier.align(Alignment.TopStart))
     if (p.chamber != null) TempChip(null, "chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.TopEnd))
     TempChip(null, "bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
@@ -306,7 +308,7 @@ fun stageText(s: String?): String? = when (s) {
 // ---------- Device control cards ----------
 
 @Composable
-fun NozzleCard(p: Printer, onClick: () -> Unit) = Card(padding = androidx.compose.foundation.layout.PaddingValues(14.dp), onClick = onClick) {
+fun NozzleCard(p: Printer, modifier: Modifier = Modifier, onClick: () -> Unit) = Card(modifier = modifier, padding = androidx.compose.foundation.layout.PaddingValues(14.dp), onClick = onClick) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         T("Nozzle & Extruder", 13.sp, C.Sub, modifier = Modifier.weight(1f))
         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp), tint = C.Faint)
@@ -366,7 +368,7 @@ private fun FilamentCard(p: Printer, onClick: () -> Unit) = Card(padding = andro
     if (p.ams.isEmpty() && p.external.isEmpty()) { T("No AMS or external spool in Home Assistant", 13.sp, C.Sub); return@Card }
     p.ams.forEach { (a, trays) ->
         Row(verticalAlignment = Alignment.CenterVertically) {
-            T("AMS ${'A' + a.index - 1}", 13.sp, C.Sub, modifier = Modifier.weight(1f))
+            T(if (a.isSingleSlot()) "AMS HT" else "AMS ${'A' + a.index - 1}", 13.sp, C.Sub, modifier = Modifier.weight(1f))
             p.amsNum(a, "sensor.humidity_index")?.let { h ->
                 Icon(Icons.Outlined.WaterDrop, null, Modifier.size(14.dp), tint = humidityColor(h.toInt()))
                 T(" ${h.toInt()}", 12.sp, C.Sub)
@@ -418,4 +420,3 @@ fun HaImage(path: String?, modifier: Modifier) {
     }
     img?.let { androidx.compose.foundation.Image(it, null, modifier, contentScale = androidx.compose.ui.layout.ContentScale.Fit) }
 }
-

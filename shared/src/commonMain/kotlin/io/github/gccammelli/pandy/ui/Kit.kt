@@ -165,7 +165,7 @@ fun NavRow(label: String, value: String? = null, labelColor: Color = C.Text, che
 @Composable
 fun ToggleRow(label: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) =
     Row(Modifier.fillMaxWidth().background(C.Card).padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        T(label, 17.sp, modifier = Modifier.weight(1f))
+        T(label, 17.sp, if (enabled) C.Text else C.Sub, modifier = Modifier.weight(1f))
         Toggle(checked, enabled, onChange)
     }
 
@@ -187,16 +187,16 @@ fun AccentButton(text: String, modifier: Modifier = Modifier, enabled: Boolean =
     }
 
 @Composable
-fun OutlineButton(text: String, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) =
+fun OutlineButton(text: String, color: Color, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) =
     Box(modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(8.dp)).border(1.dp, color, RoundedCornerShape(8.dp)).background(C.Card)
-        .clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        T(text, 16.sp, color)
+        .clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
+        T(text, 16.sp, if (enabled) color else C.Sub)
     }
 
 /** Handy's bottom sheet: centred title, close X top right, content, then an optional green button. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun Sheet(onDismiss: () -> Unit, title: String? = null, centeredTitle: Boolean = false, confirm: String? = "Confirm", onConfirm: () -> Unit = {}, content: @Composable ColumnScope.() -> Unit) {
+fun Sheet(onDismiss: () -> Unit, title: String? = null, centeredTitle: Boolean = false, confirm: String? = "Confirm", onConfirm: () -> Unit = {}, confirmEnabled: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     ModalBottomSheet(onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = C.Card,
         dragHandle = null, shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 24.dp)) {
@@ -206,7 +206,7 @@ fun Sheet(onDismiss: () -> Unit, title: String? = null, centeredTitle: Boolean =
             }
             if (title != null && !centeredTitle) T(title, 18.sp, weight = FontWeight.Medium, modifier = Modifier.padding(bottom = 12.dp))
             content()
-            if (confirm != null) { Gap(24.dp); AccentButton(confirm, onClick = onConfirm); Gap(20.dp) }
+            if (confirm != null) { Gap(24.dp); AccentButton(confirm, enabled = confirmEnabled, onClick = onConfirm); Gap(20.dp) }
         }
     }
 }

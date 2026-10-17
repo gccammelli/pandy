@@ -148,7 +148,7 @@ data class PrinterInfo(val haId: String, val serial: String, val name: String, v
                        val ids: Map<String, String>, val ams: List<AmsInfo>, val external: List<String>, val externalDevice: String? = null)
 
 /** One AMS: [trays] are the tray sensors' entity ids by slot (1–4; an AMS HT has one). */
-data class AmsInfo(val haId: String, val index: Int, val model: String, val ids: Map<String, String>, val trays: Map<Int, String>)
+data class AmsInfo(val haId: String, val index: Int, val model: String, val ids: Map<String, String>, val trays: Map<Int, String>, val protocolId: Int? = null)
 
 /** A spool in an AMS slot or on the external holder, from the tray sensor's attributes. */
 data class Spool(val entityId: String, val slot: Int, val name: String, val type: String, val color: Long, val colors: List<Long>,
@@ -184,13 +184,21 @@ fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
     val printers = all.filter { it.s("via_device_id") == null }
     return printers.map { p ->
         val children = all.filter { it.s("via_device_id") == p.s("id") }
+        var nextHtId = 128
         val ams = children.filter { c -> byDevice[c.s("id")].orEmpty().any { it.s("translation_key") == "tray" } }.mapIndexed { i, c ->
             val rows = byDevice[c.s("id")].orEmpty()
             val trays = rows.filter { it.s("translation_key") == "tray" }.mapNotNull { r ->
                 val n = Regex("""tray_(\d+)$""").find(r.s("unique_id").orEmpty())?.groupValues?.get(1)?.toIntOrNull() ?: return@mapNotNull null
                 n to r.s("entity_id")!!
             }.toMap()
-            AmsInfo(c.s("id")!!, i + 1, c.s("model") ?: "AMS", keyed(c.s("id")), trays)
+            val protocolId = c.a("identifiers")?.mapNotNull { id ->
+                val value = id.jsonArray.getOrNull(1) as? JsonPrimitive
+                Regex("""(?i)(?:^|_)ams_?(\d+)$""").find(value?.contentOrNull.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
+            }?.firstOrNull()
+            val model = c.s("model") ?: "AMS"
+            val singleSlot = model.contains("HT", true) || model.contains("N3S", true) || protocolId?.let { it >= 128 } == true
+            if (protocolId != null && protocolId >= 128) nextHtId = maxOf(nextHtId, protocolId + 1)
+            AmsInfo(c.s("id")!!, i + 1, model, keyed(c.s("id")), trays, protocolId ?: if (singleSlot) nextHtId++ else null)
         }
         val extDev = children.firstOrNull { c -> byDevice[c.s("id")].orEmpty().any { it.s("translation_key") == "external_spool" } }?.s("id")
         val ext = children.flatMap { c -> byDevice[c.s("id")].orEmpty().filter { it.s("translation_key") == "external_spool" }.mapNotNull { it.s("entity_id") } }
@@ -241,11 +249,15 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val skipped: List<Int> get() = get("sensor.skipped_objects")?.attrs?.a("objects")?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }.orEmpty()
 
     val ams: List<Pair<AmsInfo, List<Spool?>>> get() = info.ams.map { a ->
-        val n = if (a.model.contains("HT")) 1 else 4
+        val n = if (a.isSingleSlot()) 1 else 4
         a to (1..n).map { slot -> a.trays[slot]?.let { states[it] }?.let { spoolFrom(it, slot) } }
     }
     val external: List<Spool> get() = info.external.mapIndexedNotNull { i, id -> states[id]?.let { spoolFrom(it, i) } }
     fun amsNum(a: AmsInfo, key: String) = a.ids[key]?.let { states[it] }?.num
+    /** A boolean setting exposed by an AMS; null means this firmware/integration did not report it. */
+    fun amsFlag(a: AmsInfo, key: String): Boolean? = a.ids["switch.$key"]?.let { id -> states[id]?.flag }
+    fun flag(key: String): Boolean? = get("switch.$key")?.flag
+    fun flagAttribute(key: String, attribute: String): Boolean? = get("switch.$key")?.attrs?.s(attribute)?.let(::parseFlag)
 
     /** Fans as Handy names them → (fan entity, speed %). */
     val fans: List<Triple<String, String?, Int>> get() = listOfNotNull(
@@ -265,6 +277,15 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
 
     /** Every entity id of this printer (and its AMS and spools), to subscribe to. */
     val entityIds get() = info.ids.values + info.ams.flatMap { it.ids.values + it.trays.values } + info.external
+}
+
+private val Entity.flag: Boolean?
+    get() = parseFlag(state)
+
+private fun parseFlag(value: String?): Boolean? = when (value?.lowercase()) {
+    "on", "true", "1", "enable", "enabled" -> true
+    "off", "false", "0", "disable", "disabled" -> false
+    else -> null
 }
 
 /** Applies one subscribe_entities event ("a" added, "c" changed, "r" removed) to [states]. */
@@ -300,6 +321,33 @@ suspend fun HaBackend.press(p: Printer, key: String) {
 
 suspend fun HaBackend.setNumber(id: String, value: Double) =
     call("number", "set_value", buildJsonObject { put("entity_id", id); put("value", value) })
+
+/** Starts the printer's machine calibration; this command is available in direct LAN mode only. */
+fun Printer.calibrate(option: Int, err: (String) -> Unit) = Repo.act(err) {
+    bambu("calibration", this@calibrate, buildJsonObject { put("option", option) })
+}
+
+/** Enables one of the printer's XCam modules, when the printer reports it. */
+fun Printer.setXcam(module: String, enabled: Boolean, printHalt: Boolean = false, err: (String) -> Unit) = Repo.act(err) {
+    bambu("xcam_control_set", this@setXcam, buildJsonObject {
+        put("module_name", module); put("control", enabled); put("enable", enabled); put("print_halt", printHalt)
+    })
+}
+
+/** Changes one of the firmware print-option flags, such as automatic step-loss recovery. */
+fun Printer.setPrintOption(option: String, enabled: Boolean, err: (String) -> Unit) = Repo.act(err) {
+    bambu("print_option", this@setPrintOption, buildJsonObject {
+        put(option, enabled)
+        if (option == "auto_recovery") put("option", if (enabled) 1 else 0)
+    })
+}
+
+/** Updates all three AMS read/remaining-filament preferences in one firmware command. */
+fun Printer.setAmsSettings(amsId: Int, startup: Boolean, insertion: Boolean, remaining: Boolean, err: (String) -> Unit) = Repo.act(err) {
+    bambu("ams_user_setting", this@setAmsSettings, buildJsonObject {
+        put("ams_id", amsId); put("startup_read_option", startup); put("tray_read_option", insertion); put("calibrate_remain_flag", remaining)
+    })
+}
 
 /** An HLS address for a camera, from Home Assistant's own streaming (valid while it's being watched). */
 suspend fun HaBackend.hlsUrl(cameraId: String): String {
@@ -362,23 +410,73 @@ suspend fun HaBackend.ensureOnPrinter(serial: String, f: CachedFile): String {
 }
 
 /** Starts a print file that is on the printer. [amsMapping]: the AMS tray (0-based, AMS 1 = 0–3) for each filament. */
-suspend fun HaBackend.startPrint(p: Printer, path: String, plate: Int, amsMapping: List<Int>?, timelapse: Boolean, bedLeveling: Boolean, flowCali: Boolean) =
+suspend fun HaBackend.startPrint(p: Printer, path: String, plate: Int, amsMapping: List<Int>?, timelapse: Boolean, bedLeveling: Boolean, flowCali: Boolean, bedType: String = "auto") =
     bambu("print_project_file", p, buildJsonObject {
         put("filepath", path); put("plate", plate); put("timelapse", timelapse); put("bed_leveling", bedLeveling)
-        put("flow_cali", flowCali); put("vibration_cali", false); put("layer_inspect", true)
-        put("use_ams", amsMapping != null)
-        if (amsMapping != null) put("ams_mapping", amsMapping.joinToString(","))
+        put("flow_cali", flowCali); if (this@startPrint is DirectPrinter) put("bed_type", bedType); put("vibration_cali", false); put("layer_inspect", true)
+        val useAms = amsMapping?.any(::isAmsTrayId) == true
+        put("use_ams", useAms)
+        if (useAms) put("ams_mapping", amsMapping!!.joinToString(","))
     })
+
+/** The bed type names used by the printer's project-file command. */
+fun buildPlateCode(label: String) = when (label) {
+    "Textured PEI Plate" -> "textured_plate"
+    "Smooth PEI Plate / High Temp Plate", "Smooth PEI Plate", "High Temp Plate" -> "hot_plate"
+    "Cool Plate SuperTack" -> "supertack_plate"
+    "Engineering Plate" -> "eng_plate"
+    "Cool Plate" -> "cool_plate"
+    else -> "auto"
+}
+
+/** The Handy label for a Bambu Studio plate value found in a 3MF's plate metadata. */
+fun buildPlateLabel(value: String?) = when (value?.lowercase()) {
+    "textured pei plate", "textured_plate" -> "Textured PEI Plate"
+    "high temp plate", "hot plate", "hot_plate" -> "Smooth PEI Plate / High Temp Plate"
+    "supertack plate", "supertack_plate" -> "Cool Plate SuperTack"
+    "engineering plate", "eng_plate", "engineering_plate" -> "Engineering Plate"
+    "cool plate", "cool_plate" -> "Cool Plate"
+    else -> null
+}
+
+/** Stable key for a model filament; presets must never be reused solely because two models have the same slot number. */
+fun filamentKey(type: String, colour: String) = "${type.trim().uppercase()}|${hexColor(colour).toString(16)}"
+
+/** The absolute tray ID used by the printer protocol: standard AMS 0–103, AMS HT 128–135. */
+fun AmsInfo.isSingleSlot() = model.contains("HT", ignoreCase = true) || model.contains("N3S", ignoreCase = true) || protocolId?.let { it >= 128 } == true
+
+/** The protocol's AMS unit ID; unlike [index], HT units start at 128. */
+fun AmsInfo.amsId(): Int = protocolId?.takeIf { !isSingleSlot() || it >= 128 } ?: if (isSingleSlot()) 128 else index - 1
+
+fun AmsInfo.trayId(slot: Int): Int {
+    require(slot in 0 until if (isSingleSlot()) 1 else 4)
+    return if (isSingleSlot()) amsId() else amsId() * 4 + slot
+}
+
+/** Returns this AMS's physical slot for an absolute tray ID, or null when it belongs elsewhere. */
+fun AmsInfo.slotForTrayId(id: Int): Int? {
+    return if (isSingleSlot()) id.takeIf { it == amsId() }?.let { 0 }
+    else id.takeIf { it in amsId() * 4 until (amsId() + 1) * 4 }?.minus(amsId() * 4)
+}
+
+fun isAmsTrayId(id: Int) = id in 0..103 || id in 128..135
+
+/** The currently loaded absolute tray IDs (plus 254 for the external spool). */
+fun Printer.loadedTrayIds(): Set<Int> = ams.flatMap { (a, spools) ->
+    spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) } }
+}.toSet() + external.filter { it.known }.map { 254 }
 
 /** For each filament of a print, the loaded tray that matches best: same type and nearest colour; null if none fits. */
 fun autoMapping(p: Printer, filaments: List<Map<String, String>>): List<Int>? {
-    val trays = p.ams.flatMap { (a, spools) -> spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { (a.index - 1) * 4 + i to it } } }
+    val trays = p.ams.flatMap { (a, spools) -> spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) to it } } } +
+        p.external.filter { it.known }.map { 254 to it }
     if (trays.isEmpty() || filaments.isEmpty()) return null
-    return filaments.map { f ->
+    val mapped = filaments.map { f ->
         val want = hexColor(f["color"])
-        val sameType = trays.filter { it.second.type.equals(f["type"], ignoreCase = true) }.ifEmpty { trays }
-        sameType.minBy { colorDistance(it.second.color, want) }.first
+        val sameType = trays.filter { it.second.type.equals(f["type"], ignoreCase = true) }
+        sameType.minByOrNull { colorDistance(it.second.color, want) }?.first ?: -1
     }
+    return mapped.takeIf { it.all { slot -> slot >= 0 } }
 }
 
 fun colorDistance(a: Long, b: Long): Int {

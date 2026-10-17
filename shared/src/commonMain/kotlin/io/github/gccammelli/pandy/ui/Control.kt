@@ -86,11 +86,12 @@ fun ControlScreen(p: Printer) {
                 LightCard(p, Modifier.weight(1f), err)
             }
             Gap(10.dp)
-            NozzleCard(p) { sheet = "nozzle" }
-            Gap(10.dp)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TempCard("Heatbed", p.bed, p.bedTarget, Modifier.weight(1f)) { sheet = "bed" }
-                TempCard("Chamber", p.chamber, p.chamberTarget, Modifier.weight(1f), if (p.hasChamberHeater) { { sheet = "chamber" } } else null)
+                NozzleCard(p, Modifier.weight(1f)) { sheet = "nozzle" }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TempCard("Heatbed", p.bed, p.bedTarget, Modifier.fillMaxWidth()) { sheet = "bed" }
+                    TempCard("Chamber", p.chamber, p.chamberTarget, Modifier.fillMaxWidth(), p.chamber?.let { { sheet = if (p.hasChamberHeater) "chamber" else "chamberInfo" } })
+                }
             }
             Gap(10.dp)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -107,8 +108,17 @@ fun ControlScreen(p: Printer) {
             listOf(35, 45, 90, 120), p.bedTarget, 0..120, { sheet = null }) { p.setTarget("bed", it, err) }
         "chamber" -> TempSheet("Chamber temperature", "Lower chamber temperatures are suitable for PLA and PETG. Higher chamber temperatures are suitable for warp-prone materials like ABS/ASA/PC/PA.",
             listOf(0, 40, 50, 60), p.chamberTarget, 0..65, { sheet = null }) { p.setTarget("chamber", it, err) }
+        "chamberInfo" -> ChamberInfoSheet(p) { sheet = null }
         "fan" -> FanSheet(p, err) { sheet = null }
     }
+}
+
+@Composable
+private fun ChamberInfoSheet(p: Printer, close: () -> Unit) = Sheet(close, "Chamber temperature", centeredTitle = true, confirm = null) {
+    T("${p.chamber?.toInt() ?: "--"}°C", 28.sp, weight = FontWeight.Bold, modifier = Modifier.fillMaxWidth(), align = TextAlign.Center)
+    Gap(16.dp)
+    T("The chamber temperature is shown by the printer. This model does not have a chamber heater, so Pandy cannot set it.", 14.sp, C.Sub, lh = 20.sp)
+    Gap(20.dp)
 }
 
 @Composable
@@ -148,12 +158,13 @@ private fun NozzleSheet(p: Printer, err: (String) -> Unit, close: () -> Unit) {
             Column(Modifier.width(110.dp).clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 T("Extruder", 13.sp, C.Text)
                 Gap(10.dp)
-                KeyButton(Icons.Default.ArrowDropUp) { p.extrude(false, err) } // up: pull filament back
+                KeyButton(Icons.Default.ArrowDropUp, enabled = !p.printing && (p.nozzle ?: 0.0) >= 170) { p.extrude(false, err) } // up: pull filament back
                 Gap(16.dp)
-                KeyButton(Icons.Default.ArrowDropDown) { p.extrude(true, err) }
+                KeyButton(Icons.Default.ArrowDropDown, enabled = !p.printing && (p.nozzle ?: 0.0) >= 170) { p.extrude(true, err) }
             }
         }
-        if ((p.nozzle ?: 0.0) < 170) T("Heat the nozzle to 170°C or more before extruding.", 12.sp, C.Sub, modifier = Modifier.padding(top = 6.dp))
+        if (p.printing) T("Extrusion is unavailable while printing.", 12.sp, C.Sub, modifier = Modifier.padding(top = 6.dp))
+        else if ((p.nozzle ?: 0.0) < 170) T("Heat the nozzle to 170°C or more before extruding.", 12.sp, C.Sub, modifier = Modifier.padding(top = 6.dp))
         Gap(16.dp)
         T("Nozzle temperature", 14.sp)
         Gap(8.dp)
@@ -175,9 +186,9 @@ private fun NozzleSheet(p: Printer, err: (String) -> Unit, close: () -> Unit) {
 }
 
 @Composable
-private fun KeyButton(icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) =
-    Box(Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(C.Track).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(icon, null, Modifier.size(36.dp), tint = C.Text)
+private fun KeyButton(icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean, onClick: () -> Unit) =
+    Box(Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(C.Track).clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
+        Icon(icon, null, Modifier.size(36.dp), tint = if (enabled) C.Text else C.Faint)
     }
 
 /** Handy's temperature entry: a number field in °C, a picture with a hint, presets and Done. */
@@ -227,9 +238,9 @@ private fun FanSheet(p: Printer, err: (String) -> Unit, close: () -> Unit) = She
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.weight(1f), verticalAlignment = Alignment.Bottom) { T("$pct", 20.sp, weight = FontWeight.Bold); T("%", 12.sp, C.Sub) }
-                    StepButton(Icons.Default.Remove, pct > 0) { p.setFan(id, ((pct - 10) / 10 * 10).coerceAtLeast(0), err) }
+                    StepButton(Icons.Default.Remove, pct > 0) { p.setFan(id, (pct - 10).coerceAtLeast(0), err) }
                     Spacer(Modifier.width(8.dp))
-                    StepButton(Icons.Default.Add, pct < 100) { p.setFan(id, ((pct + 10) / 10 * 10).coerceAtMost(100), err) }
+                    StepButton(Icons.Default.Add, pct < 100) { p.setFan(id, (pct + 10).coerceAtMost(100), err) }
                 }
             }
         }
@@ -312,4 +323,3 @@ private fun Pad(modifier: Modifier, enabled: Boolean, move: (String, Int) -> Uni
         T("10", 11.sp, C.Sub, modifier = Modifier.align(Alignment.Center).padding(start = 130.dp, bottom = 130.dp), align = TextAlign.Center)
     }
 }
-

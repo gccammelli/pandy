@@ -38,6 +38,8 @@ interface PlatformUi {
     fun pickImage(done: (ByteArray?) -> Unit)
     /** Saves a JPEG to the phone's photos; [done] gets null on success or the error. */
     fun saveImage(jpeg: ByteArray, name: String, done: (Throwable?) -> Unit)
+    /** Saves a downloaded file (Downloads on Android, the standard Files/share sheet on iOS). */
+    fun saveFile(name: String, mime: String, bytes: ByteArray, done: (Throwable?) -> Unit)
     /** Full-screen live view turns the phone sideways; false restores the normal orientation. */
     fun landscape(on: Boolean)
 }
@@ -55,7 +57,7 @@ expect fun VideoPlayer(url: String, muted: Boolean, modifier: androidx.compose.u
  * A file a web page handed over: an address to fetch (with the page's [cookies] for it), or the [bytes] themselves
  * when the page made the file in the browser (a blob).
  */
-class WebDownload(val url: String?, val name: String, val cookies: String?, val bytes: ByteArray? = null)
+class WebDownload(val url: String?, val name: String, val cookies: String?, val bytes: ByteArray? = null, val printSheet: Boolean = false)
 
 /**
  * A web page (MakerWorld). [onDownload] gets each file the page downloads, and each "open in Bambu Studio" link, instead
@@ -70,4 +72,7 @@ class WebState {
     var canGoBack by androidx.compose.runtime.mutableStateOf(false)
     var goBack: () -> Unit = {}
     var currentUrl by androidx.compose.runtime.mutableStateOf("")
+    var hidePromotions by androidx.compose.runtime.mutableStateOf(false)
+    var onHidePromotions: (() -> Unit)? = null
+    var overlayBack: (() -> Unit)? = null
 }

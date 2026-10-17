@@ -120,6 +120,19 @@ object Repo {
         token = null; extras = ha as? DirectPrinter
     }
 
+    /** Removes only the saved direct printer; Home Assistant and slicer settings remain available. */
+    fun removeDirectPrinter() {
+        stop()
+        (ha as? DirectPrinter)?.stop()
+        store.settings.putString("lan_ip", null); store.settings.putString("lan_serial", null)
+        store.settings.putString("lan_model", null); store.settings.putString("lan_name", null)
+        store.secrets.set("lan_code", null)
+        store.settings.putString("mode", "lan")
+        extras = extras?.takeUnless { it is DirectPrinter }
+        ha = null
+        state.value = UiState()
+    }
+
     fun startDemo() {
         store.settings.putString("demo", "true")
         ha = FakeHomeAssistant(); extras = ha
@@ -147,6 +160,23 @@ object Repo {
 
     fun setting(key: String) = store.settings.getString(key)
     fun setSetting(key: String, value: String?) = store.settings.putString(key, value)
+
+    val timelapseDefault get() = store.settings.getString("timelapse_default") == "true"
+    fun setTimelapseDefault(value: Boolean) = store.settings.putString("timelapse_default", value.toString())
+    /** Keep unsupported controls visible by default so users can see what Pandy does not expose. */
+    val showUnavailable get() = store.settings.getString("show_unavailable") != "false"
+    fun setShowUnavailable(value: Boolean) = store.settings.putString("show_unavailable", value.toString())
+    val hidePromotions get() = store.settings.getString("hide_promotions") == "true"
+    fun setHidePromotions(value: Boolean) = store.settings.putString("hide_promotions", value.toString())
+
+    fun filamentPreset(serial: String): Map<String, Int> = store.settings.getString("filament_preset_$serial").orEmpty().split(',').mapNotNull { item ->
+        val parts = item.split(':', limit = 2)
+        if (parts.size == 2 && '|' in parts[0]) parts[1].toIntOrNull()?.let { parts[0] to it } else null
+    }.toMap()
+
+    fun setFilamentPreset(serial: String, mapping: Map<String, Int>) {
+        store.settings.putString("filament_preset_$serial", mapping.entries.joinToString(",") { "${it.key}:${it.value}" }.ifBlank { null })
+    }
 
     // ---------- Live updates ----------
 
@@ -257,4 +287,3 @@ fun Printer.load(s: Spool, err: (String) -> Unit) = Repo.act(err) {
 fun Printer.toggleCamera(on: Boolean, err: (String) -> Unit) = Repo.act(err) {
     call("switch", if (on) "turn_on" else "turn_off", buildJsonObject { put("entity_id", info.ids["switch.camera"] ?: return@act) })
 }
-

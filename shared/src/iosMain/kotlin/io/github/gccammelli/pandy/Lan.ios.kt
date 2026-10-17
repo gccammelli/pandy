@@ -24,8 +24,10 @@ import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -55,8 +57,10 @@ import platform.Security.SSLWrite
 import platform.Security.SecCertificateCopyCommonName
 import platform.Security.SecCertificateCreateWithData
 import platform.Security.SecCertificateRef
+import platform.Security.SecPolicyCreateBasicX509
 import platform.Security.SecTrustEvaluate
 import platform.Security.SecTrustGetCertificateAtIndex
+import platform.Security.SecTrustSetPolicies
 import platform.Security.SecTrustRefVar
 import platform.Security.SecTrustSetAnchorCertificates
 import platform.Security.SecTrustSetAnchorCertificatesOnly
@@ -77,6 +81,7 @@ import platform.darwin.inet_addr
 import platform.posix.AF_UNSPEC
 import platform.posix.AF_INET
 import platform.posix.EAGAIN
+import platform.posix.EINTR
 import platform.posix.EWOULDBLOCK
 import platform.posix.IPPROTO_IP
 import platform.posix.IP_ADD_MEMBERSHIP
@@ -113,6 +118,7 @@ private val TLS_READ = staticCFunction(::tlsRead)
 private val TLS_WRITE = staticCFunction(::tlsWrite)
 
 private val CERTS = listOf("bambu.cert", "bambu_h2c_251122.cert", "bambu_p2s_250626.cert", "bambu_x2c_260425.cert")
+private const val SO_NOSIGPIPE_VALUE = 0x1022 // Darwin's Kotlin POSIX bindings do not expose this socket option consistently.
 
 /** SecureTransport's peer ID is the session-cache key; sharing it makes FTPS data TLS resume the control session. */
 internal suspend fun openTls(c: LanConfig, port: Int, peerId: String = "pandy-${c.serial}-${c.ip}:$port"): IosTlsSocket =
@@ -132,7 +138,9 @@ private suspend fun trustAnchors(): List<SecCertificateRef> = CERTS.map { name -
 
 internal class IosTlsSocket private constructor(private val fd: Int, private val ssl: SSLContextRef) {
     private val ref = StableRef.create(this)
-    private var closed = false
+    private val lifecycleLock = NSLock()
+    private val sslLock = NSLock()
+    private var disposed = false
 
     init {
         check(SSLSetIOFuncs(ssl, TLS_READ, TLS_WRITE) == errSecSuccess) { "Couldn't configure TLS I/O" }
@@ -146,9 +154,11 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
 
         internal suspend fun fromFd(fd: Int, serial: String, peerId: String): IosTlsSocket {
             var socket: IosTlsSocket? = null
+            val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { socket?.close() }
             return try {
                 val ssl = checkNotNull(SSLCreateContext(null, SSLProtocolSide.kSSLClientSide, SSLConnectionType.kSSLStreamType))
                 socket = IosTlsSocket(fd, ssl)
+                currentCoroutineContext().ensureActive()
                 val peer = peerId.encodeToByteArray()
                 peer.usePinned {
                     check(SSLSetPeerID(ssl, it.addressOf(0), peer.size.toULong()) == errSecSuccess) { "Couldn't configure TLS session" }
@@ -157,11 +167,12 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
                 check(SSLSetProtocolVersionMax(ssl, kTLSProtocol12) == errSecSuccess) { "Couldn't configure TLS" }
                 val anchors = trustAnchors()
                 try { socket!!.handshake(serial, anchors) } finally { anchors.forEach(::CFRelease) }
+                setTimeouts(fd, 1)
                 socket!!
             } catch (e: Exception) {
-                socket?.close() ?: close(fd)
+                socket?.let { it.close(); it.dispose() } ?: close(fd)
                 throw e
-            }
+            } finally { cancellation?.dispose() }
         }
     }
 
@@ -169,19 +180,25 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
         check(SSLSetSessionOption(ssl, kSSLSessionOptionBreakOnServerAuth, true) == errSecSuccess) {
             "Couldn't configure printer certificate verification"
         }
-        var status = SSLHandshake(ssl)
+        val deadline = getTimeMillis() + 30_000
+        var status: Int
         var verified = false
-        if (status == errSSLWouldBlock) status = SSLHandshake(ssl)
+        while (true) {
+            status = SSLHandshake(ssl)
+            if (status != errSSLWouldBlock) break
+            if (getTimeMillis() >= deadline) error("TLS handshake timed out")
+        }
         if (status == errSSLServerAuthCompleted) {
             verifyPeer(serial, anchors)
             verified = true
-        }
-        else if (status != errSecSuccess) error("TLS handshake failed ($status)")
-        if (status == errSSLServerAuthCompleted) {
             check(SSLSetSessionOption(ssl, kSSLSessionOptionBreakOnServerAuth, false) == errSecSuccess) {
                 "Couldn't continue TLS handshake"
             }
-            status = SSLHandshake(ssl)
+            while (true) {
+                status = SSLHandshake(ssl)
+                if (status != errSSLWouldBlock) break
+                if (getTimeMillis() >= deadline) error("TLS handshake timed out")
+            }
         }
         if (status != errSecSuccess) error("TLS handshake failed ($status)")
         if (!verified) verifyPeer(serial, anchors)
@@ -198,6 +215,9 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
                 check(SecTrustSetAnchorCertificates(trust, anchorArray) == errSecSuccess) { "Couldn't configure printer trust" }
                 check(SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess) { "Couldn't configure printer trust" }
                 check(SecTrustSetNetworkFetchAllowed(trust, false) == errSecSuccess) { "Couldn't configure printer trust" }
+                val policy = checkNotNull(SecPolicyCreateBasicX509())
+                try { check(SecTrustSetPolicies(trust, policy) == errSecSuccess) { "Couldn't configure printer trust" } }
+                finally { CFRelease(policy) }
             } finally { CFRelease(anchorArray) }
             val result = alloc<UIntVar>()
             check(SecTrustEvaluate(trust, result.ptr) == errSecSuccess &&
@@ -217,51 +237,100 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
         } finally { CFRelease(trust) }
     }
 
-    fun read(dst: ByteArray, offset: Int = 0, length: Int = dst.size - offset): Int = memScoped {
+    fun read(dst: ByteArray, offset: Int = 0, length: Int = dst.size - offset): Int {
         require(offset >= 0 && length >= 0 && offset + length <= dst.size)
-        val n = alloc<ULongVar>()
-        val status = dst.usePinned { SSLRead(ssl, it.addressOf(offset), length.toULong(), n.ptr) }
-        when {
-            status == errSecSuccess -> n.value.toInt().takeIf { it > 0 } ?: -1
-            status == errSSLClosedGraceful || status == errSSLClosedNoNotify -> -1
-            status == errSSLWouldBlock -> throw ApiException("The printer connection timed out")
-            else -> throw ApiException("The printer connection failed ($status)")
+        sslLock.lock()
+        try {
+            return memScoped {
+                val n = alloc<ULongVar>()
+                val status = dst.usePinned { SSLRead(ssl, it.addressOf(offset), length.toULong(), n.ptr) }
+                when {
+                    status == errSecSuccess -> n.value.toInt().takeIf { it > 0 } ?: -1
+                    status == errSSLClosedGraceful || status == errSSLClosedNoNotify -> -1
+                    status == errSSLWouldBlock -> n.value.toInt()
+                    else -> throw ApiException("The printer connection failed ($status)")
+                }
+            }
+        } finally {
+            sslLock.unlock()
         }
     }
 
-    fun readFully(dst: ByteArray) {
+    fun readFully(dst: ByteArray, timeoutMillis: Long = 45_000) {
         var at = 0
+        var progress = getTimeMillis()
         while (at < dst.size) {
             val n = read(dst, at, dst.size - at)
             if (n < 0) throw ApiException("The printer closed the connection")
+            if (n == 0) {
+                if (getTimeMillis() - progress >= timeoutMillis) throw ApiException("The printer read timed out")
+            } else {
+                progress = getTimeMillis()
+            }
             at += n
         }
     }
 
-    fun writeFully(bytes: ByteArray) {
+    fun writeFully(bytes: ByteArray, timeoutMillis: Long = 45_000) {
         var at = 0
+        var progress = getTimeMillis()
         while (at < bytes.size) {
-            val n = write(bytes, at, bytes.size - at)
-            if (n <= 0) throw ApiException("The printer closed the connection")
+            val n = write(bytes, at, bytes.size - at, timeoutMillis)
+            if (n < 0) throw ApiException("The printer closed the connection")
+            if (n == 0) {
+                if (getTimeMillis() - progress >= timeoutMillis) throw ApiException("The printer write timed out")
+            } else {
+                progress = getTimeMillis()
+            }
             at += n
         }
     }
 
-    private fun write(bytes: ByteArray, offset: Int, length: Int): Int = memScoped {
-        val n = alloc<ULongVar>()
-        val status = bytes.usePinned { SSLWrite(ssl, it.addressOf(offset), length.toULong(), n.ptr) }
-        when {
-            status == errSecSuccess -> n.value.toInt()
-            status == errSSLWouldBlock -> throw ApiException("The printer connection timed out")
-            else -> throw ApiException("The printer connection failed ($status)")
+    private fun write(bytes: ByteArray, offset: Int, length: Int, timeoutMillis: Long): Int {
+        sslLock.lock()
+        try {
+            return memScoped {
+                val n = alloc<ULongVar>()
+                var status = bytes.usePinned { SSLWrite(ssl, it.addressOf(offset), length.toULong(), n.ptr) }
+                if (status == errSSLWouldBlock) {
+                    // SecureTransport can accept the whole application buffer before its encrypted output is flushed.
+                    val deadline = getTimeMillis() + timeoutMillis
+                    while (true) {
+                        n.value = 0u
+                        status = SSLWrite(ssl, null, 0u, n.ptr)
+                        if (status == errSecSuccess) return@memScoped length
+                        if (status != errSSLWouldBlock) throw ApiException("The printer connection failed ($status)")
+                        if (getTimeMillis() >= deadline) throw ApiException("The printer write timed out")
+                    }
+                }
+                if (status != errSecSuccess) throw ApiException("The printer connection failed ($status)")
+                n.value.toInt()
+            }
+        } finally {
+            sslLock.unlock()
         }
     }
 
     fun close() {
-        if (closed) return
-        closed = true
-        runCatching { SSLClose(ssl) }
+        lifecycleLock.lock()
+        try { if (!disposed) shutdown(fd, SHUT_RDWR) } finally { lifecycleLock.unlock() }
+    }
+
+    /** Releases SecureTransport only after the read/write loop has returned; close() may be called from another thread. */
+    internal fun dispose() {
+        lifecycleLock.lock()
+        val release = !disposed
+        if (release) disposed = true
+        lifecycleLock.unlock()
+        if (!release) return
         shutdown(fd, SHUT_RDWR)
+        sslLock.lock()
+        try {
+            runCatching { SSLClose(ssl) }
+            runCatching { CFRelease(ssl) }
+        } finally {
+            sslLock.unlock()
+        }
         close(fd)
         ref.dispose()
     }
@@ -280,7 +349,7 @@ internal fun tcpConnect(host: String, port: Int): Int = memScoped {
         val candidate = socket(info.ai_family, info.ai_socktype, info.ai_protocol)
         if (candidate >= 0) {
             if (connect(candidate, info.ai_addr, info.ai_addrlen) == 0) {
-                setTimeouts(candidate)
+                setTimeouts(candidate, 30)
                 fd = candidate
                 break
             }
@@ -293,10 +362,13 @@ internal fun tcpConnect(host: String, port: Int): Int = memScoped {
     fd
 }
 
-private fun setTimeouts(fd: Int) = memScoped {
-    val timeout = alloc<timeval>().apply { tv_sec = 30; tv_usec = 0 }
+private fun setTimeouts(fd: Int, seconds: Int) = memScoped {
+    // SecureTransport calls must yield between short socket timeouts so the writer can share one SSL context safely.
+    val timeout = alloc<timeval>().apply { tv_sec = seconds.toLong(); tv_usec = 0 }
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, timeout.ptr, sizeOf<timeval>().toUInt())
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, timeout.ptr, sizeOf<timeval>().toUInt())
+    val noSigPipe = alloc<IntVar>().apply { value = 1 }
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE_VALUE, noSigPipe.ptr, sizeOf<IntVar>().toUInt())
 }
 
 private fun tlsRead(connection: CPointer<out kotlinx.cinterop.CPointed>?, data: CPointer<out kotlinx.cinterop.CPointed>?, length: CPointer<ULongVar>?): Int {
@@ -306,7 +378,8 @@ private fun tlsRead(connection: CPointer<out kotlinx.cinterop.CPointed>?, data: 
     return when {
         n > 0L -> { length.pointed.value = n.toULong(); errSecSuccess }
         n == 0L -> { length.pointed.value = 0uL; errSSLClosedGraceful }
-        platform.posix.posix_errno() == EAGAIN || platform.posix.posix_errno() == EWOULDBLOCK -> errSSLWouldBlock
+        platform.posix.posix_errno() == EAGAIN || platform.posix.posix_errno() == EWOULDBLOCK -> { length.pointed.value = 0u; errSSLWouldBlock }
+        platform.posix.posix_errno() == EINTR -> { length.pointed.value = 0u; errSSLWouldBlock }
         else -> errSSLClosedNoNotify
     }
 }
@@ -318,7 +391,10 @@ private fun tlsWrite(connection: CPointer<out kotlinx.cinterop.CPointed>?, data:
     return if (n >= 0) {
         length.pointed.value = n.toULong()
         errSecSuccess
-    } else if (platform.posix.posix_errno() == EAGAIN || platform.posix.posix_errno() == EWOULDBLOCK) errSSLWouldBlock else errSSLClosedNoNotify
+    } else if (platform.posix.posix_errno() == EINTR || platform.posix.posix_errno() == EAGAIN || platform.posix.posix_errno() == EWOULDBLOCK) {
+        length.pointed.value = 0u
+        errSSLWouldBlock
+    } else errSSLClosedNoNotify
 }
 
 actual fun lanLink(c: LanConfig): LanLink = IosMqttLink(c)
@@ -330,6 +406,7 @@ private class IosMqttLink(private val c: LanConfig) : LanLink {
     override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) = withContext(Dispatchers.Default) {
         val s = openTls(c, 8883)
         socket = s
+        val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { s.close() }
         try {
             send(Mqtt.connect("pandy-${c.serial}", "bblp", c.code))
             val connack = Mqtt.decodeConnack(MqttReader(read = { size -> ByteArray(size).also(s::readFully) }).next())
@@ -355,19 +432,22 @@ private class IosMqttLink(private val c: LanConfig) : LanLink {
                         if (message.topic == "device/${c.serial}/report") onMessage(message.payload.decodeToString())
                     }
                 }
-            } finally { pinger.cancel() }
+            } finally { s.close(); pinger.cancelAndJoin() }
         } finally {
-            if (socket === s) socket = null
-            s.close()
+            cancellation?.dispose()
+            writeLock.lock()
+            try {
+                if (socket === s) socket = null
+                s.dispose()
+            } finally { writeLock.unlock() }
         }
     }
 
     override fun publish(payload: String) = send(Mqtt.publish("device/${c.serial}/request", payload))
 
     private fun send(packet: ByteArray) {
-        val s = socket ?: throw ApiException("Not connected to the printer")
         writeLock.lock()
-        try { s.writeFully(packet) } finally { writeLock.unlock() }
+        try { (socket ?: throw ApiException("Not connected to the printer")).writeFully(packet) } finally { writeLock.unlock() }
     }
 
     override fun close() { socket?.close() }
@@ -375,6 +455,7 @@ private class IosMqttLink(private val c: LanConfig) : LanLink {
 
 actual suspend fun lanJpegStream(c: LanConfig, onFrame: (ByteArray) -> Unit) = withContext(Dispatchers.Default) {
     val socket = openTls(c, 6000)
+    val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { socket.close() }
     try {
         val login = ByteArray(80)
         fun intLE(at: Int, value: Int) {
@@ -396,7 +477,10 @@ actual suspend fun lanJpegStream(c: LanConfig, onFrame: (ByteArray) -> Unit) = w
             socket.readFully(image)
             onFrame(image)
         }
-    } finally { socket.close() }
+    } finally {
+        cancellation?.dispose()
+        socket.dispose()
+    }
 }
 
 /** iOS multicast may require an entitlement unavailable to sideloaded apps; the user can enter the printer IP. */
@@ -450,4 +534,4 @@ actual suspend fun discoverPrinters(millis: Long): List<FoundPrinter> = withCont
 
 private fun shortNetwork(value: Int) = (((value ushr 8) and 0xFF) or ((value and 0xFF) shl 8)).toUShort()
 
-private fun getTimeMillis() = platform.Foundation.NSDate().timeIntervalSince1970.toLong() * 1000
+internal fun getTimeMillis() = (platform.Foundation.NSDate().timeIntervalSince1970 * 1000.0).toLong()

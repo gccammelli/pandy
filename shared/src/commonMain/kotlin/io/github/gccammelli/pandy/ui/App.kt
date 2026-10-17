@@ -56,6 +56,10 @@ sealed interface Screen {
     data object Skip : Screen
     data object LiveFull : Screen
     data object PrinterSettings : Screen
+    data object Calibration : Screen
+    data object PrintOptions : Screen
+    data object AmsSettings : Screen
+    data object LiveviewSettings : Screen
     data object Assistant : Screen
     data object Files : Screen
     data object Filament : Screen
@@ -86,7 +90,7 @@ fun Root() {
     val p = st.printer()
     if (p == null) return Box(Modifier.fillMaxSize().background(C.Bg), contentAlignment = Alignment.Center) {
         if (st.printers != null) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-            T("Home Assistant has no Bambu Lab printers.", 15.sp, C.Sub); Gap(16.dp); AccentButton("Retry") { Repo.restart() }
+            T(if (Repo.direct) "No printer found on the local network." else if (Repo.demo) "The demo printer is unavailable." else "Home Assistant has no Bambu Lab printers.", 15.sp, C.Sub); Gap(16.dp); AccentButton("Retry") { Repo.restart() }
         } else if (st.error != null) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
             T(st.error!!, 15.sp, C.Sub); Gap(16.dp); AccentButton("Retry") { Repo.restart() }
             Gap(12.dp); T("Log out", 15.sp, C.Sub, modifier = Modifier.clickable { Repo.logout() }.padding(12.dp))
@@ -99,6 +103,10 @@ fun Root() {
         Screen.Skip -> SkipScreen(p)
         Screen.LiveFull -> LiveFullScreen(p)
         Screen.PrinterSettings -> PrinterSettingsScreen(p)
+        Screen.Calibration -> CalibrationScreen(p)
+        Screen.PrintOptions -> PrintOptionsScreen(p)
+        Screen.AmsSettings -> AmsSettingsScreen(p)
+        Screen.LiveviewSettings -> LiveviewSettingsScreen()
         Screen.Assistant -> AssistantScreen(p)
         Screen.Files -> FilesScreen(p)
         Screen.Filament -> FilamentScreen(p)

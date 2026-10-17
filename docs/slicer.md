@@ -18,7 +18,7 @@ x86-64 Linux, so not on a Raspberry Pi). It needs about 2 GB of disk and some CP
 2. Install **Pandy Slicer**, start it. (The first build downloads Bambu Studio, about 220 MB; give it a few minutes.)
 3. Optional: in its Configuration tab set a **token**, so only Pandy can use it.
 4. In Pandy: Me › Settings › **Slicer for MakerWorld prints**: your Home Assistant's address with port **8737**
-   (for example `10.1.2.10:8737`), and the token if you set one. **Save** checks it answers.
+   (for example `slicer.local:8737`), and the token if you set one. **Save** checks it answers.
 
 ## Option B: Docker on any computer
 
@@ -58,6 +58,7 @@ local network, which needs it.
 |---|---|
 | `GET /health` | `{"ok": true, "version": "<Bambu Studio version>"}` |
 | `POST /slice?plate=1&name=<name>` | body: the 3MF; answers the sliced `.gcode.3mf`, with a JSON summary in `X-Pandy-Result` |
+| `POST /slice?plate=1&name=<name>&bed_type=textured_plate` | optionally applies the selected Bambu bed to that plate before slicing |
 | `POST /slice?plate=1&name=<name>&upload=1` | also uploads it: headers `X-Printer-Ip`, `X-Printer-Serial`, `X-Printer-Code`; answers `{"path": "cache/<name>.gcode.3mf", "plates": […]}` |
 
 With a token set, send `Authorization: Bearer <token>`.

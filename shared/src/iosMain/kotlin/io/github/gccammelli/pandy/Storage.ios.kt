@@ -8,6 +8,8 @@ import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -27,6 +29,7 @@ import platform.Foundation.writeToFile
 actual fun printerStorage(c: LanConfig): PrinterStorage = IosFtpsStorage(c)
 
 actual fun inflateRaw(data: ByteArray, size: Int): ByteArray {
+    require(size >= 0)
     if (size == 0) return ByteArray(0)
     val inputBytes = if (data.isEmpty()) ByteArray(1) else data
     return inputBytes.usePinned { input ->
@@ -61,24 +64,31 @@ actual suspend fun cacheFile(name: String, bytes: ByteArray): String = withConte
 }
 
 private class IosFtpsStorage(private val c: LanConfig) : PrinterStorage {
-    private val lock = locks.getOrPut(c.serial) { Mutex() }
+    private val lock = lockFor(c.serial)
     private val peerId = "pandy-ftps-${c.serial}-${c.ip}:990"
 
     private class Lines(private val socket: IosTlsSocket) {
         private val buffer = ByteArray(4096)
         private var at = 0
         private var end = 0
+        private var progress = getTimeMillis()
 
         private fun byte(): Int {
-            if (at == end) {
+            while (at == end) {
                 val n = socket.read(buffer)
                 if (n < 0) return -1
+                if (n == 0) {
+                    if (getTimeMillis() - progress >= 45_000) throw ApiException("The printer response timed out")
+                    continue
+                }
+                progress = getTimeMillis()
                 at = 0; end = n
             }
             return buffer[at++].toInt() and 0xFF
         }
 
         fun readLine(): String {
+            progress = getTimeMillis()
             val out = ArrayList<Byte>()
             while (true) {
                 val b = byte()
@@ -92,6 +102,12 @@ private class IosFtpsStorage(private val c: LanConfig) : PrinterStorage {
 
     private class Session(private val c: LanConfig, val control: IosTlsSocket, private val peerId: String) {
         private val lines = Lines(control)
+        private var dataSocket: IosTlsSocket? = null
+
+        fun close() {
+            dataSocket?.close()
+            control.close()
+        }
 
         fun reply(): Pair<Int, String> {
             var line = lines.readLine()
@@ -104,15 +120,17 @@ private class IosFtpsStorage(private val c: LanConfig) : PrinterStorage {
         }
 
         fun cmd(command: String, ok: IntRange = 200..399): String {
+            require('\r' !in command && '\n' !in command) { "Invalid FTP command" }
             control.writeFully("$command\r\n".encodeToByteArray())
             val (code, line) = reply()
-            if (code !in ok) throw ApiException("Printer storage: ${line.drop(4).ifBlank { command.substringBefore(' ') + " failed" }}")
+            if (code !in ok) throw PrinterStorageException(code, line.drop(4).ifBlank { command.substringBefore(' ') + " failed" })
             return line
         }
 
         suspend fun data(command: String, rest: Long = 0): IosTlsSocket {
             val pasv = cmd("PASV")
             val values = Regex("""(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)""").find(pasv)?.groupValues?.drop(1)?.map { it.toInt() }
+                ?.takeIf { it.size == 6 && it.all { value -> value in 0..255 } }
                 ?: throw ApiException("Printer storage: invalid PASV reply")
             val fd = tcpConnect(c.ip, values[4] * 256 + values[5])
             try {
@@ -122,7 +140,7 @@ private class IosFtpsStorage(private val c: LanConfig) : PrinterStorage {
                 runCatching { platform.posix.close(fd) }
                 throw e
             }
-            return IosTlsSocket.fromFd(fd, c.serial, peerId)
+            return IosTlsSocket.fromFd(fd, c.serial, peerId).also { dataSocket = it }
         }
     }
 
@@ -131,22 +149,25 @@ private class IosFtpsStorage(private val c: LanConfig) : PrinterStorage {
             val control = openTls(c, 990, peerId)
             try {
                 val s = Session(c, control, peerId)
-                s.reply()
-                s.cmd("USER bblp", 300..399)
-                s.cmd("PASS ${c.code}", 200..299)
-                s.cmd("PBSZ 0")
-                s.cmd("PROT P")
-                s.cmd("TYPE I")
-                try { s.block() } finally { runCatching { s.cmd("QUIT") } }
-            } finally { control.close() }
+                val cancellation = currentCoroutineContext()[Job]?.invokeOnCompletion { s.close() }
+                try {
+                    s.reply()
+                    s.cmd("USER bblp", 300..399)
+                    s.cmd("PASS ${c.code}", 200..299)
+                    s.cmd("PBSZ 0")
+                    s.cmd("PROT P")
+                    s.cmd("TYPE I")
+                    try { s.block() } finally { runCatching { s.cmd("QUIT") } }
+                } finally { cancellation?.dispose() }
+            } finally { control.dispose() }
         }
     }
 
     override suspend fun list(dir: String): List<FileEntry> = session {
         val data = data("LIST $dir")
-        val bytes = try { data.readAll() } finally { data.close() }
+        val bytes = try { data.readAll() } finally { data.dispose() }
         val (code, line) = reply()
-        if (code !in 200..299) throw ApiException("Printer storage: ${line.drop(4)}")
+        if (code !in 200..299) throw PrinterStorageException(code, line.drop(4))
         val now = Clock.System.todayIn(TimeZone.currentSystemDefault())
         parseList(bytes.decodeToString().lineSequence().toList(), now.year, now.month.number)
     }
@@ -157,14 +178,20 @@ private class IosFtpsStorage(private val c: LanConfig) : PrinterStorage {
             if (length >= 0) {
                 val bytes = ByteArray(length)
                 var at = 0
+                var progress = getTimeMillis()
                 while (at < bytes.size) {
                     val n = data.read(bytes, at, bytes.size - at)
                     if (n < 0) break
+                    if (n == 0) {
+                        if (getTimeMillis() - progress >= 45_000) throw ApiException("The printer read timed out")
+                    } else {
+                        progress = getTimeMillis()
+                    }
                     at += n
                 }
                 bytes.copyOf(at)
             } else data.readAll()
-        } finally { data.close() }
+        } finally { data.dispose() }
         runCatching { reply() }
         out
     }
@@ -180,18 +207,24 @@ private class IosFtpsStorage(private val c: LanConfig) : PrinterStorage {
                 progress(sent.toFloat() / data.size)
             }
             if (data.isEmpty()) progress(1f)
-        } finally { output.close() }
+        } finally { output.dispose() }
         val (code, line) = reply()
-        if (code !in 200..299) throw ApiException("Printer storage: ${line.drop(4)}")
+        if (code !in 200..299) throw PrinterStorageException(code, line.drop(4))
     }
 
     private fun IosTlsSocket.readAll(): ByteArray {
         val out = GrowingBytes()
         val buffer = ByteArray(64 * 1024)
+        var progress = getTimeMillis()
         while (true) {
             val n = read(buffer)
+            if (n == 0) {
+                if (getTimeMillis() - progress >= 45_000) throw ApiException("The printer read timed out")
+                continue
+            }
             if (n < 0) return out.toByteArray()
             out.append(buffer, n)
+            progress = getTimeMillis()
         }
     }
 
@@ -208,5 +241,13 @@ private class IosFtpsStorage(private val c: LanConfig) : PrinterStorage {
         fun toByteArray() = bytes.copyOf(size)
     }
 
-    companion object { private val locks = mutableMapOf<String, Mutex>() }
+    companion object {
+        private val locks = mutableMapOf<String, Mutex>()
+        private val locksLock = platform.Foundation.NSLock()
+
+        private fun lockFor(serial: String): Mutex {
+            locksLock.lock()
+            return try { locks.getOrPut(serial) { Mutex() } } finally { locksLock.unlock() }
+        }
+    }
 }

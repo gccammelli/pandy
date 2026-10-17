@@ -2,6 +2,7 @@ package io.github.gccammelli.pandy
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
@@ -10,8 +11,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+private fun JsonObject.text(key: String) = (this[key] as JsonPrimitive).content
+
 class LanTest {
-    private val cfg = LanConfig("10.1.2.42", "00M00A000000000", "12345678", "X1C")
+    private val cfg = LanConfig("192.0.2.42", "00M000000000000", "00000000", "X1C")
 
     /** A trimmed push_status from an X1C mid-print, in the printer's own format. */
     private val report = json.parseToJsonElement("""
@@ -74,6 +77,106 @@ class LanTest {
         assertEquals(312, printer(m).layers) // untouched fields stay
     }
 
+    @Test fun nestedLayerFields() {
+        val r = json.parseToJsonElement(
+            """
+            {"print":{"gcode_state":"RUNNING","mc_percent":67,
+              "3D":{"layer_num":15,"total_layer_num":23}}}
+            """.trimIndent()
+        ).jsonObject
+        val states = lanEntities(cfg, r, online = true)
+            .associate { it.first.key to it.second.state }
+        assertEquals("15", states["current_layer"])
+        assertEquals("23", states["total_layers"])
+    }
+
+    @Test fun settingsReportsUseSharedXcamAndAmsFields() {
+        val r = json.parseToJsonElement(
+            """
+            {"print":{"gcode_state":"IDLE","xcam":{"printing_monitor":true,"print_halt":true},
+              "print_option":{"auto_recovery":false,"auto_switch_filament":true},
+              "ams":{"insert_flag":true,"power_on_flag":false,"ams":[{"id":"0","calibrate_remain_flag":true,"tray":[{"id":"0"}]}]}}}
+            """.trimIndent()
+        ).jsonObject
+        val rows = lanEntities(cfg, r, online = true)
+        val printer = rows.filter { it.first.device == "printer" }.associate { it.first.key to it.second }
+        assertEquals("on", printer["printing_monitor"]?.state)
+        assertEquals("true", printer["printing_monitor"]?.attrs?.text("print_halt"))
+        assertEquals("off", printer["auto_recovery"]?.state)
+        assertEquals("on", printer["auto_switch_filament"]?.state)
+        val ams = rows.filter { it.first.device == "ams0" }.associate { it.first.key to it.second }
+        assertEquals("on", ams["ams_read_on_insertion"]?.state)
+        assertEquals("off", ams["ams_read_on_startup"]?.state)
+        assertEquals("on", ams["ams_remaining_estimation"]?.state)
+    }
+
+    @Test fun settingsReportsDecodeLegacyAndNewOptionBits() {
+        val r = json.parseToJsonElement("""{"print":{"home_flag":1040,"cfg":"50000","bed_type":"cool_plate"}}""").jsonObject
+        val printer = lanEntities(cfg, r, online = true).filter { it.first.device == "printer" }.associate { it.first.key to it.second.state }
+        assertEquals("on", printer["auto_recovery"])
+        assertEquals("on", printer["auto_switch_filament"])
+        assertEquals("cool_plate", printer["print_bed_type"])
+    }
+
+    @Test fun directSettingsCommandsHaveVerifiedFields() {
+        val calibration = calibrationCommand("1", 5)["print"]!!.jsonObject
+        assertEquals("calibration", calibration.text("command")); assertEquals("5", calibration.text("option"))
+        val xcam = xcamCommand("2", "printing_monitor", false, true)["xcam"]!!.jsonObject
+        assertEquals("false", xcam.text("control")); assertEquals("false", xcam.text("enable")); assertEquals("true", xcam.text("print_halt"))
+        val recovery = printOptionCommand("3", "auto_recovery", true)["print"]!!.jsonObject
+        assertEquals("true", recovery.text("auto_recovery")); assertEquals("1", recovery.text("option"))
+        val ams = amsUserSettingCommand("4", 0, true, false, true)["print"]!!.jsonObject
+        assertEquals("0", ams.text("ams_id")); assertEquals("true", ams.text("startup_read_option")); assertEquals("false", ams.text("tray_read_option"))
+    }
+
+    @Test fun currentLayerPrefersLiveTopLevelValue() {
+        val r = json.parseToJsonElement(
+            """
+            {"print":{"gcode_state":"RUNNING","layer_num":7,"total_layer_num":23,
+              "3D":{"layer_num":15,"total_layer_num":23}}}
+            """.trimIndent()
+        ).jsonObject
+        val states = lanEntities(cfg, r, online = true).associate { it.first.key to it.second.state }
+        assertEquals("7", states["current_layer"])
+        assertEquals("23", states["total_layers"])
+    }
+
+    @Test fun staleNestedLayerIsIgnoredWhenIdle() {
+        val r = json.parseToJsonElement(
+            """
+            {"print":{"gcode_state":"FINISH","layer_num":0,"total_layer_num":0,
+              "3D":{"layer_num":15,"total_layer_num":23}}}
+            """.trimIndent()
+        ).jsonObject
+        val states = lanEntities(cfg, r, online = true).associate { it.first.key to it.second.state }
+        assertEquals("0", states["current_layer"])
+        assertEquals("0", states["total_layers"])
+    }
+
+    @Test fun staleNestedLayerWithoutLegacyFieldsIsIgnoredWhenIdle() {
+        val r = json.parseToJsonElement(
+            """
+            {"print":{"gcode_state":"IDLE",
+              "3D":{"layer_num":15,"total_layer_num":23}}}
+            """.trimIndent()
+        ).jsonObject
+        val states = lanEntities(cfg, r, online = true).associate { it.first.key to it.second.state }
+        assertEquals("0", states["current_layer"])
+        assertEquals("0", states["total_layers"])
+    }
+
+    @Test fun staleNestedLayerIsIgnoredAtStartOfNewPrint() {
+        val r = json.parseToJsonElement(
+            """
+            {"print":{"gcode_state":"RUNNING","mc_percent":0,"layer_num":0,"total_layer_num":0,
+              "3D":{"layer_num":15,"total_layer_num":23}}}
+            """.trimIndent()
+        ).jsonObject
+        val states = lanEntities(cfg, r, online = true).associate { it.first.key to it.second.state }
+        assertEquals("0", states["current_layer"])
+        assertEquals("0", states["total_layers"])
+    }
+
     @Test fun names() {
         assertEquals("P1S", modelName("C12")); assertEquals("A1 mini", modelName(null, "030ABC")); assertEquals(70, fanPercent("10"))
     }
@@ -82,10 +185,42 @@ class LanTest {
 class LanFirmwareTest {
     @Test fun newFirmwareFields() {
         assertEquals("hardened_steel", nozzleTypeName("HS01")); assertEquals("high_flow_hardened_steel", nozzleTypeName("HH01"))
-        val cfg = LanConfig("10.1.2.42", "00M00A000000000", "x", "X1C", "Demo X1C")
+        val cfg = LanConfig("192.0.2.42", "00M000000000000", "00000000", "X1C", "Demo X1C")
         val r = json.parseToJsonElement("""{"print":{"gcode_state":"IDLE","device":{"ctc":{"info":{"temp":25}}}}}""").jsonObject
         val e = lanEntities(cfg, r, true).associate { it.first.key to it.second.state }
         assertEquals("25.0", e["chamber_temp"]); assertEquals("Demo X1C", e["printer_name"])
+    }
+}
+
+class LanAmsHtTest {
+    @Test fun directAmsHtUsesAbsoluteTrayId() {
+        val cfg = LanConfig("192.0.2.10", "00M000000000000", "00000000", "X1C")
+        val report = json.parseToJsonElement(
+            """{"print":{"ams":{"tray_now":"128","ams":[{"id":"128","tray":[{"id":"0","tray_type":"PLA","tray_color":"FFFFFFFF"}]}]}}}"""
+        ).jsonObject
+        val entities = lanEntities(cfg, report, online = true)
+        val devs = JsonArray(entities.map { it.first.device }.distinct().map { device ->
+            val model = if (device == "printer") "X1C" else entities.first { it.first.device == device }.first.deviceModel.ifBlank { "AMS" }
+            json.parseToJsonElement("""{"id":"$device","name":"$model","model":"$model","via_device_id":${if (device == "printer") "null" else "\"printer\""},"identifiers":[["bambu_lab","${cfg.serial}_$device"]]}""")
+        })
+        val registry = JsonArray(entities.map { (row, _) ->
+            json.parseToJsonElement("""{"entity_id":"${row.id}","device_id":"${row.device}","platform":"bambu_lab","translation_key":"${row.key}","unique_id":"${cfg.serial}_${row.uid}"}""")
+        })
+        val info = printersFrom(devs, registry).single()
+        val p = Printer(info, entities.associate { it.second.id to it.second })
+        assertEquals("AMS HT", p.info.ams.single().model)
+        assertEquals(128, p.info.ams.single().amsId())
+        assertEquals(setOf(128), p.loadedTrayIds())
+    }
+
+    @Test fun directShortStandardAmsKeepsFourSlots() {
+        val cfg = LanConfig("192.0.2.10", "00M000000000000", "00000000", "X1C")
+        val report = json.parseToJsonElement(
+            """{"print":{"ams":{"ams":[{"id":"0","tray":[{"id":"0","tray_type":"PLA"}]}]}}}"""
+        ).jsonObject
+        val rows = lanEntities(cfg, report, online = true).filter { it.first.device == "ams0" && it.first.key == "tray" }
+        assertEquals(4, rows.size)
+        assertTrue(rows.all { it.first.deviceModel == "AMS" })
     }
 }
 

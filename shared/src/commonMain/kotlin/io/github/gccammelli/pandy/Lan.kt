@@ -88,6 +88,26 @@ fun deepMerge(old: JsonObject, new: JsonObject): JsonObject = JsonObject(old + n
 private fun JsonObject.str(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull
 private fun JsonObject.int(k: String) = str(k)?.toDoubleOrNull()?.toInt()
 private fun JsonObject.dbl(k: String) = str(k)?.toDoubleOrNull()
+private fun JsonElement?.flagValue(): Boolean? = (this as? JsonPrimitive)?.contentOrNull?.let {
+    when (it.lowercase()) {
+        "on", "true", "1", "enable", "enabled" -> true
+        "off", "false", "0", "disable", "disabled" -> false
+        else -> null
+    }
+}
+private fun JsonObject.flag(k: String): Boolean? = this[k].flagValue() ?: (this[k] as? JsonObject)?.get("enable").flagValue()
+private fun JsonObject.bit(k: String, bit: Int): Boolean? = str(k)?.toLongOrNull()?.let { (it and (1L shl bit)) != 0L }
+private fun JsonObject.hexBit(k: String, bit: Int): Boolean? = str(k)?.toLongOrNull(16)?.let { (it and (1L shl bit)) != 0L }
+private fun JsonObject.layerInt(k: String, live: Boolean, progress: Int): Int? {
+    val top = int(k)
+    val nested = o("3D")?.int(k)
+    // Some firmware leaves the legacy top-level field at zero while updating the 3D block.
+    return when {
+        top != null && !(live && progress > 0 && top == 0 && nested != null && nested > 0) -> top
+        live && progress > 0 -> nested
+        else -> null // Do not expose a stale nested value after a print has finished.
+    }
+}
 
 /** Fan speed 0–15 → percent in tens, as the Home Assistant integration rounds it. */
 fun fanPercent(raw: String?): Int = raw?.toIntOrNull()?.let { (it / 15.0 * 100 / 10).roundToInt() * 10 } ?: 0
@@ -133,9 +153,9 @@ fun hmsCode(attr: Long, code: Long): String {
 fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = null): List<Pair<LanRow, Entity>> {
     val p = r.o("print") ?: JsonObject(emptyMap())
     val out = mutableListOf<Pair<LanRow, Entity>>()
-    fun add(domain: String, key: String, state: Any?, attrs: JsonObject = JsonObject(emptyMap()), device: String = "printer", uid: String = key) {
+    fun add(domain: String, key: String, state: Any?, attrs: JsonObject = JsonObject(emptyMap()), device: String = "printer", uid: String = key, deviceModel: String = "") {
         val id = "$domain.pandy_${c.serial.lowercase()}_${uid.lowercase()}"
-        out += LanRow(device, domain, key, uid, id) to Entity(id, state?.toString() ?: "unknown", attrs)
+        out += LanRow(device, domain, key, uid, id, deviceModel) to Entity(id, state?.toString() ?: "unknown", attrs)
     }
     val connected = if (online) "on" else "off"
     add("binary_sensor", "online", connected)
@@ -160,6 +180,21 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     listOf("pause", "resume", "stop").forEach { add("button", it, "unknown") }
     add("camera", "camera", if (online) "streaming" else "unavailable")
     add("switch", "camera", "on")
+    // These are reported only by firmware that supports the corresponding XCam/print option.
+    val xcam = p.o("xcam") ?: r.o("xcam")
+    listOf("printing_monitor", "buildplate_marker_detector", "first_layer_inspector", "spaghetti_detector", "pileup_detector", "air_print_detector", "clump_detector")
+        .forEach { module ->
+            xcam?.flag(module)?.let { enabled ->
+                val printHalt = xcam.flag("${module}_print_halt") ?: xcam.o(module)?.flag("print_halt") ?: xcam.flag("print_halt")
+                add("switch", module, if (enabled) "on" else "off", buildJsonObject {
+                    printHalt?.let { put("print_halt", it) }
+                })
+            }
+        }
+    val printOptions = p.o("print_option") ?: r.o("print_option")
+    // Legacy firmware puts these values in home_flag; newer firmware mirrors them in the hex cfg bitmap.
+    (printOptions?.flag("auto_recovery") ?: p.flag("auto_recovery") ?: p.bit("home_flag", 4) ?: p.hexBit("cfg", 16))?.let { add("switch", "auto_recovery", if (it) "on" else "off") }
+    (printOptions?.flag("auto_switch_filament") ?: p.flag("auto_switch_filament") ?: p.bit("home_flag", 10) ?: p.hexBit("cfg", 18))?.let { add("switch", "auto_switch_filament", if (it) "on" else "off") }
     val light = (p["lights_report"] as? JsonArray)?.mapNotNull { it as? JsonObject }?.firstOrNull { it.str("node") == "chamber_light" }?.str("mode")
     add("light", "chamber_light", if (light == "on") "on" else "off")
     for ((key, raw) in listOf("cooling_fan" to "cooling_fan_speed", "aux_fan" to "big_fan1_speed", "chamber_fan" to "big_fan2_speed")) {
@@ -177,6 +212,7 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     add("sensor", "target_nozzle_temp", p.dbl("nozzle_target_temper")?.toInt())
     add("sensor", "bed_temp", p.dbl("bed_temper"))
     add("sensor", "target_bed_temp", p.dbl("bed_target_temper")?.toInt())
+    (p.str("bed_type") ?: p.str("print_bed_type"))?.let { add("sensor", "print_bed_type", it) }
     // Only enclosed printers with a chamber sensor report it (X1, H2); P1S shows none, like Handy. Newer firmware moved it under device.ctc.
     (p.dbl("chamber_temper") ?: p.o("device")?.o("ctc")?.o("info")?.dbl("temp"))?.takeIf { c.model.startsWith("X1") || c.model.startsWith("H2") || c.model.startsWith("P2") }?.let { add("sensor", "chamber_temp", it) }
     val status = if (!online) "offline" else printStatus(p.str("gcode_state"))
@@ -184,8 +220,10 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     add("sensor", "stage", stageName(p.int("stg_cur")))
     add("sensor", "print_progress", p.int("mc_percent") ?: 0)
     add("sensor", "remaining_time", p.int("mc_remaining_time") ?: 0)
-    add("sensor", "current_layer", p.int("layer_num") ?: 0)
-    add("sensor", "total_layers", p.int("total_layer_num") ?: 0)
+    val liveLayers = p.str("gcode_state")?.uppercase() in setOf("RUNNING", "PAUSE")
+    val progress = p.int("mc_percent") ?: 0
+    add("sensor", "current_layer", p.layerInt("layer_num", liveLayers, progress) ?: 0)
+    add("sensor", "total_layers", p.layerInt("total_layer_num", liveLayers, progress) ?: 0)
     add("sensor", "subtask_name", p.str("subtask_name")?.takeIf { it.isNotBlank() })
     add("sensor", "gcode_file", p.str("gcode_file"))
     add("sensor", "printer_name", c.name.ifBlank { c.model })
@@ -206,18 +244,27 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     // AMS units and the external spool.
     val ams = p.o("ams")
     val trayNow = ams?.str("tray_now")
-    (ams?.get("ams") as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.forEach { a ->
+    var htFallback = 0
+    (ams?.get("ams") as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.forEachIndexed { amsIndex, a ->
         val ai = a.int("id") ?: 0
         val dev = "ams$ai"
-        a.int("humidity")?.let { add("sensor", "humidity_index", 6 - it, device = dev, uid = "AMS_${ai + 1}_humidity_index") }
-        a.int("humidity_raw")?.let { add("sensor", "humidity", it, device = dev, uid = "AMS_${ai + 1}_humidity") }
-        a.dbl("temp")?.let { add("sensor", "ams_temp", it, device = dev, uid = "AMS_${ai + 1}_temperature") }
         val trays = (a["tray"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
-        (0 until 4).forEach { ti ->
+        val isHt = ai >= 128 || a.str("model")?.contains("HT", true) == true || a.str("type")?.contains("HT", true) == true ||
+            a.str("model")?.contains("N3S", true) == true || a.str("type")?.contains("N3S", true) == true
+        val htId = if (isHt) ai.takeIf { it >= 128 } ?: (128 + htFallback++) else ai
+        val deviceModel = if (isHt) "AMS HT" else "AMS"
+        (ams?.flag("power_on_flag") ?: a.flag("startup_read_option"))?.let { add("switch", "ams_read_on_startup", if (it) "on" else "off", device = dev, uid = "AMS_${amsIndex + 1}_ams_read_on_startup") }
+        (ams?.flag("insert_flag") ?: a.flag("tray_read_option"))?.let { add("switch", "ams_read_on_insertion", if (it) "on" else "off", device = dev, uid = "AMS_${amsIndex + 1}_ams_read_on_insertion") }
+        (ams?.flag("calibrate_remain_flag") ?: a.flag("calibrate_remain_flag"))?.let { add("switch", "ams_remaining_estimation", if (it) "on" else "off", device = dev, uid = "AMS_${amsIndex + 1}_ams_remaining_estimation") }
+        a.int("humidity")?.let { add("sensor", "humidity_index", 6 - it, device = dev, uid = "AMS_${amsIndex + 1}_humidity_index") }
+        a.int("humidity_raw")?.let { add("sensor", "humidity", it, device = dev, uid = "AMS_${amsIndex + 1}_humidity") }
+        a.dbl("temp")?.let { add("sensor", "ams_temp", it, device = dev, uid = "AMS_${amsIndex + 1}_temperature") }
+        (0 until if (deviceModel == "AMS HT") 1 else 4).forEach { ti ->
             val t = trays.firstOrNull { it.int("id") == ti } ?: JsonObject(emptyMap())
             val type = t.str("tray_type").orEmpty()
             val name = t.str("tray_sub_brands")?.takeIf { it.isNotBlank() }?.let { if (it.startsWith(type)) "Bambu $it" else it } ?: type
-            add("sensor", "tray", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, "${ai * 4 + ti}" == trayNow, ti + 1), dev, "AMS_${ai + 1}_tray_${ti + 1}")
+            val trayId = if (isHt) htId else ai * 4 + ti
+            add("sensor", "tray", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayId.toString() == trayNow, ti + 1), dev, "AMS_${amsIndex + 1}_tray_${ti + 1}", deviceModel)
         }
     }
     p.o("vt_tray")?.let { t ->
@@ -240,7 +287,30 @@ private fun trayAttrs(t: JsonObject, name: String, active: Boolean, slot: Int) =
 /** The current job's 3MF, read from the printer's storage: plate picture, pick map and parts. */
 class LanJob(val key: String, val cover: ByteArray?, val pick: ByteArray?, val objects: Map<Int, String>)
 
-data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String)
+data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String, val deviceModel: String = "")
+
+private fun printCommand(sequenceId: String, command: String, fields: JsonObject = JsonObject(emptyMap())) = buildJsonObject {
+    put("print", JsonObject(buildJsonObject { put("sequence_id", sequenceId); put("command", command) } + fields))
+}
+
+fun calibrationCommand(sequenceId: String, option: Int) = printCommand(sequenceId, "calibration", buildJsonObject { put("option", option) })
+
+fun xcamCommand(sequenceId: String, module: String, enabled: Boolean, printHalt: Boolean) = buildJsonObject {
+    putJsonObject("xcam") {
+        put("sequence_id", sequenceId); put("command", "xcam_control_set"); put("module_name", module)
+        put("control", enabled); put("enable", enabled); put("print_halt", printHalt)
+    }
+}
+
+fun printOptionCommand(sequenceId: String, option: String, enabled: Boolean) = printCommand(sequenceId, "print_option", buildJsonObject {
+    put(option, enabled)
+    if (option == "auto_recovery") put("option", if (enabled) 1 else 0)
+})
+
+fun amsUserSettingCommand(sequenceId: String, amsId: Int, startup: Boolean, insertion: Boolean, remaining: Boolean) =
+    printCommand(sequenceId, "ams_user_setting", buildJsonObject {
+        put("ams_id", amsId); put("startup_read_option", startup); put("tray_read_option", insertion); put("calibrate_remain_flag", remaining)
+    })
 
 /** The printer reached directly, presented as a small Home Assistant (see the file comment). */
 /**
@@ -320,7 +390,10 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
     }
 
     private suspend fun videosJson(): String {
-        val files = storage.list("/timelapse").filter { !it.dir && it.name.endsWith(".mp4") }.sortedByDescending { it.modified }
+        // Printers with no recorded timelapse may not create the directory yet.
+        val files = try { storage.list("/timelapse") } catch (e: PrinterStorageException) {
+            if (e.code == 550) emptyList() else throw e
+        }.filter { !it.dir && it.name.endsWith(".mp4") }.sortedByDescending { it.modified }
         return buildJsonObject {
             putJsonArray("videos") {
                 files.forEach { f ->
@@ -399,7 +472,9 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
                 putJsonArray("identifiers") { add(buildJsonArray { add(JsonPrimitive("bambu_lab")); add(JsonPrimitive(ident)) }) }
             })
             d("printer", config.model, config.serial, null)
-            rows.map { it.device }.distinct().filter { it.startsWith("ams") }.forEach { d(it, "AMS", "${config.serial}_$it", "printer") }
+            rows.map { it.device }.distinct().filter { it.startsWith("ams") }.forEach { amsDevice ->
+                d(amsDevice, rows.firstOrNull { it.device == amsDevice && it.deviceModel.isNotBlank() }?.deviceModel ?: "AMS", "${config.serial}_$amsDevice", "printer")
+            }
             if (rows.any { it.device == "ext" }) d("ext", "External Spool", "${config.serial}_ExternalSpool", "printer")
         }
         val registry = buildJsonArray {
@@ -549,8 +624,13 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
             })
             "bambu_lab/load_filament" -> {
                 val r = rowOf(target) ?: throw ApiException("Unknown tray")
-                val (ams, slot) = if (r.device == "ext") 254 to 0 else Regex("""AMS_(\d+)_tray_(\d+)""").find(r.uid)!!.destructured.let { (a, t) -> a.toInt() - 1 to t.toInt() - 1 }
-                val global = if (ams == 254) 254 else ams * 4 + slot
+                val (ams, slot) = if (r.device == "ext") 254 to 0 else Regex("""AMS_(\d+)_tray_(\d+)""").find(r.uid)!!.destructured.let { (a, t) ->
+                    val unit = r.device.removePrefix("ams").toIntOrNull() ?: throw ApiException("Unknown AMS")
+                    val physicalSlot = t.toInt() - 1
+                    val amsId = if (r.deviceModel.contains("HT", ignoreCase = true)) unit.takeIf { it >= 128 } ?: 128 else unit
+                    amsId to physicalSlot
+                }
+                val global = if (ams == 254 || ams >= 128) ams else ams * 4 + slot
                 publish(printCmd("ams_change_filament") {
                     JsonObject(this + mapOf("ams_id" to JsonPrimitive(ams), "slot_id" to JsonPrimitive(slot), "target" to JsonPrimitive(global),
                         "curr_temp" to JsonPrimitive(215), "tar_temp" to JsonPrimitive(215)))
@@ -558,25 +638,35 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
             }
             "bambu_lab/print_project_file" -> {
                 val file = d.s("filepath") ?: throw ApiException("No file")
+                val options = buildJsonObject {
+                    put("param", "Metadata/plate_${d.s("plate") ?: "1"}.gcode")
+                    put("url", if ("//" in file) file else "file:///sdcard/$file")
+                    put("bed_type", d.s("bed_type") ?: "auto"); put("timelapse", d.s("timelapse") == "true")
+                    put("file", file.substringAfterLast('/')); put("md5", ""); put("cfg", "0")
+                    // Newer firmware reads these (the start G-code's g29_before_print_flag and extrude_cali_flag);
+                    // older firmware reads bed_leveling and flow_cali. Both are sent.
+                    put("bed_leveling", d.s("bed_leveling") != "false"); put("auto_bed_leveling", if (d.s("bed_leveling") != "false") 1 else 0)
+                    put("flow_cali", d.s("flow_cali") == "true"); put("extrude_cali_flag", if (d.s("flow_cali") == "true") 1 else 0)
+                    put("nozzle_offset_cali", 2); put("ams_mapping2", "")
+                    put("vibration_cali", false); put("layer_inspect", true); put("use_ams", d.s("use_ams") == "true")
+                    if (d.s("use_ams") == "true") putJsonArray("ams_mapping") { d.s("ams_mapping").orEmpty().split(',').mapNotNull { it.trim().toIntOrNull() }.forEach { add(JsonPrimitive(it)) } }
+                    put("subtask_name", file.substringAfterLast('/').removeSuffix(".3mf").removeSuffix(".gcode"))
+                    put("profile_id", "0"); put("project_id", "0"); put("subtask_id", "0"); put("task_id", "0")
+                }
                 publish(printCmd("project_file") {
-                    JsonObject(this + mapOf(
-                        "param" to JsonPrimitive("Metadata/plate_${d.s("plate") ?: "1"}.gcode"),
-                        "url" to JsonPrimitive(if ("//" in file) file else "file:///sdcard/$file"),
-                        "bed_type" to JsonPrimitive("auto"), "timelapse" to JsonPrimitive(d.s("timelapse") == "true"),
-                        "file" to JsonPrimitive(file.substringAfterLast('/')), "md5" to JsonPrimitive(""), "cfg" to JsonPrimitive("0"),
-                        // Newer firmware reads these (the start G-code's g29_before_print_flag and extrude_cali_flag);
-                        // older firmware reads bed_leveling and flow_cali. Both are sent.
-                        "bed_leveling" to JsonPrimitive(d.s("bed_leveling") != "false"), "auto_bed_leveling" to JsonPrimitive(if (d.s("bed_leveling") != "false") 1 else 0),
-                        "flow_cali" to JsonPrimitive(d.s("flow_cali") == "true"), "extrude_cali_flag" to JsonPrimitive(if (d.s("flow_cali") == "true") 1 else 0),
-                        "nozzle_offset_cali" to JsonPrimitive(2), "ams_mapping2" to JsonPrimitive(""),
-                        "vibration_cali" to JsonPrimitive(false), "layer_inspect" to JsonPrimitive(true),
-                        "use_ams" to JsonPrimitive(d.s("use_ams") == "true"),
-                        "ams_mapping" to JsonArray(d.s("ams_mapping")?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.map { JsonPrimitive(it) } ?: listOf(JsonPrimitive(0))),
-                        "subtask_name" to JsonPrimitive(file.substringAfterLast('/').removeSuffix(".3mf").removeSuffix(".gcode")),
-                        "profile_id" to JsonPrimitive("0"), "project_id" to JsonPrimitive("0"), "subtask_id" to JsonPrimitive("0"), "task_id" to JsonPrimitive("0"),
-                    ))
+                    JsonObject(this + options)
                 })
             }
+            "bambu_lab/calibration" -> publish(calibrationCommand(nextSeq(), d.s("option")?.toIntOrNull() ?: 0))
+            "bambu_lab/xcam_control_set" -> publish(xcamCommand(nextSeq(), d.s("module_name").orEmpty(), d.s("enable") == "true", d.s("print_halt") == "true"))
+            "bambu_lab/print_option" -> {
+                val option = listOf("auto_recovery", "auto_switch_filament", "filament_tangle_detect", "nozzle_blob_detect", "air_print_detect", "sound_enable")
+                    .firstOrNull { d[it] != null } ?: throw ApiException("No print option")
+                val enabled = d[option].flagValue() ?: throw ApiException("Invalid print option")
+                publish(printOptionCommand(nextSeq(), option, enabled))
+            }
+            "bambu_lab/ams_user_setting" -> publish(amsUserSettingCommand(nextSeq(), d.s("ams_id")?.toIntOrNull() ?: 0,
+                d.s("startup_read_option") == "true", d.s("tray_read_option") == "true", d.s("calibrate_remain_flag") == "true"))
             "switch/turn_on", "switch/turn_off" -> {} // live view is always available directly
             "homeassistant/update_entity" -> publish(buildJsonObject { putJsonObject("pushing") { put("sequence_id", nextSeq()); put("command", "pushall") } })
             else -> throw ApiException("Needs Home Assistant")

@@ -2,6 +2,7 @@
 
 GET  /health                   -> {"ok": true, "version": "..."}
 POST /slice?plate=1            body: the .3mf -> the sliced .gcode.3mf (headers X-Pandy-Result: JSON summary)
+     &bed_type=<Bambu bed code> optionally overrides the selected plate's bed metadata before slicing
      &printer=<preset>         re-targets the project to that Bambu printer preset first ("Bambu Lab X1 Carbon 0.4 nozzle"),
                                keeping the designer's changed settings, as Bambu Studio's printer switch does
 POST /slice?plate=1&upload=1   same, then puts the file on the printer over FTPS and answers JSON
@@ -136,6 +137,60 @@ def heal(data: bytes) -> bytes:
     return buf.getvalue()
 
 
+BED_TYPE_LABELS = {
+    "cool_plate": "Cool Plate",
+    "eng_plate": "Engineering Plate",
+    "hot_plate": "High Temp Plate",
+    "textured_plate": "Textured PEI Plate",
+    "supertack_plate": "Supertack Plate",
+}
+
+
+def set_bed_type(data: bytes, plate: int, bed_type: str) -> bytes:
+    """Writes the selected Bambu bed enum into the requested plate before Bambu Studio slices it."""
+    label = BED_TYPE_LABELS.get((bed_type or "").lower())
+    if not label:
+        return data
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+        source = z.read("Metadata/model_settings.config").decode()
+    except (KeyError, UnicodeDecodeError, zipfile.BadZipFile):
+        return data
+
+    def plate_block(match):
+        block = match.group(0)
+        m = re.search(r'<metadata\b(?=[^>]*\bkey=["\']plater_id["\'])(?=[^>]*\bvalue=["\'](\d+)["\'])[^>]*/>', block)
+        if not m or (plate != 0 and int(m.group(1)) != plate):
+            return block
+        updated = block
+        changed = False
+        for key in ("curr_bed_type", "bed_type"):
+            updated, count = re.subn(rf'<metadata\b(?=[^>]*\bkey=["\']{key}["\'])(?=[^>]*\bvalue=["\'][^"\']*["\'])[^>]*/>', f'<metadata key="{key}" value="{label}"/>', updated, count=1)
+            changed |= count > 0
+        if not changed:
+            value = f'<metadata key="bed_type" value="{label}"/>'
+            updated = block.replace("</plate>", value + "\n</plate>", 1)
+        return updated
+
+    updated = re.sub(r"<plate\b[^>]*>.*?</plate>", plate_block, source, flags=re.DOTALL)
+    if updated == source:
+        return data
+    project_settings = None
+    try:
+        cfg = json.loads(z.read("Metadata/project_settings.config").decode())
+        if isinstance(cfg, dict):
+            cfg["curr_bed_type"] = label
+            project_settings = json.dumps(cfg, indent=4).encode()
+    except (KeyError, UnicodeDecodeError, json.JSONDecodeError):
+        pass
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as result:
+        for info in z.infolist():
+            body = updated.encode() if info.filename == "Metadata/model_settings.config" else project_settings if info.filename == "Metadata/project_settings.config" and project_settings is not None else z.read(info.filename)
+            result.writestr(info, body)
+    return out.getvalue()
+
+
 def check_safe(sliced: bytes):
     """Refuses a sliced file whose plates lack Bambu's printer start sequence (homing, leveling, purge line,
     calibrations), recognised by its G29 and M1002 commands: a placeholder start G-code makes the printer go straight
@@ -151,18 +206,19 @@ def check_safe(sliced: bytes):
                                    "line), so it isn't safe to print. The profile is missing its printer settings.")
 
 
-def slice_3mf(data: bytes, plate: int, target: str = ""):
+def slice_3mf(data: bytes, plate: int, target: str = "", bed_type: str = "auto"):
     """Slices one plate (0 = all) and returns (sliced 3mf bytes, summary dict). Raises RuntimeError with Bambu's message."""
     work = tempfile.mkdtemp(prefix="pandy-")
     try:
         src = os.path.join(work, "model.3mf")
         out_dir = os.path.join(work, "out")
         os.makedirs(out_dir)
+        source = set_bed_type(data, plate, bed_type)
         with open(src, "wb") as f:
-            f.write(heal(data))
+            f.write(heal(source))
         out = os.path.join(out_dir, "sliced.gcode.3mf")
         # --export-3mf takes a bare name: Bambu Studio puts it in --outputdir.
-        extra, source = conversion(data, target)
+        extra, converted_from = conversion(source, target)
         cmd = [BAMBU, *extra, "--slice", str(plate), "--export-3mf", "sliced.gcode.3mf", "--outputdir", out_dir, "--uptodate", src]
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=SLICE_TIMEOUT, cwd=work)
         result = {}
@@ -178,8 +234,8 @@ def slice_3mf(data: bytes, plate: int, target: str = ""):
         sliced = keep_pictures(data, sliced)
         check_safe(sliced)
         info = summary(sliced, result)
-        if source:
-            info["converted_from"] = source
+        if converted_from:
+            info["converted_from"] = converted_from
         return sliced, info
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -320,7 +376,7 @@ class Handler(BaseHTTPRequestHandler):
         if not LOCK.acquire(timeout=SLICE_TIMEOUT):
             return self._json(503, {"error": "Busy slicing something else"})
         try:
-            sliced, info = slice_3mf(data, plate, q.get("printer", ""))
+            sliced, info = slice_3mf(data, plate, q.get("printer", ""), q.get("bed_type", "auto"))
         except subprocess.TimeoutExpired:
             return self._json(504, {"error": "Slicing took too long"})
         except RuntimeError as e:

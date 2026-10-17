@@ -27,7 +27,12 @@ import platform.Foundation.NSBundle
 import platform.Foundation.NSData
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSOperationQueue
+import platform.Foundation.NSFileManager
+import platform.Foundation.NSUUID
+import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSURL
+import platform.Foundation.NSSelectorFromString
+import platform.Foundation.writeToFile
 import platform.PhotosUI.PHPickerConfiguration
 import platform.PhotosUI.PHPickerFilter
 import platform.PhotosUI.PHPickerResult
@@ -36,6 +41,8 @@ import platform.PhotosUI.PHPickerViewControllerDelegateProtocol
 import platform.UIKit.UIApplication
 import platform.UIKit.UIApplicationWillEnterForegroundNotification
 import platform.UIKit.UIApplicationDidEnterBackgroundNotification
+import platform.UIKit.UIActivityViewController
+import platform.UIKit.UIPopoverPresentationController
 import platform.UIKit.UIStatusBarStyleDarkContent
 import platform.UIKit.UIStatusBarStyleLightContent
 import platform.UIKit.UIViewController
@@ -110,6 +117,33 @@ private class IosPlatformUi : PlatformUi {
                 .addResourceWithType(platform.Photos.PHAssetResourceTypePhoto, data, null)
         }) { ok, error ->
             dispatch_async(dispatch_get_main_queue()) { done(if (ok) null else Exception(error?.localizedDescription ?: "Photos refused it")) }
+        }
+    }
+
+    override fun saveFile(name: String, mime: String, bytes: ByteArray, done: (Throwable?) -> Unit) {
+        val safe = name.substringAfterLast('/').ifBlank { "download.bin" }
+        var path: String? = null
+        val result = runCatching {
+            path = "${NSTemporaryDirectory()}${NSUUID.UUID().UUIDString}-$safe"
+            check(bytes.toNSData().writeToFile(path!!, true)) { "Couldn't prepare the download" }
+            val activity = UIActivityViewController(listOf(NSURL.fileURLWithPath(path!!)), null)
+            activity.completionWithItemsHandler = { _, completed, _, error ->
+                NSFileManager.defaultManager.removeItemAtPath(path!!, null)
+                if (completed) dispatch_async(dispatch_get_main_queue()) { done(error?.let { Exception(it.localizedDescription ?: "Couldn't save the download") }) }
+            }
+            val host = top() ?: error("No screen to save the download")
+            // UIActivityViewController is a popover on iPad and needs an anchor before presentation.
+            val popover = (activity as UIViewController).performSelector(NSSelectorFromString("popoverPresentationController"))
+                as? UIPopoverPresentationController
+            popover?.let {
+                it.sourceView = host.view
+                it.sourceRect = host.view.bounds
+            }
+            host.presentViewController(activity, true, null)
+        }
+        result.exceptionOrNull()?.let { error ->
+            path?.let { NSFileManager.defaultManager.removeItemAtPath(it, null) }
+            done(error)
         }
     }
 

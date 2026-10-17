@@ -36,4 +36,11 @@ class ZipTest {
         assertEquals("Metadata/slice_info.config", zipEntry(z.size.toLong(), listOf(Regex("nope"), Regex(".*slice_info.*")), f)!!.first)
         assertNull(zipEntry(z.size.toLong(), listOf(Regex("Metadata/pick_1\\.png")), f))
     }
+
+    @Test fun rejectsOversizedAndShortEntries() = runTest {
+        val z = zip()
+        val f: suspend (Long, Int) -> ByteArray = { o, l -> z.copyOfRange(o.toInt(), o.toInt() + l) }
+        assertNull(zipEntry(z.size.toLong(), listOf(Regex("Metadata/plate_1\\.png")), 100, f))
+        assertNull(zipEntry(z.size.toLong(), listOf(Regex("Metadata/plate_1\\.png"))) { _, _ -> ByteArray(0) })
+    }
 }

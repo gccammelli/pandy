@@ -22,12 +22,15 @@ private fun SSLSocket.tickets() {
 }
 
 actual fun inflateRaw(data: ByteArray, size: Int): ByteArray {
+    require(size >= 0)
     val inf = java.util.zip.Inflater(true)
     inf.setInput(data)
     val out = ByteArray(size)
     var n = 0
     while (n < size && !inf.finished()) { val r = inf.inflate(out, n, size - n); if (r == 0 && (inf.needsInput() || inf.needsDictionary())) break; n += r }
+    val complete = inf.finished()
     inf.end()
+    check(complete && n == size) { "Couldn't inflate file" }
     return out
 }
 
@@ -61,7 +64,7 @@ private class FtpsStorage(private val c: LanConfig) : PrinterStorage {
         fun cmd(c: String, ok: IntRange = 200..399): String {
             w.write("$c\r\n".toByteArray()); w.flush()
             val (code, line) = reply()
-            if (code !in ok) throw ApiException("Printer storage: ${line.drop(4).ifBlank { c.substringBefore(' ') + " failed" }}")
+            if (code !in ok) throw PrinterStorageException(code, line.drop(4).ifBlank { c.substringBefore(' ') + " failed" })
             return line
         }
 
@@ -98,7 +101,7 @@ private class FtpsStorage(private val c: LanConfig) : PrinterStorage {
         val d = data("LIST $dir")
         val lines = d.use { it.inputStream.bufferedReader().readLines() }
         val (code, line) = reply()
-        if (code !in 200..299) throw ApiException("Printer storage: ${line.drop(4)}")
+        if (code !in 200..299) throw PrinterStorageException(code, line.drop(4))
         val now = Calendar.getInstance()
         parseList(lines, now.get(Calendar.YEAR), now.get(Calendar.MONTH) + 1)
     }

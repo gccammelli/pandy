@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Fullscreen
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.VideocamOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -59,18 +60,25 @@ fun LiveView(p: Printer, modifier: Modifier, onFull: (() -> Unit)? = null, zoom:
     val cam = p.camera ?: return Box(modifier.background(Color.Black))
     val err = errorToast()
     val camOn = p["switch.camera"]?.on != false
+    val autoplay = Repo.setting("liveview_autoplay") ?: "wifi"
+    val autoplayAllowed = when (autoplay) {
+        "always" -> true
+        "wifi" -> Repo.direct || Repo.demo
+        else -> false
+    }
+    var started by remember(cam, autoplayAllowed) { mutableStateOf(autoplayAllowed) }
     var hls by remember(cam) { mutableStateOf<String?>(null) }
     var stills by remember(cam) { mutableStateOf(false) }
     var frame by remember(cam) { mutableStateOf<ImageBitmap?>(null) }
     var lastJpeg by remember(cam) { mutableStateOf<ByteArray?>(null) }
-    LaunchedEffect(cam, camOn) {
-        if (!camOn) return@LaunchedEffect
+    LaunchedEffect(cam, camOn, started) {
+        if (!camOn || !started) return@LaunchedEffect
         val b = Repo.ha ?: return@LaunchedEffect
         hls = runCatching { b.hlsUrl(cam) }.getOrNull()
         if (hls == null) stills = true
     }
-    LaunchedEffect(cam, stills, camOn) {
-        if (!stills || !camOn) return@LaunchedEffect
+    LaunchedEffect(cam, stills, camOn, started) {
+        if (!stills || !camOn || !started) return@LaunchedEffect
         while (true) {
             runCatching { Repo.ha!!.snapshot(cam) }.getOrNull()?.let { j -> lastJpeg = j; decodeImage(j, 1280)?.let { frame = it } }
             delay(1_000)
@@ -89,6 +97,11 @@ fun LiveView(p: Printer, modifier: Modifier, onFull: (() -> Unit)? = null, zoom:
                 T("Live view is off", 13.sp, Color.White.copy(alpha = .8f))
                 Gap(8.dp)
                 T("Turn on", 13.sp, C.Accent, modifier = Modifier.clickable { p.toggleCamera(true, err) }.padding(8.dp))
+            }
+            !started -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Outlined.Videocam, null, Modifier.size(32.dp), tint = Color.White.copy(alpha = .7f))
+                Gap(8.dp)
+                T("Tap to view", 13.sp, C.Accent, modifier = Modifier.clickable { started = true }.padding(8.dp))
             }
             hls != null -> VideoPlayer(hls!!, muted = true, modifier = inner, onError = { hls = null; stills = true })
             frame != null -> Image(frame!!, null, inner, contentScale = ContentScale.Fit)

@@ -56,6 +56,8 @@ import io.github.gccammelli.pandy.UiState
 import io.github.gccammelli.pandy.VideoPlayer
 import io.github.gccammelli.pandy.autoMapping
 import io.github.gccammelli.pandy.ensureOnPrinter
+import io.github.gccammelli.pandy.isSingleSlot
+import io.github.gccammelli.pandy.slotForTrayId
 import io.github.gccammelli.pandy.startPrint
 import io.github.gccammelli.pandy.printHistory
 import io.github.gccammelli.pandy.sliceInfo
@@ -151,19 +153,28 @@ fun sizeText(b: Long) = when { b >= 1_048_576 -> "${(b / 104_857.6).toInt() / 10
 @Composable
 fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
     val err = errorToast()
-    val info by produceState<io.github.gccammelli.pandy.SliceInfo?>(null, f.path) { value = Repo.extras?.sliceInfo(f) }
-    var timelapse by remember { mutableStateOf(false) }
+    val infoState by produceState<Pair<Boolean, io.github.gccammelli.pandy.SliceInfo?>>(false to null, f.path) {
+        value = true to Repo.extras?.sliceInfo(f)
+    }
+    val infoLoaded = infoState.first
+    val info = infoState.second
+    var timelapse by remember { mutableStateOf(Repo.timelapseDefault) }
     var leveling by remember { mutableStateOf(true) }
     var flow by remember { mutableStateOf(true) } // on by default, as in Handy
     var busy by remember { mutableStateOf(false) }
-    Sheet(close, "Print", centeredTitle = true, confirm = if (busy) "Sending…" else "Send", onConfirm = {
+    val filaments = info?.filaments.orEmpty()
+    val mapping = info?.let { autoMapping(p, it.filaments) }
+    val missingMapping = filaments.isNotEmpty() && mapping == null
+    val canSend = infoLoaded && info != null && !busy && !p.printing && !missingMapping
+    Sheet(close, "Print", centeredTitle = true, confirm = if (busy) "Sending…" else "Send", confirmEnabled = canSend, onConfirm = {
         if (busy) return@Sheet
         if (p.printing) { err("The printer is busy"); return@Sheet }
+        if (!infoLoaded || info == null) { err("Print settings are not available yet"); return@Sheet }
+        if (missingMapping) { err("No loaded filament matches this print"); return@Sheet }
         busy = true
-        val mapping = info?.let { autoMapping(p, it.filaments) }
         Repo.act({ err(it); busy = false }) {
             val path = needHa().ensureOnPrinter(p.serial, f)
-            startPrint(p, path, info?.plate ?: 1, mapping, timelapse, leveling, flow)
+            startPrint(p, path, info.plate, mapping, timelapse, leveling, flow)
             busy = false
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { close(); Nav.stack.clear(); Nav.tab = 1 }
         }
@@ -173,23 +184,29 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
             Spacer(Modifier.width(12.dp))
             Column { T(f.title, 15.sp, weight = FontWeight.Medium, maxLines = 2); T("Plate ${info?.plate ?: 1}", 12.sp, C.Sub) }
         }
-        val fil = info?.filaments.orEmpty()
+        if (!infoLoaded) T("Reading print settings…", 13.sp, C.Sub, modifier = Modifier.padding(top = 12.dp))
+        else if (info == null) T("Print settings could not be read, so this print is disabled.", 13.sp, C.Orange, modifier = Modifier.padding(top = 12.dp))
+        else if (missingMapping) T("Load matching filament before sending this print.", 13.sp, C.Orange, modifier = Modifier.padding(top = 12.dp))
+        val fil = filaments
         if (fil.isNotEmpty()) {
             Gap(16.dp)
             T("Filament", 14.sp, weight = FontWeight.Medium)
             Gap(8.dp)
-            val map = autoMapping(p, fil)
+            val map = mapping
             fil.forEachIndexed { i, x ->
                 Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(18.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(io.github.gccammelli.pandy.hexColor(x["color"]))))
                     Spacer(Modifier.width(8.dp)); T(x["type"] ?: "?", 13.sp, modifier = Modifier.width(60.dp))
                     T("→", 13.sp, C.Sub); Spacer(Modifier.width(8.dp))
                     val t = map?.getOrNull(i)
-                    if (t == null) T("External spool", 13.sp, C.Sub)
+                    if (t == null || t == 254) T("External spool", 13.sp, C.Sub)
                     else {
-                        val s = p.ams.getOrNull(t / 4)?.second?.getOrNull(t % 4)
+                        val match = p.ams.asSequence().mapNotNull { (a, spools) -> a.slotForTrayId(t)?.let { a to spools.getOrNull(it) } }.firstOrNull()
+                        val a = match?.first
+                        val s = match?.second
+                        val slot = a?.slotForTrayId(t)
                         Box(Modifier.size(18.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(s?.color ?: 0xFFDDDDDD)))
-                        Spacer(Modifier.width(8.dp)); T("${'A' + t / 4}${t % 4 + 1} ${s?.type ?: ""}", 13.sp)
+                        Spacer(Modifier.width(8.dp)); T(if (a?.isSingleSlot() == true) "HT ${s?.type.orEmpty()}" else "${a?.let { 'A' + it.index - 1 }}${slot?.plus(1) ?: ""} ${s?.type.orEmpty()}", 13.sp)
                     }
                 }
             }
@@ -202,8 +219,8 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
 }
 
 @Composable
-fun ToggleLine(label: String, on: Boolean, change: (Boolean) -> Unit) = Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-    T(label, 14.sp, modifier = Modifier.weight(1f)); Toggle(on, onChange = change)
+fun ToggleLine(label: String, on: Boolean, enabled: Boolean = true, change: (Boolean) -> Unit) = Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    T(label, 14.sp, if (enabled) C.Text else C.Sub, modifier = Modifier.weight(1f)); Toggle(on, enabled, change)
 }
 
 // ---------- Files (timelapses and models) ----------
@@ -211,6 +228,7 @@ fun ToggleLine(label: String, on: Boolean, change: (Boolean) -> Unit) = Row(Modi
 @Composable
 fun FilesScreen(p: Printer) {
     var tab by remember { mutableStateOf(0) }
+    var reload by remember { mutableStateOf(0) }
     var playing by remember { mutableStateOf<CachedFile?>(null) }
     var open by remember { mutableStateOf<CachedFile?>(null) }
     Page("Files", { Nav.back() }) {
@@ -223,29 +241,51 @@ fun FilesScreen(p: Printer) {
                 }
             }
         }
-        val files by produceState<List<CachedFile>?>(null, tab) {
-            value = if (Repo.extras == null) emptyList() else runCatching { if (tab == 0) Repo.extras!!.timelapses(p.serial) else Repo.extras!!.printHistory(p.serial) }.getOrDefault(emptyList())
-        }
-        if (Repo.extras == null) NeedsHa("Timelapses and models") else when (val list = files) {
-            null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = C.Accent) }
-            else -> if (list.isEmpty()) Empty("No content yet") else androidx.compose.foundation.lazy.LazyColumn(contentPadding = PaddingValues(14.dp)) {
-                val rows = list.chunked(2)
-                items(rows.size) { ri -> val row = rows[ri]
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        row.forEach { f ->
-                            Column(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(C.Card).clickable { if (tab == 0) playing = f else open = f }) {
-                                Box(Modifier.fillMaxWidth().aspectRatio(if (tab == 0) 16 / 9f else 1f).background(C.Fill)) { HaImage(f.thumbUrl, Modifier.fillMaxSize()) }
-                                Column(Modifier.padding(8.dp)) {
-                                    T(f.title, 12.sp, maxLines = 2)
-                                    T(sizeText(f.size), 11.sp, C.Sub)
-                                }
-                            }
-                        }
-                        if (row.size == 1) Spacer(Modifier.weight(1f))
-                    }
-                    Gap(10.dp)
+        val backend = Repo.extras
+        val files by produceState<Result<List<CachedFile>>?>(null, backend, tab, p.serial, reload) {
+            value = backend?.let { b ->
+                try {
+                    Result.success(if (tab == 0) b.timelapses(p.serial) else b.printHistory(p.serial))
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Result.failure(e)
                 }
-            }
+            } ?: Result.success(emptyList())
+        }
+        if (backend == null) NeedsHa("Timelapses and models") else when (val result = files) {
+            null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = C.Accent) }
+            else -> result.fold(
+                onSuccess = { list ->
+                    if (list.isEmpty()) Empty("No content yet") else androidx.compose.foundation.lazy.LazyColumn(contentPadding = PaddingValues(14.dp)) {
+                        val rows = list.chunked(2)
+                        items(rows.size) { ri -> val row = rows[ri]
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                row.forEach { f ->
+                                    Column(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(C.Card).clickable { if (tab == 0) playing = f else open = f }) {
+                                        Box(Modifier.fillMaxWidth().aspectRatio(if (tab == 0) 16 / 9f else 1f).background(C.Fill)) { HaImage(f.thumbUrl, Modifier.fillMaxSize()) }
+                                        Column(Modifier.padding(8.dp)) {
+                                            T(f.title, 12.sp, maxLines = 2)
+                                            T(sizeText(f.size), 11.sp, C.Sub)
+                                        }
+                                    }
+                                }
+                                if (row.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                            Gap(10.dp)
+                        }
+                    }
+                },
+                onFailure = { e ->
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 80.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        T("Couldn't load ${if (tab == 0) "timelapses" else "files"}", 16.sp, weight = FontWeight.Medium)
+                        Gap(8.dp)
+                        T(e.message ?: "The connection failed.", 13.sp, C.Sub, align = androidx.compose.ui.text.style.TextAlign.Center)
+                        Gap(16.dp)
+                        AccentButton("Try again") { reload++ }
+                    }
+                }
+            )
         }
     }
     playing?.let { f ->
@@ -271,11 +311,30 @@ fun FilesScreen(p: Printer) {
 @Composable
 fun SettingsScreen() {
     val pl = LocalPlatform.current
+    var timelapseDefault by remember { mutableStateOf(Repo.timelapseDefault) }
+    var showUnavailable by remember { mutableStateOf(Repo.showUnavailable) }
     Page("Settings", { Nav.back() }) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
             T("Appearance", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
             Group {
                 listOf("system" to "Follow system", "light" to "Light", "dark" to "Dark").forEach { (k, l) -> Radio(ThemeMode.mode == k, l) { Repo.setTheme(k) } }
+                ToggleRow("Show unavailable controls", showUnavailable) {
+                    showUnavailable = it
+                    Repo.setShowUnavailable(it)
+                }
+            }
+            Gap(16.dp)
+            T("Printing", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
+            Group {
+                ToggleRow("Timelapse for new prints", timelapseDefault) {
+                    timelapseDefault = it
+                    Repo.setTimelapseDefault(it)
+                }
+                var showPromotions by remember { mutableStateOf(!Repo.hidePromotions) }
+                ToggleRow("Show promotional content", showPromotions) {
+                    showPromotions = it
+                    Repo.setHidePromotions(!it)
+                }
             }
             Gap(16.dp)
             T("Connection", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
@@ -304,7 +363,7 @@ fun AboutScreen() {
             T("Pandy", 24.sp, weight = FontWeight.Bold)
             T("Version ${pl.appVersion}", 13.sp, C.Sub)
             Gap(20.dp)
-            T("A Bambu Handy look-alike that talks only to your Home Assistant, so it works with printers in LAN-only mode. Not made by or affiliated with Bambu Lab.", 14.sp, C.Sub,
+            T("A Bambu Handy look-alike that works directly over the local network or through Home Assistant. Not made by or affiliated with Bambu Lab.", 14.sp, C.Sub,
                 align = androidx.compose.ui.text.style.TextAlign.Center, lh = 20.sp)
             Gap(20.dp)
             T("Developed by Giancarlo Cammelli", 14.sp)

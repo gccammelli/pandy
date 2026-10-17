@@ -53,8 +53,14 @@ import androidx.compose.ui.unit.sp
 import io.github.gccammelli.pandy.LocalPlatform
 import io.github.gccammelli.pandy.Printer
 import io.github.gccammelli.pandy.Repo
+import io.github.gccammelli.pandy.amsId
+import io.github.gccammelli.pandy.isSingleSlot
+import io.github.gccammelli.pandy.calibrate
 import io.github.gccammelli.pandy.decodeImage
 import io.github.gccammelli.pandy.load
+import io.github.gccammelli.pandy.setAmsSettings
+import io.github.gccammelli.pandy.setPrintOption
+import io.github.gccammelli.pandy.setXcam
 import io.github.gccammelli.pandy.skip
 import io.github.gccammelli.pandy.toggleCamera
 import io.github.gccammelli.pandy.unload
@@ -165,7 +171,7 @@ fun FilamentScreen(p: Printer) {
             p.ams.forEach { (a, trays) ->
                 Card {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        T("AMS ${'A' + a.index - 1}", 16.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        T(if (a.isSingleSlot()) "AMS HT" else "AMS ${'A' + a.index - 1}", 16.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         p.amsNum(a, "sensor.humidity_index")?.let { h ->
                             Icon(Icons.Outlined.WaterDrop, null, Modifier.size(16.dp), tint = humidityColor(h.toInt()))
                             T(" ${h.toInt()}", 13.sp, C.Sub)
@@ -228,39 +234,192 @@ fun InfoLine(label: String, value: String) = Row(Modifier.padding(vertical = 2.d
 
 // ---------- Printer settings ----------
 
-/** Handy's printer Settings list, with what Home Assistant can show. */
+/** Handy's printer Settings list, with direct-LAN actions where the printer protocol is known. */
 @Composable
 fun PrinterSettingsScreen(p: Printer) {
     val err = errorToast()
+    var delete by remember { mutableStateOf(false) }
     Page("Settings", { Nav.back() }) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
             Group {
                 NavRow("Machine Assistant", value = p.hms.size.takeIf { it > 0 }?.let { "$it" }) { Nav.go(Screen.Assistant) }
-                NavRow("Files") { Nav.go(Screen.Files) }
+                if (Repo.direct || Repo.demo) NavRow("Calibration") { Nav.go(Screen.Calibration) }
+                else if (Repo.showUnavailable) NavRow("Calibration", value = "Not available", labelColor = C.Sub, chevron = false)
+                if (Repo.direct || Repo.demo) NavRow("Print Options") { Nav.go(Screen.PrintOptions) }
+                else if (Repo.showUnavailable) NavRow("Print Options", value = "Not available", labelColor = C.Sub, chevron = false)
+                if (p.ams.isNotEmpty() && (Repo.direct || Repo.demo)) NavRow("AMS Settings") { Nav.go(Screen.AmsSettings) }
+                else if (p.ams.isNotEmpty() && Repo.showUnavailable) NavRow("AMS Settings", value = "Not available", labelColor = C.Sub, chevron = false)
+                NavRow("Liveview Settings") { Nav.go(Screen.LiveviewSettings) }
             }
             Gap(12.dp)
-            Group {
-                ToggleRow("Live View", p["switch.camera"]?.on != false) { p.toggleCamera(it, err) }
-                NavRow("Timelapse", value = if (p["binary_sensor.timelapse"]?.on == true) "On" else "Off", chevron = false)
-            }
+            Group { NavRow("Files") { Nav.go(Screen.Files) } }
             Gap(12.dp)
             Group {
                 NavRow("Device Name", value = p.name, chevron = false)
-                NavRow("Model", value = p.model, chevron = false)
                 NavRow("Firmware Version", value = (p.info.firmware ?: "--") + if (p["binary_sensor.firmware_update"]?.on == true) "  •  Update available" else "", chevron = false)
-                NavRow("Serial Number", value = p.serial, chevron = false)
-                p.state("sensor.ip_address")?.let { NavRow("IP Address", value = it, chevron = false) }
-                p.num("sensor.wifi_signal")?.let { NavRow("Wi-Fi Signal", value = "${it.toInt()} dBm", chevron = false) }
-                p.state("sensor.sdcard_status")?.let { NavRow("Storage", value = it.replaceFirstChar { c -> c.uppercase() }, chevron = false) }
-                p.num("sensor.total_usage_hours")?.let { NavRow("Total Usage", value = "${it.toInt()} h", chevron = false) }
             }
+            Gap(12.dp)
+            if (Repo.direct) Group { NavRow("Disconnect printer", labelColor = C.Red, chevron = false) { delete = true } }
+            Gap(12.dp)
+            T("${p.model}  •  ${p.serial}", 12.sp, C.Sub, modifier = Modifier.padding(horizontal = 6.dp))
+            T("Connection: ${if (Repo.direct) "LAN" else if (Repo.demo) "Demo" else "Home Assistant"}", 12.sp, C.Sub, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+        }
+    }
+    if (delete) AlertDialog(
+        onDismissRequest = { delete = false },
+        title = { T("Disconnect printer?", weight = FontWeight.Medium) },
+        text = { T("This removes the saved direct-LAN connection from Pandy. It does not reset or change the printer, Home Assistant, or slicer.", 14.sp, C.Sub) },
+        confirmButton = { TextButton(onClick = { delete = false; Nav.stack.clear(); Repo.removeDirectPrinter() }) { T("Disconnect", color = C.Red) } },
+        dismissButton = { TextButton(onClick = { delete = false }) { T("Cancel", color = C.Text) } },
+    )
+}
+
+/** Starts the printer's machine calibration with the four documented option bits. */
+@Composable
+fun CalibrationScreen(p: Printer) {
+    val err = errorToast()
+    var confirm by remember { mutableStateOf(false) }
+    var lidar by remember { mutableStateOf(p.model.startsWith("X1") || p.model.startsWith("H2")) }
+    var bed by remember { mutableStateOf(true) }
+    var vibration by remember { mutableStateOf(true) }
+    var motor by remember { mutableStateOf(false) }
+    val canSend = (Repo.direct || Repo.demo) && p.online
+    val option = (if (lidar) 1 else 0) or (if (bed) 2 else 0) or (if (vibration) 4 else 0) or (if (motor) 8 else 0)
+    Page("Calibration", { Nav.back() }) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
+            T("Choose the checks to run on the printer. Calibration can move the toolhead and heat the bed.", 14.sp, C.Sub, lh = 19.sp, modifier = Modifier.padding(horizontal = 6.dp))
             Gap(12.dp)
             Group {
-                NavRow("Connection", value = when (p.state("sensor.mqtt_mode")) { "local" -> "LAN"; "bambu_cloud" -> "Cloud"; else -> p.state("sensor.mqtt_mode") ?: "--" }, chevron = false)
-                NavRow("Developer LAN Mode", value = if (p["binary_sensor.developer_lan_mode"]?.on == true) "On" else "Off", chevron = false)
+                if (p.model.startsWith("X1") || p.model.startsWith("H2")) ToggleRow("Micro lidar calibration", lidar, enabled = canSend && !p.printing) { lidar = it }
+                ToggleRow("Bed leveling", bed, enabled = canSend && !p.printing) { bed = it }
+                ToggleRow("Vibration compensation", vibration, enabled = canSend && !p.printing) { vibration = it }
+                ToggleRow("Motor noise cancellation", motor, enabled = canSend && !p.printing) { motor = it }
+            }
+            Gap(16.dp)
+            if (!Repo.direct && !Repo.demo) T("Home Assistant does not expose this printer command. Connect directly to use it.", 13.sp, C.Sub, lh = 18.sp, modifier = Modifier.padding(horizontal = 6.dp))
+            if (p.printing) T("Stop the current print before starting calibration.", 13.sp, C.Orange, modifier = Modifier.padding(horizontal = 6.dp))
+            Gap(10.dp)
+            AccentButton("Start calibration", enabled = canSend && !p.printing && option != 0) { confirm = true }
+        }
+    }
+    if (confirm) AlertDialog(
+        onDismissRequest = { confirm = false },
+        title = { T("Start calibration?", weight = FontWeight.Medium) },
+        text = { T("The printer may move the toolhead and heat the bed. Make sure it is clear before continuing.", 14.sp, C.Sub) },
+        confirmButton = { TextButton(onClick = { confirm = false; p.calibrate(option, err) }) { T("Start", color = C.Accent) } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { T("Cancel", color = C.Text) } },
+    )
+}
+
+/** Print options that are represented by verified XCam/print-option LAN commands. */
+@Composable
+fun PrintOptionsScreen(p: Printer) {
+    val err = errorToast()
+    val canSend = (Repo.direct || Repo.demo) && p.online
+    Page("Print Options", { Nav.back() }) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
+            T("These settings are stored by the printer. Some options are model- or firmware-specific.", 14.sp, C.Sub, lh = 19.sp, modifier = Modifier.padding(horizontal = 6.dp))
+            Gap(12.dp)
+            val hasReportedOptions = listOf("printing_monitor", "buildplate_marker_detector", "first_layer_inspector", "auto_recovery").any { p.flag(it) != null }
+            if (Repo.showUnavailable || canSend && hasReportedOptions) Group {
+                    PrinterFlagToggle(p, "AI Print Monitoring", "printing_monitor", canSend) { next, revert -> p.setXcam("printing_monitor", next, p.flagAttribute("printing_monitor", "print_halt") ?: false) { message -> revert(); err(message) } }
+                    PrinterFlagToggle(p, "Build Plate Detection", "buildplate_marker_detector", canSend) { next, revert -> p.setXcam("buildplate_marker_detector", next, p.flagAttribute("buildplate_marker_detector", "print_halt") ?: false) { message -> revert(); err(message) } }
+                    PrinterFlagToggle(p, "First Layer Inspection", "first_layer_inspector", canSend) { next, revert -> p.setXcam("first_layer_inspector", next, p.flagAttribute("first_layer_inspector", "print_halt") ?: false) { message -> revert(); err(message) } }
+                    PrinterFlagToggle(p, "Auto-Recover from Step Loss", "auto_recovery", canSend) { next, revert -> p.setPrintOption("auto_recovery", next) { message -> revert(); err(message) } }
+                }
+            Gap(12.dp)
+            if (Repo.showUnavailable) Group {
+                NavRow("Open Door Detection", value = "Not available", labelColor = C.Sub, chevron = false)
+                NavRow("Store Sent Files on External Storage", value = "Not available", labelColor = C.Sub, chevron = false)
             }
             Gap(12.dp)
-            T("Calibration, print options and firmware updates are run from the printer's screen; Home Assistant doesn't offer them.", 12.sp, C.Sub, lh = 17.sp, modifier = Modifier.padding(horizontal = 6.dp))
+            T(if (!canSend) "Home Assistant does not expose these printer settings; direct LAN or demo mode is required." else "Only switches reported by this printer are enabled. Unsupported firmware options stay read-only.", 12.sp, C.Sub, lh = 17.sp, modifier = Modifier.padding(horizontal = 6.dp))
+        }
+    }
+}
+
+@Composable
+private fun PrinterFlagToggle(p: Printer, label: String, key: String, enabled: Boolean, onChange: (Boolean, () -> Unit) -> Unit) {
+    val remote = p.flag(key)
+    if (remote == null) {
+        if (Repo.showUnavailable) NavRow(label, value = "Not available", labelColor = C.Sub, chevron = false)
+    } else if (enabled || Repo.showUnavailable) {
+        var value by remember(remote) { mutableStateOf(remote) }
+        ToggleRow(label, value, enabled = enabled) { next ->
+            val old = value
+            value = next
+            onChange(next) { value = old }
+        }
+    }
+}
+
+/** AMS RFID/remaining-filament preferences, one card per connected AMS unit. */
+@Composable
+fun AmsSettingsScreen(p: Printer) {
+    val err = errorToast()
+    Page("AMS Settings", { Nav.back() }) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
+            if (p.info.ams.isEmpty()) Empty("No AMS connected") else {
+                p.info.ams.forEach { ams -> AmsSettingsCard(p, ams, err); Gap(12.dp) }
+                val canSend = (Repo.direct || Repo.demo) && p.online
+                val autoRefill = p.flag("auto_switch_filament")
+                if (Repo.showUnavailable || canSend && autoRefill != null) Group {
+                    if (autoRefill == null) {
+                        if (Repo.showUnavailable) NavRow("AMS Auto-Refill", value = "Not available", labelColor = C.Sub, chevron = false)
+                    } else PrinterFlagToggle(p, "AMS Auto-Refill", "auto_switch_filament", canSend) { next, revert -> p.setPrintOption("auto_switch_filament", next) { message -> revert(); err(message) } }
+                }
+                Gap(12.dp)
+                T(if (!Repo.direct && !Repo.demo) "Home Assistant shows AMS state but does not expose these printer settings."
+                    else "Changes are sent to the printer and will appear again after its next status report.",
+                    12.sp, C.Sub, lh = 17.sp, modifier = Modifier.padding(horizontal = 6.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun AmsSettingsCard(p: Printer, ams: io.github.gccammelli.pandy.AmsInfo, err: (String) -> Unit) {
+    val startupRemote = p.amsFlag(ams, "ams_read_on_startup")
+    val insertionRemote = p.amsFlag(ams, "ams_read_on_insertion")
+    val remainingRemote = p.amsFlag(ams, "ams_remaining_estimation")
+    var startup by remember(ams.haId, startupRemote) { mutableStateOf(startupRemote ?: false) }
+    var insertion by remember(ams.haId, insertionRemote) { mutableStateOf(insertionRemote ?: false) }
+    var remaining by remember(ams.haId, remainingRemote) { mutableStateOf(remainingRemote ?: false) }
+    val settingsKnown = startupRemote != null && insertionRemote != null && remainingRemote != null
+    val canSend = (Repo.direct || Repo.demo) && p.online && settingsKnown
+    fun update(start: Boolean = startup, insert: Boolean = insertion, remain: Boolean = remaining, revert: () -> Unit = {}) {
+        if (!settingsKnown) { revert(); return }
+        p.setAmsSettings(ams.amsId(), start, insert, remain) { message -> revert(); err(message) }
+    }
+    T(if (ams.isSingleSlot()) "AMS HT" else "AMS ${'A' + ams.index - 1}", 14.sp, C.Sub, modifier = Modifier.padding(horizontal = 6.dp))
+    Gap(8.dp)
+    if (Repo.showUnavailable || canSend) Group {
+            if (insertionRemote == null) {
+                if (Repo.showUnavailable) NavRow("Read Filament on Insertion", value = "Not available", labelColor = C.Sub, chevron = false)
+            } else ToggleRow("Read Filament on Insertion", insertion, enabled = canSend) { next -> val old = insertion; insertion = next; update(insert = next) { insertion = old } }
+            if (startupRemote == null) {
+                if (Repo.showUnavailable) NavRow("Read Filament on Startup", value = "Not available", labelColor = C.Sub, chevron = false)
+            } else ToggleRow("Read Filament on Startup", startup, enabled = canSend) { next -> val old = startup; startup = next; update(start = next) { startup = old } }
+            if (remainingRemote == null) {
+                if (Repo.showUnavailable) NavRow("Remaining Filament Estimation", value = "Not available", labelColor = C.Sub, chevron = false)
+            } else ToggleRow("Remaining Filament Estimation", remaining, enabled = canSend) { next -> val old = remaining; remaining = next; update(remain = next) { remaining = old } }
+        }
+}
+
+/** Handy's two live-view autoplay choices. This preference is local to Pandy, not a printer command. */
+@Composable
+fun LiveviewSettingsScreen() {
+    var mode by remember { mutableStateOf(Repo.setting("liveview_autoplay") ?: "wifi") }
+    fun choose(value: String) { mode = value; Repo.setSetting("liveview_autoplay", value) }
+    Page("Liveview Settings", { Nav.back() }) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
+            Group {
+                Radio(mode == "always", "Always Autoplay") { choose("always") }
+                Radio(mode == "wifi", "Autoplay on Wi-Fi only") { choose("wifi") }
+                Radio(mode == "off", "Autoplay off") { choose("off") }
+            }
+            Gap(12.dp)
+            T("Autoplay controls whether Pandy starts the live view when it appears. The printer's camera remains available from the Devices screen.", 12.sp, C.Sub, lh = 17.sp, modifier = Modifier.padding(horizontal = 6.dp))
         }
     }
 }
@@ -304,4 +463,3 @@ fun Empty(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector = 
         Gap(12.dp)
         T(text, 14.sp, C.Sub)
     }
-

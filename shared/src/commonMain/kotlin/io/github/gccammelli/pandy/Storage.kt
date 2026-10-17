@@ -9,6 +9,8 @@ package io.github.gccammelli.pandy
 /** [modified] is "YYYY-MM-DDTHH:MM" (the printer's local time; the year is guessed for recent files, as `ls` omits it). */
 data class FileEntry(val name: String, val size: Long, val modified: String, val dir: Boolean)
 
+class PrinterStorageException(val code: Int, detail: String) : Exception("Printer storage: $code ${detail.trim()}")
+
 interface PrinterStorage {
     suspend fun list(dir: String): List<FileEntry>
     /** [length] -1 reads to the end. */
@@ -26,6 +28,8 @@ expect suspend fun cacheFile(name: String, bytes: ByteArray): String
 
 private val MONTHS = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 private val LIST_LINE = Regex("""^([d-])\S+\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\w{3})\s+(\d+)\s+(\d{1,2}:\d{2}|\d{4})\s+(.+)$""")
+private const val MAX_ZIP_ENTRY_BYTES = 8L * 1024 * 1024
+private const val MAX_ZIP_DIRECTORY_BYTES = 8L * 1024 * 1024
 
 /** Parses `LIST` lines (Unix `ls -l` style). [year] and [month] (1–12) are today's, to place dates shown with a time. */
 fun parseList(lines: List<String>, year: Int, month: Int): List<FileEntry> = lines.mapNotNull { l ->
@@ -43,29 +47,51 @@ private fun ByteArray.u32(i: Int) = u16(i).toLong() or (u16(i + 2).toLong() shl 
  * Reads the first entry of the zip whose name matches [wanted] (checked in order of [wanted]'s preference: the first
  * pattern that matches any entry wins). [fetch] reads [len] bytes at [offset] of a zip of [total] bytes.
  */
-suspend fun zipEntry(total: Long, wanted: List<Regex>, fetch: suspend (offset: Long, len: Int) -> ByteArray): Pair<String, ByteArray>? {
+suspend fun zipEntry(total: Long, wanted: List<Regex>, fetch: suspend (offset: Long, len: Int) -> ByteArray): Pair<String, ByteArray>? =
+    zipEntry(total, wanted, MAX_ZIP_ENTRY_BYTES, fetch)
+
+suspend fun zipEntry(total: Long, wanted: List<Regex>, maxSize: Long, fetch: suspend (offset: Long, len: Int) -> ByteArray): Pair<String, ByteArray>? {
+    if (total < 22 || maxSize < 0) return null
+    suspend fun exact(offset: Long, length: Int): ByteArray? {
+        if (offset < 0 || offset > total || length < 0 || length.toLong() > total - offset) return null
+        return fetch(offset, length).takeIf { it.size == length }
+    }
     val tailLen = minOf(total, 65_557L).toInt()
-    val tail = fetch(total - tailLen, tailLen)
+    val tail = exact(total - tailLen, tailLen) ?: return null
     var e = tail.size - 22
     while (e >= 0 && tail.u32(e) != 0x06054b50L) e--
     if (e < 0) return null
-    val cdSize = tail.u32(e + 12).toInt()
+    val cdSizeLong = tail.u32(e + 12)
     val cdOffset = tail.u32(e + 16)
+    if (cdSizeLong > MAX_ZIP_DIRECTORY_BYTES || cdSizeLong > Int.MAX_VALUE || cdOffset > total || cdSizeLong > total - cdOffset) return null
+    val cdSize = cdSizeLong.toInt()
     val cdInTail = cdOffset - (total - tailLen)
-    val cd = if (cdInTail >= 0) tail.copyOfRange(cdInTail.toInt(), cdInTail.toInt() + cdSize) else fetch(cdOffset, cdSize)
+    val cd = if (cdInTail >= 0) {
+        if (cdInTail > tail.size || cdSize > tail.size - cdInTail.toInt()) return null
+        tail.copyOfRange(cdInTail.toInt(), cdInTail.toInt() + cdSize)
+    } else exact(cdOffset, cdSize) ?: return null
     data class Ent(val name: String, val method: Int, val comp: Long, val size: Long, val local: Long)
     val ents = mutableListOf<Ent>()
     var i = 0
     while (i + 46 <= cd.size && cd.u32(i) == 0x02014b50L) {
         val n = cd.u16(i + 28); val x = cd.u16(i + 30); val c = cd.u16(i + 32)
+        val end = i.toLong() + 46 + n + x + c
+        if (end > cd.size || i + 46 + n > cd.size) return null
         ents += Ent(cd.copyOfRange(i + 46, i + 46 + n).decodeToString(), cd.u16(i + 10), cd.u32(i + 20), cd.u32(i + 24), cd.u32(i + 42))
         i += 46 + n + x + c
     }
     val hit = wanted.firstNotNullOfOrNull { r -> ents.firstOrNull { r.matches(it.name) } } ?: return null
-    val head = fetch(hit.local, 30)
+    if (hit.size > maxSize || hit.size < 0 || hit.comp > Int.MAX_VALUE || hit.comp < 0 || hit.local < 0) return null
+    val head = exact(hit.local, 30) ?: return null
     val start = hit.local + 30 + head.u16(26) + head.u16(28)
-    val raw = fetch(start, hit.comp.toInt())
-    return hit.name to when (hit.method) { 0 -> raw; 8 -> inflateRaw(raw, hit.size.toInt()); else -> return null }
+    if (start < hit.local || start > total || hit.comp > total - start) return null
+    val raw = exact(start, hit.comp.toInt()) ?: return null
+    val bytes = when (hit.method) {
+        0 -> raw.takeIf { hit.comp == hit.size }
+        8 -> runCatching { inflateRaw(raw, hit.size.toInt()) }.getOrNull()
+        else -> null
+    } ?: return null
+    return hit.name to bytes
 }
 
 /** Objects on a plate from a 3MF's Metadata/slice_info.config: identify_id → name. */

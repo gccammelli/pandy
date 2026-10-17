@@ -4,15 +4,19 @@ import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
-import io.ktor.client.statement.readRawBytes
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.utils.io.readAvailable
+import io.ktor.http.HttpHeaders
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlin.math.roundToInt
 
 /*
  * Printing MakerWorld models: the model's 3MF project is sliced by Pandy Slicer (Bambu Studio's command line in a
@@ -21,6 +25,7 @@ import kotlinx.serialization.json.jsonObject
  */
 
 const val SLICER_PORT = 8737
+private const val MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 
 private val http = HttpClient {
     install(HttpTimeout) { connectTimeoutMillis = 15_000; requestTimeoutMillis = 20 * 60_000; socketTimeoutMillis = 20 * 60_000 }
@@ -45,9 +50,10 @@ class SlicerClient(url: String, private val token: String?) {
     }
 
     /** Slices [plate] of a 3MF and puts it on the printer [to]; returns its path there and the plate's details. */
-    suspend fun sliceAndUpload(data: ByteArray, plate: Int, name: String, to: LanConfig, printer: String? = null): Pair<String, SlicedPlate?> {
+    suspend fun sliceAndUpload(data: ByteArray, plate: Int, name: String, to: LanConfig, printer: String? = null, bedType: String = "auto"): Pair<String, SlicedPlate?> {
         val target = printer?.let { "&printer=${it.encodeURLParam()}" }.orEmpty()
-        val r = http.post("$base/slice?plate=$plate&upload=1&name=${name.encodeURLParam()}$target") {
+        val bed = "&bed_type=${bedType.encodeURLParam()}"
+        val r = http.post("$base/slice?plate=$plate&upload=1&name=${name.encodeURLParam()}$target$bed") {
             auth()
             header("X-Printer-Ip", to.ip); header("X-Printer-Serial", to.serial); header("X-Printer-Code", to.code)
             setBody(data)
@@ -71,21 +77,59 @@ private fun JsonArray?.orEmpty() = this ?: JsonArray(emptyList())
 
 /** Fetches a MakerWorld file (with the web view's cookies, for files behind the sign-in). */
 suspend fun download(url: String, cookies: String?): ByteArray {
-    val r = http.get(url) { if (!cookies.isNullOrBlank()) header("Cookie", cookies) }
-    if (r.status.value !in 200..299) throw ApiException("The download failed (HTTP ${r.status.value})")
-    return r.readRawBytes()
+    return http.prepareGet(url) { if (!cookies.isNullOrBlank()) header("Cookie", cookies) }.execute { r ->
+        if (r.status.value !in 200..299) throw ApiException("The download failed (HTTP ${r.status.value})")
+        r.headers[HttpHeaders.ContentLength]?.toLongOrNull()?.takeIf { it > MAX_DOWNLOAD_BYTES }?.let {
+            throw ApiException("The download is too large (64 MiB maximum)")
+        }
+        val channel = r.bodyAsChannel()
+        val result = GrowingBytes()
+        val buffer = ByteArray(64 * 1024)
+        var total = 0
+        while (true) {
+            val n = channel.readAvailable(buffer, 0, buffer.size)
+            if (n == -1) break
+            if (n == 0) continue
+            if (total > MAX_DOWNLOAD_BYTES - n) throw ApiException("The download is too large (64 MiB maximum)")
+            result.append(buffer, n)
+            total += n
+        }
+        result.toByteArray()
+    }
+}
+
+private class GrowingBytes {
+    private var bytes = ByteArray(64 * 1024)
+    private var size = 0
+
+    fun append(source: ByteArray, count: Int) {
+        if (size + count > bytes.size) bytes = bytes.copyOf(maxOf(bytes.size * 2, size + count))
+        source.copyInto(bytes, size, 0, count)
+        size += count
+    }
+
+    fun toByteArray() = if (size == bytes.size) bytes else bytes.copyOf(size)
 }
 
 // ---------- 3MF projects ----------
 
 /** A plate of a project: [index] as Bambu Studio numbers them, its name and picture if the project has them. */
-data class ProjectPlate(val index: Int, val name: String, val picture: ByteArray?)
+data class ProjectPlate(val index: Int, val name: String, val picture: ByteArray?, val seconds: Int? = null, val grams: Double? = null, val parts: Int? = null, val bedType: String? = null)
 
 /** What Pandy shows before printing a project: its plates, the printer it was made for, its filaments. */
-data class Project(val plates: List<ProjectPlate>, val printerModel: String?, val filaments: List<Pair<String, String>>, val sliced: Boolean)
+data class PreviewVertex(val x: Float, val y: Float, val z: Float)
+data class PreviewTriangle(val a: PreviewVertex, val b: PreviewVertex, val c: PreviewVertex, val material: Int? = null)
+data class PreviewMesh(val triangles: List<PreviewTriangle>)
+
+data class Project(val plates: List<ProjectPlate>, val printerModel: String?, val filaments: List<Pair<String, String>>, val sliced: Boolean,
+                   val profileName: String? = null, val profileSummary: String? = null, val mesh: PreviewMesh? = null,
+                   val meshes: Map<Int, PreviewMesh> = emptyMap())
 
 private suspend fun ByteArray.entry(vararg names: String) =
     zipEntry(size.toLong(), names.map { Regex(it) }) { o, l -> copyOfRange(o.toInt(), (o + l).toInt().coerceAtMost(size)) }?.second
+
+private suspend fun ByteArray.boundedEntry(maxSize: Long, vararg names: String) =
+    zipEntry(size.toLong(), names.map { Regex(it) }, maxSize) { o, l -> copyOfRange(o.toInt(), (o + l).toInt().coerceAtMost(size)) }?.second
 
 suspend fun readProject(data: ByteArray): Project {
     if (data.size < 4 || data[0] != 'P'.code.toByte() || data[1] != 'K'.code.toByte()) throw ApiException("That download isn't a 3MF project")
@@ -94,13 +138,204 @@ suspend fun readProject(data: ByteArray): Project {
     val types = list("filament_type")
     val colours = list("filament_colour")
     val model = data.entry("Metadata/model_settings\\.config")?.decodeToString().orEmpty()
-    val plateIds = model.split("<plate>").drop(1).mapNotNull { p ->
-        val meta = Regex("""key="([^"]+)"\s+value="([^"]*)"""").findAll(p).associate { it.groupValues[1] to it.groupValues[2] }
-        meta["plater_id"]?.toIntOrNull()?.let { it to meta["plater_name"].orEmpty() }
-    }.ifEmpty { listOf(1 to "") }
-    val plates = plateIds.map { (i, n) -> ProjectPlate(i, n, data.entry("Metadata/plate_${i}\\.png")) }
+    val defaultBed = settings?.s("curr_bed_type")
+    val plateIds = XML_PLATE.findAll(model).mapNotNull { match ->
+        val meta = xmlMetadata(match.groupValues[1])
+        meta["plater_id"]?.toIntOrNull()?.let { Triple(it, meta["plater_name"].orEmpty(), meta["curr_bed_type"] ?: meta["bed_type"] ?: defaultBed) }
+    }.toList().ifEmpty { listOf(Triple(1, "", null)) }
+    val sliceInfo = data.entry("Metadata/slice_info\\.config")?.decodeToString()
+    val plates = mutableListOf<ProjectPlate>()
+    for ((i, n, bedType) in plateIds) {
+        val metrics = sliceInfo?.let { sliceInfoMetrics(it, i) } ?: plateMetrics(data.entry("Metadata/plate_${i}\\.gcode"))
+        plates += ProjectPlate(i, n, data.entry("Metadata/plate_${i}\\.png"), metrics.seconds, metrics.grams, metrics.parts, bedType)
+    }
+    val profileSummary = listOfNotNull(
+        settings?.s("layer_height")?.toDoubleOrNull()?.let { "${decimal(it)} mm layer" },
+        settings?.s("wall_loops")?.toIntOrNull()?.let { "$it walls" },
+        settings?.s("sparse_infill_density")?.let { density(it) }
+    ).takeIf { it.isNotEmpty() }?.joinToString(", ")
+    val model3d = data.boundedEntry(MAX_PREVIEW_ENTRY_BYTES, Regex.escape(ROOT_MODEL_PATH))?.decodeToString()
+    val modelSources = mutableMapOf(ROOT_MODEL_PATH to model3d?.let(::xmlObjects).orEmpty())
+    model3d?.let(::componentPaths).orEmpty().forEach { path ->
+        data.boundedEntry(MAX_PREVIEW_ENTRY_BYTES, Regex.escape(path))?.decodeToString()?.let { modelSources[path] = xmlObjects(it) }
+    }
+    val objectMaterials = objectExtruders(model)
+    val meshes = model3d?.let { runCatching { previewMeshes(it, modelSources, plateObjectIds(model), objectMaterials) }.getOrDefault(emptyMap()) }.orEmpty()
+    val mesh = meshes[plateIds.firstOrNull()?.first] ?: meshes.values.firstOrNull()
     return Project(plates, (settings?.get("printer_model") as? JsonPrimitive)?.contentOrNull, types.mapIndexed { i, t -> t to (colours.getOrNull(i) ?: "#888888") },
-        data.entry("Metadata/plate_\\d+\\.gcode\\.md5", "Metadata/plate_\\d+\\.gcode") != null)
+        sliceInfo != null || data.entry("Metadata/plate_\\d+\\.gcode\\.md5") != null,
+        settings?.s("profile_name")?.takeIf { it.isNotBlank() }, profileSummary, mesh, meshes)
+}
+
+private const val MAX_PREVIEW_TRIANGLES = 20_000
+private const val MAX_PREVIEW_ENTRY_BYTES = 8L * 1024 * 1024
+private const val ROOT_MODEL_PATH = "3D/3dmodel.model"
+private val XML_OBJECT = Regex("""(?s)<object\b([^>]*)>(.*?)</object>""")
+private val XML_MESH = Regex("""(?s)<mesh\b[^>]*>(.*?)</mesh>""")
+private val XML_VERTEX = Regex("""<vertex\b([^>]*)/?>""")
+private val XML_TRIANGLE = Regex("""<triangle\b([^>]*)/?>""")
+private val XML_COMPONENT = Regex("""<component\b([^>]*)/?>""")
+private val XML_ITEM = Regex("""<item\b([^>]*)/?>""")
+private val XML_METADATA = Regex("""<metadata\b([^>]*)/?>""")
+private val XML_PLATE = Regex("""(?s)<plate\b[^>]*>(.*?)</plate>""")
+private val WHITESPACE = Regex("""\s+""")
+
+private fun xmlAttr(text: String, name: String): String? {
+    var from = 0
+    while (true) {
+        val at = text.indexOf(name, from)
+        if (at < 0) return null
+        val before = text.getOrNull(at - 1)
+        val equals = at + name.length
+        if ((before == null || before.isWhitespace()) && text.getOrNull(equals) == '=') {
+            val quote = text.getOrNull(equals + 1)
+            if (quote == '"' || quote == '\'') {
+                val start = equals + 2
+                val end = text.indexOf(quote, start)
+                if (end >= 0) return text.substring(start, end)
+            }
+        }
+        from = at + name.length
+    }
+}
+
+private fun xmlMetadata(body: String): Map<String, String> = XML_METADATA.findAll(body).mapNotNull { match ->
+    val attrs = match.groupValues[1]
+    val key = xmlAttr(attrs, "key") ?: return@mapNotNull null
+    key to (xmlAttr(attrs, "value") ?: "")
+}.toMap()
+
+private fun xmlObjects(xml: String): Map<Int, String> = XML_OBJECT.findAll(xml).mapNotNull { match ->
+    xmlAttr(match.groupValues[1], "id")?.toIntOrNull()?.let { it to match.groupValues[2] }
+}.toMap()
+
+private fun componentPaths(xml: String): List<String> = XML_COMPONENT.findAll(xml).mapNotNull { match ->
+    xmlAttr(match.groupValues[1], "p:path")?.trim()?.removePrefix("/")
+}.distinct().toList()
+
+private fun objectExtruders(xml: String): Map<Int, Int> = XML_OBJECT.findAll(xml).mapNotNull { match ->
+    val id = xmlAttr(match.groupValues[1], "id")?.toIntOrNull() ?: return@mapNotNull null
+    val extruder = xmlMetadata(match.groupValues[2].substringBefore("<part"))["extruder"]?.toIntOrNull()?.minus(1) ?: return@mapNotNull null
+    id to extruder
+}.toMap()
+
+private fun plateObjectIds(xml: String): Map<Int, Set<Int>> = XML_PLATE.findAll(xml).mapNotNull { match ->
+    val meta = xmlMetadata(match.groupValues[1])
+    val plate = meta["plater_id"]?.toIntOrNull() ?: return@mapNotNull null
+    val objects = Regex("""(?s)<model_instance\b[^>]*>(.*?)</model_instance>""").findAll(match.groupValues[1]).flatMap { instance ->
+        xmlMetadata(instance.groupValues[1])["object_id"]?.toIntOrNull()?.let { sequenceOf(it) } ?: emptySequence()
+    }.toSet()
+    if (objects.isEmpty()) return@mapNotNull null
+    plate to objects
+}.toMap()
+
+private fun identityTransform() = floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f)
+
+private fun parseTransform(raw: String?): FloatArray {
+    val values = raw?.trim()?.split(WHITESPACE)?.mapNotNull(String::toFloatOrNull)
+    return if (values?.size == 12) floatArrayOf(
+        values[0], values[3], values[6], values[1], values[4], values[7], values[2], values[5], values[8], values[9], values[10], values[11]
+    ) else identityTransform()
+}
+
+private fun multiply(parent: FloatArray, local: FloatArray): FloatArray {
+    val result = FloatArray(12)
+    for (row in 0..2) for (column in 0..2) {
+        result[row * 3 + column] = parent[row * 3] * local[column] + parent[row * 3 + 1] * local[3 + column] + parent[row * 3 + 2] * local[6 + column]
+    }
+    for (row in 0..2) result[9 + row] = parent[row * 3] * local[9] + parent[row * 3 + 1] * local[10] + parent[row * 3 + 2] * local[11] + parent[9 + row]
+    return result
+}
+
+private fun applyTransform(v: PreviewVertex, t: FloatArray) = PreviewVertex(
+    t[0] * v.x + t[1] * v.y + t[2] * v.z + t[9],
+    t[3] * v.x + t[4] * v.y + t[5] * v.z + t[10],
+    t[6] * v.x + t[7] * v.y + t[8] * v.z + t[11],
+)
+
+private fun appendMesh(body: String, transform: FloatArray, out: MutableList<PreviewTriangle>, defaultMaterial: Int? = null) {
+    val vertices = XML_VERTEX.findAll(body).mapNotNull { match ->
+        val attrs = match.groupValues[1]
+        PreviewVertex(xmlAttr(attrs, "x")?.toFloatOrNull() ?: return@mapNotNull null,
+            xmlAttr(attrs, "y")?.toFloatOrNull() ?: return@mapNotNull null,
+            xmlAttr(attrs, "z")?.toFloatOrNull() ?: return@mapNotNull null)
+    }.toList()
+    for (match in XML_TRIANGLE.findAll(body)) {
+        if (out.size >= MAX_PREVIEW_TRIANGLES) break
+        val attrs = match.groupValues[1]
+        val a = xmlAttr(attrs, "v1")?.toIntOrNull()?.let(vertices::getOrNull)
+        val b = xmlAttr(attrs, "v2")?.toIntOrNull()?.let(vertices::getOrNull)
+        val c = xmlAttr(attrs, "v3")?.toIntOrNull()?.let(vertices::getOrNull)
+        if (a != null && b != null && c != null) out += PreviewTriangle(applyTransform(a, transform), applyTransform(b, transform), applyTransform(c, transform),
+            xmlAttr(attrs, "p1")?.toIntOrNull() ?: defaultMaterial)
+    }
+}
+
+private fun appendObject(id: Int, source: String, transform: FloatArray, sources: Map<String, Map<Int, String>>, out: MutableList<PreviewTriangle>, objectMaterials: Map<Int, Int>, defaultMaterial: Int? = null, depth: Int = 0) {
+    if (depth > 8 || out.size >= MAX_PREVIEW_TRIANGLES) return
+    val body = sources[source]?.get(id) ?: return
+    val ownMaterial = objectMaterials[id]?.takeIf { source == ROOT_MODEL_PATH }
+    val mesh = XML_MESH.find(body)?.groupValues?.get(1)
+    if (mesh != null) {
+        appendMesh(mesh, transform, out, ownMaterial ?: defaultMaterial)
+        return
+    }
+    for (component in XML_COMPONENT.findAll(body)) {
+        if (out.size >= MAX_PREVIEW_TRIANGLES) break
+        val attrs = component.groupValues[1]
+        val child = xmlAttr(attrs, "objectid")?.toIntOrNull() ?: continue
+        val path = xmlAttr(attrs, "p:path")?.trim()?.removePrefix("/") ?: source
+        appendObject(child, path, multiply(transform, parseTransform(xmlAttr(attrs, "transform"))), sources, out, objectMaterials, ownMaterial ?: defaultMaterial, depth + 1)
+    }
+}
+
+private fun previewMeshes(root: String, sources: Map<String, Map<Int, String>>, objectIds: Map<Int, Set<Int>>, objectMaterials: Map<Int, Int> = emptyMap()): Map<Int, PreviewMesh> {
+    val buildItems = XML_ITEM.findAll(root).mapNotNull { match ->
+        val attrs = match.groupValues[1]
+        xmlAttr(attrs, "objectid")?.toIntOrNull()?.let { it to parseTransform(xmlAttr(attrs, "transform")) }
+    }.toList()
+    val targets = objectIds.ifEmpty { mapOf(1 to emptySet()) }
+    return targets.mapNotNull { (plate, wanted) ->
+        val triangles = mutableListOf<PreviewTriangle>()
+        val candidates = buildItems.filter { wanted.isEmpty() || it.first in wanted }.ifEmpty { buildItems }
+        if (candidates.isNotEmpty()) candidates.forEach { (id, transform) -> appendObject(id, ROOT_MODEL_PATH, transform, sources, triangles, objectMaterials) }
+        else sources[ROOT_MODEL_PATH].orEmpty().keys.forEach { id -> appendObject(id, ROOT_MODEL_PATH, identityTransform(), sources, triangles, objectMaterials) }
+        triangles.takeIf { it.isNotEmpty() }?.let { plate to PreviewMesh(it) }
+    }.toMap()
+}
+
+/** Extracts a small, dependency-free preview mesh from an inline or component-based 3MF model. */
+fun previewMesh(xml: String): PreviewMesh? {
+    val sources = mapOf(ROOT_MODEL_PATH to xmlObjects(xml))
+    return previewMeshes(xml, sources, mapOf(1 to emptySet()))[1]
+}
+
+private data class PlateMetrics(val seconds: Int?, val grams: Double?, val parts: Int?)
+
+private fun sliceInfoMetrics(xml: String, plate: Int): PlateMetrics? {
+    val block = XML_PLATE.findAll(xml).firstOrNull { xmlMetadata(it.groupValues[1])["index"]?.toIntOrNull() == plate }?.groupValues?.get(1) ?: return null
+    val metadata = xmlMetadata(block)
+    val parts = Regex("""<object\b([^>]*)/?>""").findAll(block).count { xmlAttr(it.groupValues[1], "skipped") != "true" }
+    return PlateMetrics(metadata["prediction"]?.toIntOrNull(), metadata["weight"]?.toDoubleOrNull(), parts.takeIf { it > 0 })
+}
+
+private fun plateMetrics(bytes: ByteArray?): PlateMetrics {
+    val text = bytes?.decodeToString() ?: return PlateMetrics(null, null, null)
+    val time = Regex("""(?i)(?:total\s+)?estimated(?:\s+printing)?\s*time[^0-9]*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?""").find(text)
+    val colonTime = Regex("""(?i)(?:total\s+)?estimated(?:\s+printing)?\s*time[^0-9]*(\d+):(\d+):(\d+)""").find(text)
+    val hms = time?.takeIf { it.groupValues.drop(1).any(String::isNotEmpty) }
+    val seconds = hms?.let { (it.groupValues[1].toIntOrNull() ?: 0) * 3600 + (it.groupValues[2].toIntOrNull() ?: 0) * 60 + (it.groupValues[3].toIntOrNull() ?: 0) }
+        ?: colonTime?.let { it.groupValues[1].toInt() * 3600 + it.groupValues[2].toInt() * 60 + it.groupValues[3].toInt() }
+    val grams = Regex("""(?i)(?:total\s+)?filament\s+used\s*\[g]\s*[=:]\s*([0-9.]+)""").find(text)?.groupValues?.get(1)?.toDoubleOrNull()
+    val parts = Regex("""(?i)(?:total\s+number\s+of\s+objects|number\s+of\s+objects)\s*[=:]\s*(\d+)""").find(text)?.groupValues?.get(1)?.toIntOrNull()
+    return PlateMetrics(seconds, grams, parts)
+}
+
+private fun decimal(value: Double) = ((value * 100).roundToInt() / 100.0).toString().removeSuffix(".0")
+
+private fun density(value: String): String? {
+    val n = value.removeSuffix("%").toDoubleOrNull() ?: return null
+    return "${if (n <= 1) (n * 100).roundToInt() else n.roundToInt()}% infill"
 }
 
 /**
@@ -131,4 +366,3 @@ fun amsMappingFor(p: Printer, used: List<Map<String, String>>): List<Int>? {
     val ids = used.map { it["id"]?.toIntOrNull() ?: 1 }
     return List(ids.max()) { slot -> ids.indexOf(slot + 1).let { if (it < 0) -1 else trays[it] } }
 }
-
