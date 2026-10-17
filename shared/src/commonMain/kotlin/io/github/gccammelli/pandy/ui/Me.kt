@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.LocalCafe
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.ViewInAr
@@ -87,6 +88,7 @@ fun MeTab(st: UiState) {
         Group {
             NavRow("Learning", leading = { SmallIcon(Icons.AutoMirrored.Outlined.MenuBook, C.Text, 20.dp) }) { pl.openUrl("https://wiki.bambulab.com") }
             NavRow("Support Center", leading = { SmallIcon(Icons.AutoMirrored.Outlined.HelpOutline, C.Text, 20.dp) }) { pl.openUrl("$REPO_URL/issues") }
+            NavRow("Buy me a coffee", leading = { SmallIcon(Icons.Outlined.LocalCafe, C.Text, 20.dp) }) { pl.openUrl(io.github.gccammelli.pandy.DONATE_URL) }
             NavRow("About Pandy", leading = { SmallIcon(Icons.Outlined.Info, C.Text, 20.dp) }) { Nav.go(Screen.About) }
             NavRow("Settings", leading = { SmallIcon(Icons.Outlined.Settings, C.Text, 20.dp) }) { Nav.go(Screen.Settings) }
         }
@@ -308,6 +310,7 @@ fun AboutScreen() {
             T("Developed by Giancarlo Cammelli", 14.sp)
             Gap(20.dp)
             T("Source code and setup guide ›", 14.sp, C.Blue, modifier = Modifier.clickable { pl.openUrl(REPO_URL) }.padding(8.dp))
+            T("Buy me a coffee ›", 14.sp, C.Blue, modifier = Modifier.clickable { pl.openUrl(io.github.gccammelli.pandy.DONATE_URL) }.padding(8.dp))
         }
     }
 }

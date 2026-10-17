@@ -10,6 +10,14 @@ kotlin {
     androidTarget {
         compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
     }
+    // iOS only where it's used: macOS (CI) or on request (-Ppandy.ios, to type-check the iOS code on Linux).
+    val ios = System.getProperty("os.name").startsWith("Mac") || providers.gradleProperty("pandy.ios").isPresent
+    if (ios) listOf(iosArm64(), iosSimulatorArm64()).forEach {
+        it.binaries.framework {
+            baseName = "Shared"
+            isStatic = true
+        }
+    }
     sourceSets {
         all {
             languageSettings.optIn("kotlin.io.encoding.ExperimentalEncodingApi")
@@ -36,6 +44,9 @@ kotlin {
             implementation(libs.media3.ui)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.kotlinx.coroutines.android)
+        }
+        if (ios) iosMain.dependencies {
+            implementation(libs.ktor.client.darwin)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

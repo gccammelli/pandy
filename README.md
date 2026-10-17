@@ -1,5 +1,7 @@
 # Pandy
 
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/cammelli)
+
 **Bambu Handy, for printers in LAN-only mode.** Pandy looks and works like Bambu Lab's Handy app, but talks to your
 printer on your own network: no Bambu cloud between your phone and your printer, so it keeps working with LAN-only
 mode switched on.
@@ -29,8 +31,16 @@ send pictures rather than video) and is supported, but less tested.
 
 ## Install
 
-Download `pandy.apk` from the [latest release](https://github.com/gccammelli/pandy/releases/latest) and open it on your
-Android phone (allow installing from your browser when asked).
+**Android**: download `pandy.apk` from the [latest release](https://github.com/gccammelli/pandy/releases/latest) and open
+it on your phone (allow installing from your browser when asked).
+
+**iPhone**: download `pandy.ipa` from the same release and install it with [SideStore](https://sidestore.io) or
+[AltStore](https://altstore.io), which sign it with your own Apple ID (Pandy isn't on the App Store). On iPhone:
+
+- type the printer's IP address on the first screen: iOS keeps apps from hearing the printer's announcements unless
+  Apple grants them a special permission;
+- the X1 and H2 live camera needs Home Assistant (iOS can't play the printer's own RTSP video); P1 and A1 cameras work
+  directly.
 
 ## Set up
 
@@ -52,7 +62,7 @@ Pandy speaks the printer's own local protocols, the ones Bambu Studio uses in LA
 
 The printer's certificate is checked against Bambu's device certificate authorities and must carry the printer's
 serial number, so Pandy knows it's talking to your printer. Your access code stays on the phone (encrypted with the
-Android Keystore).
+Android Keystore, or in the iOS Keychain).
 
 Home Assistant is optional: added in Me › Settings, it supplies print history and files from its own cache; used as the
 connection (choose it on the first screen) it lets Pandy work away from home.
@@ -64,7 +74,10 @@ connection (choose it on the first screen) it lets Pandy work away from home.
 ./gradlew testDebugUnitTest   # tests
 ```
 
-Kotlin Multiplatform with Compose; the app is Android, the code is shared (`shared/`).
+Kotlin Multiplatform with Compose: the screens and logic are shared (`shared/`), `app/` is the Android app and
+`iosApp/` the iOS one. The iOS app builds on a Mac (`iosApp/iosApp.xcodeproj`), or on GitHub Actions: Actions › Build ›
+Run workflow makes an unsigned `pandy.ipa`. On Linux, `./gradlew :shared:compileKotlinIosArm64 -Ppandy.ios` checks the
+iOS code compiles.
 
 ## Credits
 
@@ -72,3 +85,5 @@ Kotlin Multiplatform with Compose; the app is Android, the code is shared (`shar
 - Slicing by [Bambu Studio](https://github.com/bambulab/BambuStudio) (AGPL-3.0), run unmodified in its own container.
 
 Developed by Giancarlo Cammelli. MIT licence.
+
+Like it? [Buy me a coffee](https://buymeacoffee.com/cammelli) (also in the app, under **Me**).

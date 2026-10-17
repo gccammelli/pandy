@@ -35,6 +35,7 @@ import kotlinx.serialization.json.put
 
 const val INTEGRATION_URL = "https://github.com/greghesp/ha-bambulab"
 const val REPO_URL = "https://github.com/gccammelli/pandy"
+const val DONATE_URL = "https://buymeacoffee.com/cammelli"
 /** A setup guide in Pandy's repository ("docs/slicer.md"). */
 fun guide(path: String) = "$REPO_URL/blob/main/$path"
 
