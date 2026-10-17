@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Pandy" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FF121212</item>
+        <item name="android:statusBarColor">#00000000</item>
+        <item name="android:navigationBarColor">#FF1A1A1A</item>
+    </style>
+</resources>

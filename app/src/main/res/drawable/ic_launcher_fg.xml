@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A panda's face: white head, black ears, eye patches and nose. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FF1A1A1A" android:pathData="M37,38 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <path android:fillColor="#FF1A1A1A" android:pathData="M71,38 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M54,58 m-24,0 a24,22 0 1,0 48,0 a24,22 0 1,0 -48,0" />
+    <path android:fillColor="#FF1A1A1A" android:pathData="M39,48 C34,52 36,62 42,62 C48,62 50,54 47,50 C45,47 41,46 39,48 Z" />
+    <path android:fillColor="#FF1A1A1A" android:pathData="M69,48 C74,52 72,62 66,62 C60,62 58,54 61,50 C63,47 67,46 69,48 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M43,55 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M65,55 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0" />
+    <path android:fillColor="#FF1A1A1A" android:pathData="M49,65 C49,63 59,63 59,65 C59,68 56,70 54,70 C52,70 49,68 49,65 Z" />
+</vector>
