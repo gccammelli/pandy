@@ -340,6 +340,7 @@ fun SettingsScreen() {
             T("Connection", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
             Group {
                 if (Repo.direct) Repo.lan?.let { c -> NavRow("Printer", value = "${c.model} · ${c.ip}", chevron = false) }
+                if (!Repo.direct && !Repo.demo) NavRow("Direct LAN connection", value = "Add (optional)") { Nav.go(Screen.AddDirect) }
                 if (!Repo.demo) {
                     if (Repo.haUrl != null) NavRow("Home Assistant", value = Repo.haUrl + if (Repo.direct) "" else "  (printer too)", chevron = false)
                     else NavRow("Home Assistant", value = "Add (optional)") { Nav.go(Screen.AddHa) }

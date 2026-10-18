@@ -70,6 +70,7 @@ sealed interface Screen {
     data object About : Screen
     data class Web(val url: String, val title: String) : Screen
     data object AddHa : Screen
+    data object AddDirect : Screen
     data object Slicer : Screen
 }
 
@@ -117,6 +118,7 @@ fun Root() {
         Screen.About -> AboutScreen()
         is Screen.Web -> WebScreen(s.url, s.title)
         Screen.AddHa -> AddHaScreen()
+        Screen.AddDirect -> AddDirectScreen()
         Screen.Slicer -> SlicerScreen()
     }
 }
@@ -167,14 +169,22 @@ fun Connect() {
         ConnectModeButton("Pandy + HA", "Use direct control, plus Home Assistant history, cached files, timelapses and MakerWorld printing.", mode == ConnectMode.DirectPlusHomeAssistant) { mode = ConnectMode.DirectPlusHomeAssistant }
         Gap(16.dp)
         when (mode) {
-            ConnectMode.Direct -> PrinterForm()
-            ConnectMode.HomeAssistant -> HaForm(asPrinter = true)
+            ConnectMode.Direct -> {
+                T("You can add Home Assistant later in Me › Settings › Home Assistant.", 13.sp, C.Sub, lh = 18.sp)
+                Gap(12.dp)
+                PrinterForm()
+            }
+            ConnectMode.HomeAssistant -> {
+                T("You can add the direct LAN connection later in Me › Settings › Direct LAN connection.", 13.sp, C.Sub, lh = 18.sp)
+                Gap(12.dp)
+                HaForm(asPrinter = true)
+            }
             ConnectMode.DirectPlusHomeAssistant -> {
                 T("Step 1 of 2: connect Pandy Direct", 16.sp, weight = FontWeight.Medium)
                 Gap(4.dp)
-                T("After Pandy opens, go to Me › Settings › Home Assistant to add the enhancement.", 13.sp, C.Sub, lh = 18.sp)
+                T("Step 2 asks for your Home Assistant address and token right after this.", 13.sp, C.Sub, lh = 18.sp)
                 Gap(12.dp)
-                PrinterForm()
+                PrinterForm { Nav.go(Screen.AddHa) }
             }
         }
         Gap(28.dp)
@@ -267,7 +277,7 @@ private fun ConnectActionButton(title: String, description: String, onClick: () 
 
 /** Direct mode: printers found on the Wi-Fi to pick from, or the IP, serial number and access code typed in. */
 @Composable
-fun PrinterForm() {
+fun PrinterForm(done: () -> Unit = {}) {
     var found by remember { mutableStateOf<List<io.github.gccammelli.pandy.FoundPrinter>?>(null) }
     var searching by remember { mutableStateOf(true) }
     var ip by remember { mutableStateOf("") }
@@ -320,7 +330,7 @@ fun PrinterForm() {
     AccentButton(if (busy) "Connecting…" else "Connect", enabled = !busy && ip.isNotBlank() && serial.length >= 8 && code.isNotBlank()) {
         busy = true; err = null
         val c = io.github.gccammelli.pandy.LanConfig(ip, serial, code, model ?: io.github.gccammelli.pandy.modelName(null, serial), name)
-        scope.launch { runCatching { Repo.connectPrinter(c) }.onFailure { err = it.message ?: it.toString() }; busy = false }
+        scope.launch { runCatching { Repo.connectPrinter(c); done() }.onFailure { err = it.message ?: it.toString() }; busy = false }
     }
 }
 
@@ -357,5 +367,15 @@ fun AddHaScreen() = Page("Home Assistant", { Nav.back() }) {
         T("Pandy controls your printer directly. Home Assistant (with the Bambu Lab integration) adds what the printer can't give a phone on its own: print history and reprinting, cached files, timelapses, and slicing MakerWorld models.", 14.sp, C.Sub, lh = 20.sp)
         Gap(20.dp)
         HaForm(asPrinter = false) { Nav.back() }
+    }
+}
+
+/** Me › Settings › Direct LAN connection: add the printer's own connection to Home Assistant mode. */
+@Composable
+fun AddDirectScreen() = Page("Direct LAN connection", { Nav.back() }) {
+    Column(Modifier.verticalScroll(rememberScrollState()).imePadding().padding(20.dp)) {
+        T("Pandy is using Home Assistant for this printer. A direct LAN connection adds every printer command and the live view, and keeps working when Home Assistant is down.", 14.sp, C.Sub, lh = 20.sp)
+        Gap(20.dp)
+        PrinterForm { Nav.back() }
     }
 }
