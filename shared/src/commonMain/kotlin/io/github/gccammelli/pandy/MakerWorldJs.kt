@@ -77,12 +77,22 @@ const val PRINT_BUTTON_JS = """
   window.__pandyPrint = print;
   const HANDY_ITEM = /^(open in bambu handy|open in bambu studio)$/i;
   // MakerWorld's "Get the full app experience" dialog: Pandy is the app. Press its own Cancel so the dimmed backdrop and scroll lock go too.
+  // Said instead of the dialog, once per page load.
+  function welcome(){
+    if (window.__pandyWelcomed) return; window.__pandyWelcomed = true;
+    const note = document.createElement('div');
+    note.textContent = canPrint() ? 'You are browsing Bambu Lab MakerWorld. Pandy starts prints from here: tap Print on any model.'
+      : 'You are browsing Bambu Lab MakerWorld. To start prints from here, connect your printer and Pandy Slicer in Me \u203A Settings.';
+    note.style.cssText = 'position:fixed;left:12px;right:12px;bottom:76px;z-index:2147483647;padding:12px 16px;border-radius:10px;background:#222;color:#fff;font:14px/1.4 sans-serif;box-shadow:0 2px 10px #0006';
+    document.body.appendChild(note);
+    setTimeout(() => note.remove(), 7000);
+  }
   function hideAppBanner(){
     for (const el of document.querySelectorAll('div,section,p,span,h1,h2,h3')) {
       if (el.children.length || !/get the full app experience/i.test(el.textContent || '')) continue;
       for (let box = el; box.parentElement && box !== document.body; box = box.parentElement) {
         const cancel = [...box.querySelectorAll('button,div,span')].find(b => !b.children.length && /^cancel$/i.test((b.textContent || '').trim()));
-        if (cancel) { cancel.click(); break; }
+        if (cancel) { cancel.click(); welcome(); break; }
       }
     }
   }
