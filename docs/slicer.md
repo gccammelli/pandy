@@ -1,64 +1,35 @@
-# Pandy Slicer: printing MakerWorld models
+# Printing MakerWorld models
 
-Handy prints a MakerWorld model by having Bambu's cloud slice it. With the printer in LAN-only mode, Pandy does that
-part locally: **Pandy Slicer** runs Bambu Studio's own slicer (its command line, unmodified) in a container, slices the
-model's print profile and puts the result on your printer; then Pandy starts the print.
-
-```
-MakerWorld (in Pandy's Models tab) ──3MF──▶ Pandy ──3MF──▶ Pandy Slicer ──sliced file (FTPS)──▶ printer
-                                              └───────────── start the print (MQTT or Home Assistant) ────▶
-```
-
-It runs on any **x86-64** machine with Docker, or as a **Home Assistant add-on** (Bambu Studio is only published for
-x86-64 Linux, so not on a Raspberry Pi). It needs about 2 GB of disk and some CPU for a minute per print.
-
-## Option A: Home Assistant add-on
-
-1. Settings › Add-ons › Add-on store › ⋮ › **Repositories**, add `https://github.com/gccammelli/pandy`.
-2. Install **Pandy Slicer**, start it. (The first build downloads Bambu Studio, about 220 MB; give it a few minutes.)
-3. Optional: in its Configuration tab set a **token**, so only Pandy can use it.
-4. In Pandy: Me › Settings › **Slicer for MakerWorld prints**: your Home Assistant's address with port **8737**
-   (for example `slicer.local:8737`), and the token if you set one. **Save** checks it answers.
-
-## Option B: Docker on any computer
+Handy prints a MakerWorld model by having Bambu's cloud slice it. With the printer in LAN-only mode Pandy does that
+part locally, with **[Pandy Slicer](https://github.com/gccammelli/pandy-slicer)**: Bambu Studio's own slicer in a
+container, on your Home Assistant or any x86-64 computer.
 
 ```
-git clone https://github.com/gccammelli/pandy
-cd pandy/slicer
-docker compose up -d
+MakerWorld (Pandy's Models tab) ──3MF──▶ Pandy ──3MF──▶ Pandy Slicer ──sliced file (FTPS)──▶ printer
+                                           └──────────── start the print (MQTT or Home Assistant) ─────▶
 ```
 
-Then in Pandy enter `<that computer's IP>:8737`. To require a token, set `PANDY_SLICER_TOKEN` in `docker-compose.yml`
-and enter the same one in Pandy.
+Everything else in Pandy (status, camera, controls, history, reprints, timelapses) works without it.
 
-## Printing a model
+## Set it up
 
-1. **Models** tab: find a model, open it, choose the **print profile for your printer** and **Download** its 3MF
-   (MakerWorld asks you to sign in once). Pandy catches the download.
-2. Pandy shows the plates with their pictures, the filaments and which AMS slot each will use, and Handy's options
-   (bed leveling, flow calibration, timelapse). Tap **Print**.
-3. The slicer slices the plate (about a minute), uploads it to the printer, and the print starts. Follow it on Devices.
+1. Install Pandy Slicer, as a **Home Assistant add-on** (one click from
+   [its page](https://github.com/gccammelli/pandy-slicer#install-home-assistant-add-on)) or with **Docker**
+   ([instructions](https://github.com/gccammelli/pandy-slicer#install-docker-anywhere)).
+2. In Pandy: **Me › Settings › Slicer for MakerWorld prints**: its address with port **8737** (for example
+   `homeassistant.local:8737`), and the token if you set one. **Save** checks it answers.
 
-In Home Assistant mode, Pandy asks once for the printer's access code: the slicer puts the file on the printer over the
-local network, which needs it.
+## Print a model
 
-## Good to know
+1. **Models** tab: open a model and tap the magenta **Print** (where MakerWorld shows "Open in Bambu Handy"; on models
+   without it, Pandy's Print sits above "Download 3MF", which stays a plain download). Sign in to MakerWorld once.
+2. Pandy picks the profile made for your printer when the model has one, and shows its plates with their pictures,
+   the filaments and which AMS slot each uses, and Handy's options (bed leveling, flow calibration, timelapse).
+3. **Print**: the slicer slices the plate (about a minute), converting a profile made for another printer to yours,
+   puts it on the printer, and the print starts with Bambu Studio's usual preparation.
 
-- **Use the profile for your printer.** The slicer slices with the profile's own settings; a profile made for another
-  model is flagged, and may not print right.
-- **Filament**: each filament goes to the AMS slot with the same type and the nearest colour, else the external spool.
-- **Plate pictures**: Bambu Studio's command line can't draw them without a screen, so the slicer keeps the ones the
-  profile came with (MakerWorld profiles have them).
-- **Safety**: the slicer only accepts 3MF files, runs one slice at a time, and only talks to the printer you name. Don't
-  expose port 8737 to the internet; use the token if others share your network.
+## When Print doesn't show
 
-## API (for the curious)
-
-| | |
-|---|---|
-| `GET /health` | `{"ok": true, "version": "<Bambu Studio version>"}` |
-| `POST /slice?plate=1&name=<name>` | body: the 3MF; answers the sliced `.gcode.3mf`, with a JSON summary in `X-Pandy-Result` |
-| `POST /slice?plate=1&name=<name>&bed_type=textured_plate` | optionally applies the selected Bambu bed to that plate before slicing |
-| `POST /slice?plate=1&name=<name>&upload=1` | also uploads it: headers `X-Printer-Ip`, `X-Printer-Serial`, `X-Printer-Code`; answers `{"path": "cache/<name>.gcode.3mf", "plates": […]}` |
-
-With a token set, send `Authorization: Bearer <token>`.
+The printer must take commands from Pandy: **LAN Only mode** and **Developer Mode** on (printer: Settings › Network,
+or WLAN on P1/A1). Otherwise Pandy shows "Watching only", leaves MakerWorld as it is, and its "Open in Bambu Handy"
+opens Handy.

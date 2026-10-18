@@ -18,7 +18,7 @@ These are demo-mode screens; the demo printer lets you explore the app without a
 - Printer status, progress, temperatures, fans, light, speed, motion controls and HMS messages
 - Pause, stop and skip controls, plus AMS and filament controls
 - Print files, thumbnails, history, reprints and timelapses
-- MakerWorld browsing and print profiles when [Pandy Slicer](docs/slicer.md) is configured
+- MakerWorld browsing, and printing its models with [Pandy Slicer](https://github.com/gccammelli/pandy-slicer) (a Home Assistant add-on or Docker container; [how](docs/slicer.md))
 - Light and dark themes, with a built-in demo printer
 
 ## Direct mode
@@ -70,8 +70,8 @@ Pandy is Kotlin Multiplatform with Compose: shared screens and logic live in `sh
 ```
 
 Pandy is not made by or affiliated with Bambu Lab. Protocol details and Bambu's CA certificates come from the
-[Home Assistant Bambu Lab integration](https://github.com/greghesp/ha-bambulab) (MIT). Pandy Slicer uses
-[Bambu Studio](https://github.com/bambulab/BambuStudio) (AGPL-3.0), unmodified in its own container.
+[Home Assistant Bambu Lab integration](https://github.com/greghesp/ha-bambulab) (MIT). [Pandy Slicer](https://github.com/gccammelli/pandy-slicer)
+uses [Bambu Studio](https://github.com/bambulab/BambuStudio) (AGPL-3.0), unmodified in its own container.
 
 Developed by Giancarlo Cammelli. MIT licence.
 

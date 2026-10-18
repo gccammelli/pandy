@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -40,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.gccammelli.pandy.INTEGRATION_URL
@@ -142,35 +144,124 @@ fun Tabs(st: UiState, p: Printer) = Column(Modifier.fillMaxSize().background(C.B
 
 // ---------- Connect ----------
 
-/** First screen: find the printer on the Wi-Fi and enter its access code (direct mode), or use Home Assistant, or the demo. */
+private enum class ConnectMode { Direct, HomeAssistant, DirectPlusHomeAssistant }
+
+/** First screen: choose direct LAN, Home Assistant, the combined setup, or the demo. */
 @Composable
 fun Connect() {
-    var useHa by remember { mutableStateOf(false) }
+    var mode by remember { mutableStateOf(ConnectMode.Direct) }
     Column(Modifier.fillMaxSize().background(C.Card).statusBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp)) {
         Gap(24.dp)
         PandaMark(Modifier.size(64.dp))
         Gap(16.dp)
         T("Pandy", 32.sp, weight = FontWeight.Bold)
         Gap(8.dp)
-        T("Your Bambu Lab printer on your own network: works in LAN-only mode, no Bambu account needed for the printer.", 15.sp, C.Sub, lh = 21.sp)
+        T("Choose how Pandy gets printer data. Home Assistant can be used on its own or added to a direct connection for extra features.", 15.sp, C.Sub, lh = 21.sp)
         Gap(24.dp)
-        if (useHa) {
-            HaForm(asPrinter = true)
-            Gap(16.dp)
-            T("‹ Connect to the printer directly instead", 14.sp, C.Blue, modifier = Modifier.clickable { useHa = false }.padding(vertical = 8.dp))
-        } else {
-            PrinterForm()
-            Gap(16.dp)
-            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).border(1.dp, C.Line, RoundedCornerShape(10.dp)).clickable { useHa = true }.padding(16.dp)) {
-                T("Use Home Assistant instead: works away from home too, if your Home Assistant is reachable from outside. Needs its Bambu Lab integration.", 13.sp, C.Text, lh = 18.sp)
+        ConnectionComparison()
+        Gap(20.dp)
+        T("Connection mode", 16.sp, weight = FontWeight.Medium)
+        Gap(8.dp)
+        ConnectModeButton("Pandy Only", "Control the printer directly over your LAN. Needs LAN Only and Developer Mode.", mode == ConnectMode.Direct) { mode = ConnectMode.Direct }
+        ConnectModeButton("HA Only", "Use Home Assistant as the printer connection. Works remotely when Home Assistant is reachable.", mode == ConnectMode.HomeAssistant) { mode = ConnectMode.HomeAssistant }
+        ConnectModeButton("Pandy + HA", "Use direct control, plus Home Assistant history, cached files, timelapses and MakerWorld printing.", mode == ConnectMode.DirectPlusHomeAssistant) { mode = ConnectMode.DirectPlusHomeAssistant }
+        Gap(16.dp)
+        when (mode) {
+            ConnectMode.Direct -> PrinterForm()
+            ConnectMode.HomeAssistant -> HaForm(asPrinter = true)
+            ConnectMode.DirectPlusHomeAssistant -> {
+                T("Step 1 of 2: connect Pandy Direct", 16.sp, weight = FontWeight.Medium)
+                Gap(4.dp)
+                T("After Pandy opens, go to Me › Settings › Home Assistant to add the enhancement.", 13.sp, C.Sub, lh = 18.sp)
+                Gap(12.dp)
+                PrinterForm()
             }
         }
         Gap(28.dp)
-        T("Just looking?", 15.sp, weight = FontWeight.Medium)
+        T("Explore without a printer", 15.sp, weight = FontWeight.Medium)
         Gap(8.dp)
-        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).border(1.dp, C.Line, RoundedCornerShape(10.dp)).clickable { Repo.startDemo() }.padding(16.dp)) {
-            T("Try the demo: a pretend X1 Carbon halfway through a print, with an AMS. Nothing to set up.", 14.sp, C.Text, lh = 19.sp)
+        ConnectActionButton("Try the demo", "Explore a pretend X1 Carbon halfway through a print, with an AMS. Nothing to set up.") { Repo.startDemo() }
+    }
+}
+
+@Composable
+private fun ConnectionComparison() {
+    T("Help me choose", 16.sp, weight = FontWeight.Medium)
+    Gap(4.dp)
+    T("Pick the setup that matches how you want to use your printer.", 13.sp, C.Sub, lh = 18.sp)
+    Gap(8.dp)
+    val shape = RoundedCornerShape(12.dp)
+    Column(Modifier.fillMaxWidth().clip(shape).border(1.dp, C.Line, shape)) {
+        Row(Modifier.fillMaxWidth().background(C.Fill).padding(12.dp), verticalAlignment = Alignment.Top) {
+            T("Feature", 11.sp, C.Sub, weight = FontWeight.Medium, modifier = Modifier.weight(1.45f))
+            ComparisonHeaderCell("Pandy\nOnly", 0.85f)
+            ComparisonHeaderCell("HA\nOnly", 0.85f)
+            ComparisonHeaderCell("Pandy +\nHA", 0.85f)
         }
+        ComparisonFeatureRow("Printer data and control", true, true, true)
+        ComparisonDivider()
+        ComparisonFeatureRow("Direct LAN connection", true, false, true)
+        ComparisonDivider()
+        ComparisonFeatureRow("Works without Home Assistant", true, false, false)
+        ComparisonDivider()
+        ComparisonFeatureRow("Remote access*", false, true, true)
+        ComparisonDivider()
+        ComparisonFeatureRow("HA history, cache and timelapses", false, true, true)
+        ComparisonDivider()
+        ComparisonFeatureRow("LAN Only + Developer Mode", true, false, true)
+    }
+    Gap(4.dp)
+    T("* Remote use depends on Home Assistant being reachable. Some HA controls depend on what its Bambu integration exposes.", 12.sp, C.Sub, lh = 16.sp)
+}
+
+@Composable
+private fun RowScope.ComparisonHeaderCell(label: String, weight: Float) = T(
+    label, 11.sp, C.Sub, weight = FontWeight.Medium, align = TextAlign.Center, modifier = Modifier.weight(weight)
+)
+
+@Composable
+private fun ComparisonFeatureRow(feature: String, vararg enabled: Boolean) {
+    Row(Modifier.fillMaxWidth().background(C.Card).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        T(feature, 12.sp, modifier = Modifier.weight(1.45f))
+        enabled.forEach { ComparisonMark(it, Modifier.weight(0.85f)) }
+    }
+}
+
+@Composable
+private fun ComparisonMark(enabled: Boolean, modifier: Modifier) = T(
+    if (enabled) "✓" else "—", 16.sp, if (enabled) C.Ok else C.Faint, weight = FontWeight.Bold,
+    align = TextAlign.Center, modifier = modifier
+)
+
+@Composable
+private fun ComparisonDivider() = Box(Modifier.fillMaxWidth().height(1.dp).background(C.Line))
+
+@Composable
+private fun ConnectModeButton(title: String, description: String, selected: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (selected) C.AccentBg else C.Fill)
+        .border(1.dp, if (selected) C.Accent else C.Line, RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            T(title, 16.sp, weight = FontWeight.Medium)
+            Gap(4.dp)
+            T(description, 13.sp, C.Sub, lh = 18.sp)
+        }
+        if (selected) T("✓", 20.sp, C.Accent, weight = FontWeight.Bold, modifier = Modifier.padding(start = 12.dp))
+    }
+    Gap(8.dp)
+}
+
+@Composable
+private fun ConnectActionButton(title: String, description: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(14.dp)).background(C.Fill)
+        .border(1.dp, C.Line, RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            T(title, 16.sp, C.Accent, weight = FontWeight.Medium)
+            Gap(2.dp)
+            T(description, 12.sp, C.Sub, maxLines = 2)
+        }
+        T("›", 26.sp, C.Accent, modifier = Modifier.padding(start = 12.dp))
     }
 }
 
