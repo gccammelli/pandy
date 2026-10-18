@@ -2,7 +2,8 @@ package io.github.gccammelli.pandy
 
 /**
  * MakerWorld's primary print action becomes Pandy's "Print": tapping it downloads the chosen profile to Pandy's print
- * sheet. "Download 3MF" remains a normal file download in the dropdown. Re-applied as the page changes (it's a
+ * sheet. That's "Open in Bambu Handy/Studio", or "Download 3MF" on models MakerWorld can't hand to Handy, when it's the
+ * main button; "Download 3MF" in the dropdown remains a normal file download. Re-applied as the page changes (it's a
  * single-page app). Written against MakerWorld's markup of October 2026; debug builds let chrome://inspect inspect it.
  */
 const val PRINT_BUTTON_JS = """
@@ -18,7 +19,8 @@ const val PRINT_BUTTON_JS = """
     div:has(> span.primaryButton) span.primaryButton, div:has(> span.primaryButton) span.primaryButton * { background: transparent !important; color: #fff !important; }
     div:has(> span.primaryButton) > .icon-box, div:has(> span.primaryButton) > .icon-box:hover { background: #7E004F !important; }`;
   (document.head || document.documentElement).appendChild(css);
-  const LABEL = /^(open in bambu (handy|studio)|print)$/i;
+  // The main button's label; on models with no Handy option MakerWorld puts "Download 3MF" there instead.
+  const LABEL = /^(open in bambu (handy|studio)|print|download 3mf)$/i;
   const variants = i => {
     const primary = i && i.extention && i.extention.modelInfo && i.extention.modelInfo.compatibility;
     const other = i && i.extention && i.extention.otherCompatibilityModelInfo;
