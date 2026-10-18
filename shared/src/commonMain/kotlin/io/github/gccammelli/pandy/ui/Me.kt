@@ -335,7 +335,17 @@ fun SettingsScreen() {
                     showPromotions = it
                     Repo.setHidePromotions(!it)
                 }
+                if (pl.canNotify && !Repo.demo) {
+                    var notify by remember { mutableStateOf(Repo.notify) }
+                    ToggleRow("Print notifications", notify) {
+                        notify = it
+                        Repo.setNotify(it)
+                        if (it) pl.requestNotifications()
+                        pl.watchInBackground(it)
+                    }
+                }
             }
+            if (pl.canNotify && !Repo.demo) T("Tells you when a print finishes, fails or needs attention. Pandy stays connected in the background, with a small ongoing notification.", 12.sp, C.Sub, lh = 17.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp))
             Gap(16.dp)
             T("Connection", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
             Group {

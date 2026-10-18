@@ -13,6 +13,12 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import io.github.gccammelli.pandy.ui.AppTheme
 import io.github.gccammelli.pandy.ui.Nav
 import io.github.gccammelli.pandy.ui.Screen
@@ -55,15 +61,46 @@ class MainActivity : ComponentActivity(), PlatformUi {
         setContent { CompositionLocalProvider(LocalPlatform provides this) { AppTheme { Root() } } }
     }
 
-    // Live updates only while Pandy is on screen.
+    // Live updates while Pandy is on screen, and in the background too when print alerts are on.
     override fun onStart() {
         super.onStart()
+        Repo.visible = true
         Repo.start()
+        // Also when the user connects while Pandy is open: the watcher starts then, not at the next launch.
+        watchJob = CoroutineScope(Dispatchers.Main).launch { Repo.state.map { it.on }.distinctUntilChanged().collect { syncWatch() } }
+    }
+
+    private var watchJob: Job? = null
+
+    private fun syncWatch() {
+        if (!Repo.watching) return
+        watchInBackground(true)
+        // Asked once, the first time Pandy is connected with alerts on; Settings asks again if the user turns them back on.
+        if (Repo.setting("notify_asked") == null) { Repo.setSetting("notify_asked", "true"); requestNotifications() }
     }
 
     override fun onStop() {
         super.onStop()
-        if (!isChangingConfigurations) Repo.stop()
+        watchJob?.cancel()
+        Repo.visible = false
+        if (!isChangingConfigurations && !Repo.watching) Repo.stop()
+    }
+
+    override val canNotify get() = true
+
+    override fun requestNotifications() {
+        if (!canNotify()) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+    }
+
+    override fun watchInBackground(on: Boolean) {
+        val service = Intent(this, WatchService::class.java)
+        // Without the permission the alerts would be silent, so don't spend battery on watching.
+        if (on && Repo.watching && canNotify()) androidx.core.content.ContextCompat.startForegroundService(this, service) else stopService(service)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        watchInBackground(true)
     }
 
     override val appVersion: String get() = BuildConfig.VERSION_NAME
@@ -137,6 +174,8 @@ class MainActivity : ComponentActivity(), PlatformUi {
         if (!BuildConfig.DEBUG) return
         // `--es print_url http://…/model.3mf`: hands the MakerWorld print sheet a file, as a download from the web view would.
         i?.getStringExtra("print_url")?.let { u -> Nav.stack.clear(); Nav.tab = 0; io.github.gccammelli.pandy.ui.debugDownload.value = WebDownload(u, u.substringAfterLast('/'), null, printSheet = true); return }
+        // `--es notify_test 1`: shows a sample print alert.
+        i?.getStringExtra("notify_test")?.let { Repo.notifier?.show("test", "Print finished", "Benchy is done on Test printer"); return }
         val name = i?.getStringExtra("screen") ?: return
         val screens = mapOf("control" to Screen.Control, "motion" to Screen.Motion, "skip" to Screen.Skip, "live" to Screen.LiveFull,
             "printer" to Screen.PrinterSettings, "calibration" to Screen.Calibration, "print_options" to Screen.PrintOptions,

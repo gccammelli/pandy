@@ -32,6 +32,10 @@ object Repo {
         private set
     val state = MutableStateFlow(UiState())
     private var liveJob: Job? = null
+    /** Shows print alerts; null where the platform can't (iOS). */
+    var notifier: Notifier? = null
+    /** Pandy is on screen: the user can see changes, so no alert is needed. */
+    var visible = false
 
     val connected get() = ha != null
     private var token: String? = null
@@ -166,6 +170,11 @@ object Repo {
     /** Keep unsupported controls visible by default so users can see what Pandy does not expose. */
     val showUnavailable get() = store.settings.getString("show_unavailable") != "false"
     fun setShowUnavailable(value: Boolean) = store.settings.putString("show_unavailable", value.toString())
+    /** Print alerts, and the background connection that makes them possible. On unless the user turned it off. */
+    val notify get() = store.settings.getString("notify") != "false"
+    fun setNotify(value: Boolean) = store.settings.putString("notify", value.toString())
+    /** Pandy should stay connected with the screen off, to send alerts. */
+    val watching get() = notifier != null && notify && connected && !demo
     val hidePromotions get() = store.settings.getString("hide_promotions") == "true"
     fun setHidePromotions(value: Boolean) = store.settings.putString("hide_promotions", value.toString())
 
@@ -201,7 +210,10 @@ object Repo {
                     }) { ev ->
                         applyEntityEvent(states, ev)
                         val snapshot = states.toMap()
-                        state.update { it.copy(printers = infos.map { i -> Printer(i, snapshot) }, live = true, error = null) }
+                        val before = state.value.printers
+                        val now = infos.map { i -> Printer(i, snapshot) }
+                        state.update { it.copy(printers = now, live = true, error = null) }
+                        alert(before, now)
                         wait = 1_000L
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -217,6 +229,12 @@ object Repo {
                 wait = (wait * 2).coerceAtMost(30_000L)
             }
         }
+    }
+
+    private fun alert(before: List<Printer>?, now: List<Printer>) {
+        val n = notifier ?: return
+        if (visible || !notify || demo) return
+        for (p in now) printEvent(before?.firstOrNull { it.serial == p.serial }, p)?.let { n.show(p.serial, it.title, it.text) }
     }
 
     fun stop() { liveJob?.cancel(); liveJob = null }

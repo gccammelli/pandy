@@ -7,5 +7,6 @@ class App : Application() {
         super.onCreate()
         appContext = this
         Repo.init(androidStorage(this))
+        Repo.notifier = AndroidNotifier(this)
     }
 }

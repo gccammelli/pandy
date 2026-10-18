@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
+    <!-- Print alerts, and the foreground service that keeps Pandy connected for them. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+
     <!-- To open Bambu Handy when the printer only takes commands from Bambu's apps. -->
     <queries>
         <package android:name="bbl.intl.bambulab.com" />
@@ -32,5 +37,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service android:name=".WatchService" android:exported="false" android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>
