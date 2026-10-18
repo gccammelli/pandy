@@ -80,12 +80,17 @@ const val PRINT_BUTTON_JS = """
   // Said instead of the dialog, once per page load.
   function welcome(){
     if (window.__pandyWelcomed) return; window.__pandyWelcomed = true;
-    const note = document.createElement('div');
-    note.textContent = canPrint() ? 'You are browsing Bambu Lab MakerWorld. Pandy starts prints from here: tap Print on any model.'
-      : 'You are browsing Bambu Lab MakerWorld. To start prints from here, connect your printer and Pandy Slicer in Me \u203A Settings.';
-    note.style.cssText = 'position:fixed;left:12px;right:12px;bottom:76px;z-index:2147483647;padding:12px 16px;border-radius:10px;background:#222;color:#fff;font:14px/1.4 sans-serif;box-shadow:0 2px 10px #0006';
-    document.body.appendChild(note);
-    setTimeout(() => note.remove(), 7000);
+    const text = canPrint() ? 'Pandy starts prints from here: tap Print on any model.'
+      : 'To start prints from here, connect your printer and Pandy Slicer in Me \u203A Settings.';
+    const back = document.createElement('div');
+    back.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#0008;display:flex;align-items:center;justify-content:center;padding:24px;font-family:sans-serif';
+    back.innerHTML = '<div style="background:#fff;color:#222;border-radius:16px;padding:24px;max-width:340px;width:100%;text-align:center">' +
+      '<div style="font-size:19px;font-weight:700;margin-bottom:12px">You are browsing Bambu Lab MakerWorld</div>' +
+      '<div style="font-size:15px;line-height:1.45;margin-bottom:20px"></div>' +
+      '<div style="background:#AE006D;color:#fff;border-radius:8px;padding:13px;font-size:17px;font-weight:600">OK!</div></div>';
+    back.querySelector('div > div:nth-child(2)').textContent = text;
+    back.addEventListener('click', () => back.remove());
+    document.body.appendChild(back);
   }
   function hideAppBanner(){
     for (const el of document.querySelectorAll('div,section,p,span,h1,h2,h3')) {
