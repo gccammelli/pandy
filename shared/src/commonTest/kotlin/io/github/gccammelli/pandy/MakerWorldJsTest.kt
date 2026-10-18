@@ -19,5 +19,6 @@ class MakerWorldJsTest {
         assertTrue(PRINT_BUTTON_JS.contains("window.__pandyCanPrint !== false"))
         assertTrue(PRINT_BUTTON_JS.contains("target !== button && !label.contains(target)"))
         assertTrue(PRINT_BUTTON_JS.contains("textContent = 'Print'"))
+        assertTrue(PRINT_BUTTON_JS.contains("get the full app experience"))
     }
 }

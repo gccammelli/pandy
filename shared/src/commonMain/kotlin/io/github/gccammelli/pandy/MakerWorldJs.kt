@@ -76,7 +76,18 @@ const val PRINT_BUTTON_JS = """
   }
   window.__pandyPrint = print;
   const HANDY_ITEM = /^(open in bambu handy|open in bambu studio)$/i;
+  // MakerWorld's "Get the full app experience" dialog: Pandy is the app. Press its own Cancel so the dimmed backdrop and scroll lock go too.
+  function hideAppBanner(){
+    for (const el of document.querySelectorAll('div,section,p,span,h1,h2,h3')) {
+      if (el.children.length || !/get the full app experience/i.test(el.textContent || '')) continue;
+      for (let box = el; box.parentElement && box !== document.body; box = box.parentElement) {
+        const cancel = [...box.querySelectorAll('button,div,span')].find(b => !b.children.length && /^cancel$/i.test((b.textContent || '').trim()));
+        if (cancel) { cancel.click(); break; }
+      }
+    }
+  }
   function patch(){
+    hideAppBanner();
     document.documentElement.classList.toggle('pandy-print', canPrint());
     for (const label of document.querySelectorAll('span.primaryButton')) {
       const box = label.parentElement;
