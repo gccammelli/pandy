@@ -14,6 +14,10 @@ fun printEvent(before: Printer?, now: Printer): PrintEvent? {
     val job = now.task ?: before.task ?: "The print"
     if (before.printing && now.status == "finish") return PrintEvent("Print finished", "$job is done on ${now.name}")
     if (before.printing && now.status == "failed") return PrintEvent("Print failed", "${now.printError ?: job} (${now.name})")
-    val fresh = now.hms.firstOrNull { it !in before.hms } ?: return null
+    // Routine notices ("Inspecting the first layer: please wait a moment") only matter when they stop the print.
+    val fresh = now.hms.firstOrNull { it !in before.hms && (now.status == "pause" || (hmsLevel(it.first) ?: 1) <= 2) } ?: return null
     return PrintEvent("${now.name} needs attention", fresh.second)
 }
+
+/** An HMS code's level, its third group ("HMS_0C00_0300_0003_000B": 3): 1 fatal, 2 serious, 3 common, 4 info. */
+private fun hmsLevel(code: String) = code.split('_').getOrNull(3)?.toIntOrNull(16)

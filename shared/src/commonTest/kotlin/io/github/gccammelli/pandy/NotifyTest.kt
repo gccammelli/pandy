@@ -7,9 +7,9 @@ import kotlinx.serialization.json.JsonObject
 
 class NotifyTest {
     private val ids = mapOf("sensor.print_status" to "s", "sensor.subtask_name" to "t", "binary_sensor.hms_errors" to "h", "binary_sensor.print_error" to "e")
-    private fun printer(status: String, hms: Int = 0, error: Boolean = false): Printer {
+    private fun printer(status: String, hms: Int = 0, error: Boolean = false, code: (Int) -> String = { "C$it" }): Printer {
         val attrs = if (hms == 0) JsonObject(emptyMap()) else json.parseToJsonElement(
-            """{"Count":"$hms",""" + (1..hms).joinToString(",") { """"$it-Code":"C$it","$it-Error":"Problem $it"""" } + "}").let { it as JsonObject }
+            """{"Count":"$hms",""" + (1..hms).joinToString(",") { """"$it-Code":"${code(it)}","$it-Error":"Problem $it"""" } + "}").let { it as JsonObject }
         val states = mapOf(
             "s" to Entity("s", status, JsonObject(emptyMap())), "t" to Entity("t", "Benchy", JsonObject(emptyMap())),
             "h" to Entity("h", if (hms == 0) "off" else "on", attrs),
@@ -36,6 +36,14 @@ class NotifyTest {
         val e = printEvent(printer("running"), printer("pause", hms = 1))!!
         assertEquals("Problem 1", e.text)
         assertNull(printEvent(printer("pause", hms = 1), printer("pause", hms = 1)))
+    }
+
+    @Test
+    fun routineNoticesOnlyWhenThePrintStops() {
+        val notice: (Int) -> String = { "HMS_0C00_0300_0003_000B" } // "Inspecting the first layer: please wait a moment."
+        assertNull(printEvent(printer("running"), printer("running", hms = 1, code = notice)))
+        assertEquals("Problem 1", printEvent(printer("running"), printer("pause", hms = 1, code = notice))!!.text)
+        assertEquals("Problem 1", printEvent(printer("running"), printer("running", hms = 1, code = { "HMS_0300_0100_0002_0007" }))!!.text)
     }
 
     @Test

@@ -19,7 +19,7 @@ These are demo-mode screens; the demo printer lets you explore the app without a
 - Pause, stop and skip controls, plus AMS and filament controls
 - Print files, thumbnails, history, reprints and timelapses
 - Android: alerts when a print finishes, fails or needs attention, even with the screen off (Pandy stays connected in the background; turn it off in Settings). iOS can't watch in the background, so it has no alerts
-- MakerWorld browsing, and printing its models with [Pandy Slicer](https://github.com/gccammelli/pandy-slicer) (a Home Assistant add-on or Docker container; [how](docs/slicer.md))
+- MakerWorld browsing, and printing its models with [Pandy Slicer](https://github.com/gccammelli/pandy-slicer) (a Home Assistant add-on that Pandy reaches through Home Assistant, or a Docker container; [how](docs/slicer.md))
 - Light and dark themes, with a built-in demo printer
 
 ## Direct mode

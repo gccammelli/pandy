@@ -13,11 +13,22 @@ Everything else in Pandy (status, camera, controls, history, reprints, timelapse
 
 ## Set it up
 
-1. Install Pandy Slicer, as a **Home Assistant add-on** (one click from
-   [its page](https://github.com/gccammelli/pandy-slicer#install-home-assistant-add-on)) or with **Docker**
-   ([instructions](https://github.com/gccammelli/pandy-slicer#install-docker-anywhere)).
-2. In Pandy: **Me › Settings › Slicer for MakerWorld prints**: its address with port **8737** (for example
-   `homeassistant.local:8737`), and the token if you set one. **Save** checks it answers.
+**With Home Assistant** (Pandy reaches the slicer through it, so it works wherever Pandy reaches Home Assistant):
+
+1. Install the **Pandy Slicer add-on** (one click from
+   [its page](https://github.com/gccammelli/pandy-slicer#install-home-assistant-add-on)) and start it.
+2. That's it: Pandy finds the add-on through its Home Assistant connection. **Me › Settings › Slicer for MakerWorld
+   prints › Check the add-on** confirms it answers. Pandy's Home Assistant user must be an administrator (Home
+   Assistant only lets administrators reach add-ons).
+
+```
+Phone ──▶ Home Assistant ──▶ Pandy Slicer add-on ──sliced file (FTPS)──▶ printer
+```
+
+**Without Home Assistant**: run it with **Docker**
+([instructions](https://github.com/gccammelli/pandy-slicer#install-docker-anywhere)), then in **Me › Settings › Slicer
+for MakerWorld prints** enter its address with port **8737** (for example `slicer.local:8737`) and the token if you set
+one. **Save** checks it answers. An address entered here is used instead of the add-on.
 
 ## Print a model
 

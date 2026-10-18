@@ -322,7 +322,7 @@ fun PrinterForm(done: () -> Unit = {}) {
     OutlinedTextField(serial, { serial = it.trim().uppercase(); model = null; name = "" }, Modifier.fillMaxWidth(), label = { T("Serial number", 14.sp, C.Sub) }, singleLine = true)
     Gap(10.dp)
     OutlinedTextField(code, { code = it.trim() }, Modifier.fillMaxWidth(), label = { T("Access code", 14.sp, C.Sub) }, singleLine = true,
-        visualTransformation = PasswordVisualTransformation())
+        visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
     Gap(8.dp)
     T("The access code is on the printer's screen: Settings › Network (X1, H2) or Settings › WLAN (P1, A1). Turn on LAN Only mode and Developer Mode there too.", 12.sp, C.Sub, lh = 17.sp)
     if (err != null) { Gap(12.dp); T(err!!, 14.sp, C.Red) }
@@ -347,7 +347,7 @@ fun HaForm(asPrinter: Boolean, done: () -> Unit = {}) {
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
     Gap(12.dp)
     OutlinedTextField(token, { token = it }, Modifier.fillMaxWidth(), label = { T("Long-lived access token", 14.sp, C.Sub) }, singleLine = true,
-        visualTransformation = PasswordVisualTransformation())
+        visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
     Gap(10.dp)
     T("Create the token in Home Assistant: your profile → Security → Long-lived access tokens.", 13.sp, C.Sub, lh = 18.sp)
     if (err != null) { Gap(12.dp); T(err!!, 14.sp, C.Red) }

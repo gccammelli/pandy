@@ -356,7 +356,7 @@ fun SettingsScreen() {
                     else NavRow("Home Assistant", value = "Add (optional)") { Nav.go(Screen.AddHa) }
                     if (Repo.direct && Repo.haUrl != null) NavRow("Remove Home Assistant", labelColor = C.Red, chevron = false) { Repo.removeHa(); Nav.back() }
                 }
-                if (!Repo.demo) NavRow("Slicer for MakerWorld prints", value = Repo.slicerUrl ?: "Set up") { Nav.go(Screen.Slicer) }
+                if (!Repo.demo) NavRow("Slicer for MakerWorld prints", value = Repo.slicerUrl ?: if (Repo.haApi != null) "Home Assistant add-on" else "Set up") { Nav.go(Screen.Slicer) }
                 NavRow(if (Repo.demo) "Leave the demo" else "Disconnect", labelColor = C.Red, chevron = false) { Nav.stack.clear(); Repo.logout() }
             }
         }

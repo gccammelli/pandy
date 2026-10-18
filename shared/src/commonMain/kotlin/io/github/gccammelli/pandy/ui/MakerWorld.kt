@@ -741,34 +741,47 @@ private fun FilamentPicker(p: Printer, project: Project, index: Int, auto: List<
     } else T("This model did not include filament metadata.", 14.sp, C.Sub)
 }
 
-/** Me › Settings › Slicer: Pandy Slicer's address and optional token, with a check. */
+/** Me › Settings › Slicer: the Pandy Slicer add-on through Home Assistant, or a slicer's address and optional token, with a check. */
 @Composable
 fun SlicerScreen() = Page("Slicer", { Nav.back() }) {
     var url by remember { mutableStateOf(Repo.slicerUrl ?: "") }
     var token by remember { mutableStateOf("") }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var checkedAddOn by remember { mutableStateOf(false) } // which check [status] belongs to
     val scope = rememberCoroutineScope()
     val pl = LocalPlatform.current
+    val ha = Repo.haApi
+    fun check(c: io.github.gccammelli.pandy.SlicerClient, saved: () -> Unit = {}) {
+        busy = true; status = null; checkedAddOn = c.viaHa
+        scope.launch {
+            runCatching { withContext(Dispatchers.Default) { c.health() } }
+                .onSuccess { v -> saved(); status = "Connected: Bambu Studio $v" }
+                .onFailure { status = it.message ?: it.toString() }
+            busy = false
+        }
+    }
     Column(Modifier.verticalScroll(rememberScrollState()).imePadding().padding(20.dp)) {
-        T("Pandy prints MakerWorld models by having Pandy Slicer (Bambu Studio's slicer in a container) slice them and put them on the printer. Run it as a Home Assistant add-on or with Docker on any x86-64 computer, then enter its address.", 14.sp, C.Sub, lh = 20.sp)
+        if (ha != null) {
+            T("Pandy prints MakerWorld models by having Pandy Slicer (Bambu Studio's slicer in a container) slice them and put them on the printer. Install the Pandy Slicer add-on in Home Assistant: Pandy reaches it through Home Assistant, so there's nothing to enter here.", 14.sp, C.Sub, lh = 20.sp)
+            Gap(16.dp)
+            AccentButton(if (busy && checkedAddOn) "Checking…" else "Check the add-on", enabled = !busy) { check(io.github.gccammelli.pandy.SlicerClient(null, null, ha)) }
+            if (status != null && checkedAddOn) { Gap(12.dp); T(status!!, 14.sp, if (status!!.startsWith("Connected")) C.Ok else C.Red) }
+            Gap(28.dp)
+            T("Slicer elsewhere (Docker)", 13.sp, C.Sub)
+            Gap(4.dp)
+            T("Only if it doesn't run in Home Assistant. An address here is used instead of the add-on.", 12.sp, C.Sub, lh = 17.sp)
+        } else T("Pandy prints MakerWorld models by having Pandy Slicer (Bambu Studio's slicer in a container) slice them and put them on the printer. Run it as a Home Assistant add-on or with Docker on any x86-64 computer, then enter its address.", 14.sp, C.Sub, lh = 20.sp)
         Gap(16.dp)
         OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth(), singleLine = true, label = { T("Slicer address (e.g. slicer.local:8737)", 14.sp, C.Sub) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
         Gap(10.dp)
         OutlinedTextField(token, { token = it }, Modifier.fillMaxWidth(), singleLine = true, label = { T("Token (if you set one)", 14.sp, C.Sub) },
-            visualTransformation = PasswordVisualTransformation())
-        if (status != null) { Gap(12.dp); T(status!!, 14.sp, if (status!!.startsWith("Connected")) C.Ok else C.Red) }
+            visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+        if (status != null && !checkedAddOn) { Gap(12.dp); T(status!!, 14.sp, if (status!!.startsWith("Connected")) C.Ok else C.Red) }
         Gap(20.dp)
-        AccentButton(if (busy) "Checking…" else "Save", enabled = !busy && url.isNotBlank()) {
-            busy = true; status = null
-            scope.launch {
-                val c = io.github.gccammelli.pandy.SlicerClient(url, token.ifBlank { null })
-                runCatching { withContext(Dispatchers.Default) { c.health() } }
-                    .onSuccess { v -> Repo.setSlicer(url, token.ifBlank { null }); status = "Connected: Bambu Studio $v" }
-                    .onFailure { status = it.message ?: it.toString() }
-                busy = false
-            }
+        AccentButton(if (busy && !checkedAddOn) "Checking…" else "Save", enabled = !busy && url.isNotBlank()) {
+            check(io.github.gccammelli.pandy.SlicerClient(url, token.ifBlank { null })) { Repo.setSlicer(url, token.ifBlank { null }) }
         }
         if (Repo.slicerUrl != null) { Gap(12.dp); OutlineButton("Remove", C.Red) { Repo.setSlicer(null, null); url = ""; status = null } }
         Gap(16.dp)

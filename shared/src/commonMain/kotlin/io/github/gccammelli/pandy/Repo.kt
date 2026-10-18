@@ -103,8 +103,14 @@ object Repo {
         }
     }
 
-    /** Pandy Slicer, for printing MakerWorld models (see Slicer.kt); null until the user sets its address. */
+    /**
+     * Pandy Slicer, for printing MakerWorld models (see Slicer.kt): at the address the user set, else its add-on through
+     * Home Assistant; null without either.
+     */
     val slicer: SlicerClient? get() = store.settings.getString("slicer_url")?.let { SlicerClient(it, store.secrets.get("slicer_token")) }
+        ?: haApi?.let { SlicerClient(null, null, it) }
+    /** The real Home Assistant connection, whether it's the printer's source or only the extras. */
+    val haApi get() = (extras ?: ha) as? HaHttp
     val slicerUrl get() = store.settings.getString("slicer_url")
 
     fun setSlicer(url: String?, token: String?) {

@@ -16,6 +16,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.math.roundToInt
 
 /*
@@ -35,26 +37,39 @@ private val http = HttpClient {
 /** One plate of a sliced file, as Pandy Slicer reports it. */
 data class SlicedPlate(val index: Int, val seconds: Int, val grams: Double, val filaments: List<Map<String, String>>)
 
-class SlicerClient(url: String, private val token: String?) {
-    val base = url.trim().trimEnd('/').let { if ("://" in it) it else "http://$it" }.let { if (Regex(""":\d+$""").containsMatchIn(it.substringAfter("://"))) it else "$it:$SLICER_PORT" }
+/**
+ * Pandy Slicer, reached at [url] (Docker, or any slicer with an address), or through Home Assistant [ha]: its add-on's
+ * ingress path on Home Assistant's own address, so Pandy needs only its Home Assistant connection.
+ */
+class SlicerClient(url: String?, private val token: String?, private val ha: HaBackend? = null) {
+    val base = url?.trim()?.trimEnd('/')?.let { if ("://" in it) it else "http://$it" }?.let { if (Regex(""":\d+$""").containsMatchIn(it.substringAfter("://"))) it else "$it:$SLICER_PORT" }
+    val viaHa get() = ha != null && base == null
 
-    private fun io.ktor.client.request.HttpRequestBuilder.auth() { if (!token.isNullOrBlank()) header("Authorization", "Bearer $token") }
+    /** Where to send requests, and the ingress session cookie when it's through Home Assistant. */
+    private suspend fun target(): Pair<String, String?> = ha?.takeIf { base == null }?.slicerIngress() ?: ((base ?: throw ApiException("Set up Pandy Slicer in Me › Settings")) to null)
+
+    private fun io.ktor.client.request.HttpRequestBuilder.auth(cookie: String?) {
+        if (cookie != null) header("Cookie", "ingress_session=$cookie")
+        else if (!token.isNullOrBlank()) header("Authorization", "Bearer $token")
+    }
 
     /** Bambu Studio's version, if the slicer answers. */
     suspend fun health(): String {
-        val r = http.get("$base/health") { auth() }
+        val (at, cookie) = target()
+        val r = http.get("$at/health") { auth(cookie) }
         val o = runCatching { json.parseToJsonElement(r.bodyAsText()).jsonObject }.getOrNull()
-        if (r.status.value == 401) throw ApiException("The slicer wants a different token")
-        if (r.status.value != 200 || o == null) throw ApiException("No Pandy Slicer at $base")
+        if (r.status.value == 401) throw ApiException(if (cookie != null) "Home Assistant didn't let Pandy in to the slicer" else "The slicer wants a different token")
+        if (r.status.value != 200 || o == null) throw ApiException(if (cookie != null) "The Pandy Slicer add-on didn't answer: is it started?" else "No Pandy Slicer at $base")
         return o.s("version") ?: "?"
     }
 
     /** Slices [plate] of a 3MF and puts it on the printer [to]; returns its path there and the plate's details. */
     suspend fun sliceAndUpload(data: ByteArray, plate: Int, name: String, to: LanConfig, printer: String? = null, bedType: String = "auto"): Pair<String, SlicedPlate?> {
-        val target = printer?.let { "&printer=${it.encodeURLParam()}" }.orEmpty()
+        val printerParam = printer?.let { "&printer=${it.encodeURLParam()}" }.orEmpty()
         val bed = "&bed_type=${bedType.encodeURLParam()}"
-        val r = http.post("$base/slice?plate=$plate&upload=1&name=${name.encodeURLParam()}$target$bed") {
-            auth()
+        val (at, cookie) = target()
+        val r = http.post("$at/slice?plate=$plate&upload=1&name=${name.encodeURLParam()}$printerParam$bed") {
+            auth(cookie)
             header("X-Printer-Ip", to.ip); header("X-Printer-Serial", to.serial); header("X-Printer-Code", to.code)
             setBody(data)
         }
@@ -66,6 +81,19 @@ class SlicerClient(url: String, private val token: String?) {
                 (it["filaments"] as? JsonArray).orEmpty().mapNotNull { f -> (f as? JsonObject)?.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull.orEmpty() } })
         }
     }
+}
+
+/** The Pandy Slicer add-on's address through Home Assistant's ingress, and a fresh ingress session for it. */
+suspend fun HaBackend.slicerIngress(): Pair<String, String> {
+    fun supervisor(endpoint: String, method: String) = buildJsonObject { put("type", "supervisor/api"); put("endpoint", endpoint); put("method", method) }
+    val addons = try { ws(listOf(supervisor("/addons", "get"))).first() as? JsonObject }
+        catch (e: ApiException) { throw ApiException("Pandy's Home Assistant user must be an administrator to use the slicer add-on (${e.message})") }
+    val slug = (addons?.a("addons")).orEmpty().mapNotNull { (it as? JsonObject)?.s("slug") }.firstOrNull { it == "pandy_slicer" || it.endsWith("_pandy_slicer") }
+        ?: throw ApiException("Install the Pandy Slicer add-on in Home Assistant")
+    val (info, session) = ws(listOf(supervisor("/addons/$slug/info", "get"), supervisor("/ingress/session", "post"))).map { it as? JsonObject }
+    if (info?.s("state") != "started") throw ApiException("Start the Pandy Slicer add-on in Home Assistant")
+    val entry = info.s("ingress_entry") ?: throw ApiException("Update the Pandy Slicer add-on in Home Assistant")
+    return base + entry to (session?.s("session") ?: throw ApiException("Home Assistant didn't open a session for the slicer"))
 }
 
 /** Percent-encodes a query value (UTF-8; letters, digits and -_.~ stay). */
