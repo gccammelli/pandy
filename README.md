@@ -1,7 +1,5 @@
 # Pandy
 
-[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/cammelli)
-
 **Bambu Handy for printers in LAN-only mode.**
 
 Pandy was built from scratch for people who keep their Bambu printer in LAN-only mode but still want the Handy
@@ -76,3 +74,7 @@ Pandy is not made by or affiliated with Bambu Lab. Protocol details and Bambu's 
 [Bambu Studio](https://github.com/bambulab/BambuStudio) (AGPL-3.0), unmodified in its own container.
 
 Developed by Giancarlo Cammelli. MIT licence.
+
+## Support Pandy
+
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/cammelli)
