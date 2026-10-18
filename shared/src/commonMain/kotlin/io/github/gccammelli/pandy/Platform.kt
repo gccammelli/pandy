@@ -40,6 +40,8 @@ interface PlatformUi {
     fun saveImage(jpeg: ByteArray, name: String, done: (Throwable?) -> Unit)
     /** Saves a downloaded file (Downloads on Android, the standard Files/share sheet on iOS). */
     fun saveFile(name: String, mime: String, bytes: ByteArray, done: (Throwable?) -> Unit)
+    /** Opens another app (Bambu Handy), or its store page when it isn't installed. */
+    fun openApp(androidPackage: String, storeUrl: String)
     /** Full-screen live view turns the phone sideways; false restores the normal orientation. */
     fun landscape(on: Boolean)
 }
@@ -75,4 +77,12 @@ class WebState {
     var hidePromotions by androidx.compose.runtime.mutableStateOf(false)
     var onHidePromotions: (() -> Unit)? = null
     var overlayBack: (() -> Unit)? = null
+    /**
+     * Pandy can print on the user's printer now. When false (the printer takes commands only from Bambu's apps)
+     * MakerWorld's own buttons are left alone, and "Open in Bambu Handy" opens Handy.
+     */
+    var canPrint by androidx.compose.runtime.mutableStateOf(true)
 }
+
+/** Tells the page whether Pandy can print, and re-applies or removes the Print button to match. */
+fun canPrintJs(on: Boolean) = "window.__pandyCanPrint = $on; window.__pandyRepatch && window.__pandyRepatch();"

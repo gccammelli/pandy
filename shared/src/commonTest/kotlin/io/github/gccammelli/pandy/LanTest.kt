@@ -241,3 +241,15 @@ class StorageTest {
         assertEquals(mapOf(270 to "clip.stl", 281 to "clip.stl"), sliceObjects(xml, 1))
     }
 }
+
+class DeveloperModeTest {
+    private val cfg = LanConfig("10.1.2.42", "00M00A000000000", "x", "X1C")
+    private fun devMode(fun_: String) =
+        lanEntities(cfg, json.parseToJsonElement("""{"print":{"gcode_state":"IDLE","fun":"$fun_"}}""").jsonObject, true)
+            .first { it.first.key == "developer_lan_mode" }.second.state
+
+    @Test fun signedCommandsMeanWatchingOnly() {
+        assertEquals("off", devMode("20011A30F9CFF")) // Developer Mode off: commands must be signed by Bambu's apps
+        assertEquals("on", devMode("3EC1AFFF9CFF".toLong(16).and(0x20000000L.inv()).toString(16)))
+    }
+}

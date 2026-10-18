@@ -159,7 +159,10 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     }
     val connected = if (online) "on" else "off"
     add("binary_sensor", "online", connected)
-    add("binary_sensor", "developer_lan_mode", "on")
+    // Developer Mode off = the printer only takes commands signed by Bambu's own apps (bit 0x20000000 of "fun", as
+    // the Home Assistant integration reads it): status still flows, controls don't.
+    val signed = p.str("fun")?.toLongOrNull(16)?.let { it and 0x20000000L != 0L } ?: false
+    add("binary_sensor", "developer_lan_mode", if (signed) "off" else "on")
     p.o("ipcam")?.let { add("binary_sensor", "timelapse", if (it.str("timelapse") == "enable") "on" else "off") }
     val hms = (p["hms"] as? JsonArray).orEmpty().mapNotNull { e ->
         val o = e as? JsonObject ?: return@mapNotNull null
@@ -576,6 +579,7 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
     private fun rowOf(entityId: String?) = rows.firstOrNull { it.id == entityId }
 
     override suspend fun post(path: String, body: String): String {
+        if (controlBlocked() && path.startsWith("/api/services/") && !path.endsWith("/update_entity")) throw ApiException(CONTROL_BLOCKED)
         if (path == "/api/bambu_lab/ensure_cache_file") return """{"status":"present"}""" // it's read from the printer, so it's there
         val d = json.parseToJsonElement(body).jsonObject
         val target = d.s("entity_id")
@@ -707,6 +711,8 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
         repeat(50) { frame?.let { return it }; delay(200) }
         throw ApiException("The camera didn't send a picture")
     }
+
+    private fun controlBlocked() = report.o("print")?.str("fun")?.toLongOrNull(16)?.let { it and 0x20000000L != 0L } ?: false
 
     companion object {
         const val NEEDS_HA = "This needs Home Assistant: Me › Settings › Home Assistant."

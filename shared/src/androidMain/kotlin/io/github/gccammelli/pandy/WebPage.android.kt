@@ -159,6 +159,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                     pageChanged(u)
                     if (makerWorld.get()) {
                         v.evaluateJavascript("window.__pandyBridgeToken = ${org.json.JSONObject.quote(bridgeToken)}; window.__pandyPrinter = ${org.json.JSONObject.quote(currentPrinter.value.orEmpty())};", null)
+                        v.evaluateJavascript(canPrintJs(state?.canPrint != false), null)
                         v.evaluateJavascript(PRINT_BUTTON_JS, null)
                         v.evaluateJavascript(PROMOTION_FILTER_JS, null)
                         v.evaluateJavascript("window.__pandyPromotions(${state?.hidePromotions == true});", null)
@@ -169,6 +170,12 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                     val u = r.url
                     android.util.Log.d("PandyWeb", "navigate ${u.scheme}://${u.host}${u.path}")
                     if (u.scheme?.lowercase() !in SLICER_SCHEMES) return false
+                    if (state?.canPrint == false) {
+                        // Pandy can't print right now: let MakerWorld's link open Bambu Handy, as it would in a browser.
+                        runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, u)) }
+                            .onFailure { main.post { toast("Bambu Handy isn't installed") } }
+                        return true
+                    }
                     val file = u.getQueryParameter("file") ?: u.getQueryParameter("url")
                     val safeFile = file?.takeIf { it.startsWith("https://") && trustedFile(it) }
                     if (file != null) {
@@ -204,6 +211,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
         view = it
         if (it.url?.let { u -> Uri.parse(u).host?.let { h -> h == "makerworld.com" || h.endsWith(".makerworld.com") } == true } == true) {
             it.evaluateJavascript("window.__pandyPrinter = ${org.json.JSONObject.quote(currentPrinter.value.orEmpty())};", null)
+            it.evaluateJavascript(canPrintJs(state?.canPrint != false), null)
             if (state != null) {
                 it.evaluateJavascript(PROMOTION_FILTER_JS, null)
                 it.evaluateJavascript("window.__pandyPromotions(${state.hidePromotions});", null)

@@ -95,6 +95,9 @@ private class IosPlatformUi : PlatformUi {
         return vc
     }
 
+    // iOS can't open another app by its identity without its URL scheme: the App Store page opens it (or installs it).
+    override fun openApp(androidPackage: String, storeUrl: String) = openUrl(HANDY_APP_STORE)
+
     override fun openUrl(url: String) {
         NSURL.URLWithString(url)?.let { UIApplication.sharedApplication.openURL(it, emptyMap<Any?, Any>(), null) }
     }

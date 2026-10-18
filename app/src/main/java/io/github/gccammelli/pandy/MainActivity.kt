@@ -68,6 +68,9 @@ class MainActivity : ComponentActivity(), PlatformUi {
 
     override val appVersion: String get() = BuildConfig.VERSION_NAME
     override fun openUrl(url: String) = startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+
+    override fun openApp(androidPackage: String, storeUrl: String) =
+        startActivity(packageManager.getLaunchIntentForPackage(androidPackage) ?: Intent(Intent.ACTION_VIEW, Uri.parse(storeUrl)))
     override fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
     override fun pickImage(done: (ByteArray?) -> Unit) {

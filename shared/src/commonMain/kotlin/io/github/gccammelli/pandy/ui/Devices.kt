@@ -69,6 +69,7 @@ fun DevicesTab(st: UiState, p: Printer) {
         TopBar(st, p)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)) {
             if (Repo.demo) DemoNote()
+            if (p.online && p.controlBlocked) ControlBlockedNote()
             Hero(p)
             Gap(12.dp)
             PrintCard(p, err)
@@ -89,6 +90,29 @@ fun DevicesTab(st: UiState, p: Printer) {
 @Composable
 fun DemoNote() = Box(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(10.dp)).background(C.AccentBg).padding(12.dp)) {
     T("Demo: a pretend printer. Every control works on it. To connect yours: Me › Settings › Leave the demo.", 13.sp, C.Text, lh = 18.sp)
+}
+
+/**
+ * The printer takes commands only from Bambu's apps (Developer Mode off): Pandy can watch it but not control it. Says
+ * so once, with the two ways forward.
+ */
+@Composable
+fun ControlBlockedNote() {
+    val pl = LocalPlatform.current
+    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(10.dp)).background(C.AccentBg).padding(14.dp)) {
+        T("Watching only", 15.sp, weight = FontWeight.Bold)
+        Gap(4.dp)
+        T("Your printer only takes commands from Bambu's own apps right now, so Pandy can show it but not control it or print.", 13.sp, C.Text, lh = 18.sp)
+        Gap(10.dp)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).background(C.Accent).clickable { pl.openApp(io.github.gccammelli.pandy.HANDY_PACKAGE, io.github.gccammelli.pandy.HANDY_PLAY) }
+                .padding(vertical = 10.dp), contentAlignment = Alignment.Center) { T("Open Bambu Handy", 14.sp, C.OnAccent, FontWeight.Medium) }
+            Box(Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).border(1.dp, C.Accent, RoundedCornerShape(20.dp)).clickable { pl.openUrl(io.github.gccammelli.pandy.guide("docs/setup.md#direct-mode-the-default")) }
+                .padding(vertical = 10.dp), contentAlignment = Alignment.Center) { T("Use Pandy instead", 14.sp, C.Accent, FontWeight.Medium) }
+        }
+        Gap(6.dp)
+        T("To use Pandy: on the printer, turn on LAN Only mode and Developer Mode (Settings › Network, or WLAN on P1/A1).", 12.sp, C.Sub, lh = 17.sp)
+    }
 }
 
 /** A toast for failed actions, as Handy shows them. */

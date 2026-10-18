@@ -12,8 +12,11 @@ class MakerWorldJsTest {
         assertTrue(PRINT_BUTTON_JS.contains("__pandyPrint"))
         assertTrue(PRINT_BUTTON_JS.contains("open in bambu handy"))
         assertTrue(PRINT_BUTTON_JS.contains("Download 3MF"))
-        // The main button reads "Download 3MF" on models without a Handy option: it becomes Print too.
-        assertTrue(PRINT_BUTTON_JS.contains("|print|download 3mf)"))
+        // "Download 3MF" stays a download: on models without a Handy option Pandy adds its own Print above it.
+        assertTrue(!PRINT_BUTTON_JS.contains("|download 3mf|") && !PRINT_BUTTON_JS.contains("|print|download 3mf)"))
+        assertTrue(PRINT_BUTTON_JS.contains("pandy-print-button"))
+        // A printer that takes commands only from Bambu's apps leaves MakerWorld untouched.
+        assertTrue(PRINT_BUTTON_JS.contains("window.__pandyCanPrint !== false"))
         assertTrue(PRINT_BUTTON_JS.contains("target !== button && !label.contains(target)"))
         assertTrue(PRINT_BUTTON_JS.contains("textContent = 'Print'"))
     }

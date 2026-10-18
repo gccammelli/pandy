@@ -108,6 +108,7 @@ fun MakerWorld(modifier: Modifier) {
     val platform = LocalPlatform.current
     val st by Repo.state.collectAsState()
     web.hidePromotions = Repo.hidePromotions
+    web.canPrint = st.printer()?.let { it.online && !it.controlBlocked } ?: false
     web.onHidePromotions = {
         Repo.setHidePromotions(true)
         web.hidePromotions = true

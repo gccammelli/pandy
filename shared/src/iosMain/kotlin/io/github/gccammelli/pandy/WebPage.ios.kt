@@ -98,6 +98,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
             val host = view.URL?.host?.lowercase()
             if (host == "makerworld.com" || host?.endsWith(".makerworld.com") == true) {
                 view.evaluateJavaScript(printerJs(), null)
+                view.evaluateJavaScript(canPrintJs(state?.canPrint != false), null)
                 if (state != null) view.evaluateJavaScript("window.__pandyPromotions(${state.hidePromotions});", null)
             }
         },
@@ -223,6 +224,11 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
         override fun webView(webView: WKWebView, decidePolicyForNavigationAction: WKNavigationAction, decisionHandler: (WKNavigationActionPolicy) -> Unit) {
             val u = decidePolicyForNavigationAction.request.URL
             if (decidePolicyForNavigationAction.targetFrame?.isMainFrame() == true && u != null && u.scheme?.lowercase() !in SLICER_SCHEMES) pageChanged(u.absoluteString)
+            if (u?.scheme?.lowercase() in SLICER_SCHEMES && state?.canPrint == false) {
+                // Pandy can't print right now: let MakerWorld's link open Bambu Handy.
+                platform.UIKit.UIApplication.sharedApplication.openURL(u!!, emptyMap<Any?, Any>(), null)
+                return decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+            }
             if (u?.scheme?.lowercase() in SLICER_SCHEMES) {
                 val items = NSURLComponents(uRL = u!!, resolvingAgainstBaseURL = false).queryItems.orEmpty().filterIsInstance<NSURLQueryItem>()
                 val f = (items.firstOrNull { it.name == "file" } ?: items.firstOrNull { it.name == "url" })?.value
@@ -258,6 +264,7 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
             pageChanged(webView.URL?.absoluteString)
             if (makerWorldPage()) {
                 webView.evaluateJavaScript("window.__pandyPrinter = ${json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(printer.orEmpty()))};", null)
+                webView.evaluateJavaScript(canPrintJs(state?.canPrint != false), null)
                 webView.evaluateJavaScript(PROMOTION_FILTER_JS, null)
                 webView.evaluateJavaScript("window.__pandyPromotions(${state?.hidePromotions == true});", null)
             }

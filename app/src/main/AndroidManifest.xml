@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
+    <!-- To open Bambu Handy when the printer only takes commands from Bambu's apps. -->
+    <queries>
+        <package android:name="bbl.intl.bambulab.com" />
+    </queries>
+
     <application
         android:name=".App"
         android:allowBackup="true"

@@ -2,8 +2,9 @@ package io.github.gccammelli.pandy
 
 /**
  * MakerWorld's primary print action becomes Pandy's "Print": tapping it downloads the chosen profile to Pandy's print
- * sheet. That's "Open in Bambu Handy/Studio", or "Download 3MF" on models MakerWorld can't hand to Handy, when it's the
- * main button; "Download 3MF" in the dropdown remains a normal file download. Re-applied as the page changes (it's a
+ * sheet. On models MakerWorld can't hand to Handy the main button is "Download 3MF": that stays a download, and Pandy
+ * adds its own Print above it. When Pandy can't print (window.__pandyCanPrint false: the printer takes commands only
+ * from Bambu's apps) the page is left exactly as MakerWorld made it. Re-applied as the page changes (it's a
  * single-page app). Written against MakerWorld's markup of October 2026; debug builds let chrome://inspect inspect it.
  */
 const val PRINT_BUTTON_JS = """
@@ -13,14 +14,19 @@ const val PRINT_BUTTON_JS = """
   // It reads "Print" on Pandy's magenta (a stylesheet, so pressed and hover states and re-renders keep it); the arrow
   // keeps MakerWorld's menu. Tapping Print picks the profile to print and asks MakerWorld's own API (the one its
   // "Download 3MF" uses, signed in through this page) for its file link, which Pandy downloads.
+  // Styles apply only while Pandy can print (the class on <html>), so a cloud-mode printer leaves MakerWorld's look.
   const css = document.createElement('style');
   css.textContent = `
-    div:has(> span.primaryButton), div:has(> span.primaryButton):hover, div:has(> span.primaryButton):active { background: #AE006D !important; border-color: #AE006D !important; }
-    div:has(> span.primaryButton) span.primaryButton, div:has(> span.primaryButton) span.primaryButton * { background: transparent !important; color: #fff !important; }
-    div:has(> span.primaryButton) > .icon-box, div:has(> span.primaryButton) > .icon-box:hover { background: #7E004F !important; }`;
+    html.pandy-print div.pandy-split, html.pandy-print div.pandy-split:hover, html.pandy-print div.pandy-split:active { background: #AE006D !important; border-color: #AE006D !important; }
+    html.pandy-print div.pandy-split span.primaryButton, html.pandy-print div.pandy-split span.primaryButton * { background: transparent !important; color: #fff !important; }
+    html.pandy-print div.pandy-split > .icon-box, html.pandy-print div.pandy-split > .icon-box:hover { background: #7E004F !important; }
+    .pandy-print-button { display: none; }
+    html.pandy-print .pandy-print-button { display: flex; align-items: center; justify-content: center; height: 48px; margin-bottom: 10px;
+      border-radius: 8px; background: #AE006D; color: #fff; font-weight: 600; font-size: 17px; cursor: pointer; }`;
   (document.head || document.documentElement).appendChild(css);
-  // The main button's label; on models with no Handy option MakerWorld puts "Download 3MF" there instead.
-  const LABEL = /^(open in bambu (handy|studio)|print|download 3mf)$/i;
+  const LABEL = /^(open in bambu (handy|studio)|print)$/i;
+  const DOWNLOAD = /^download 3mf$/i;
+  const canPrint = () => window.__pandyCanPrint !== false;
   const variants = i => {
     const primary = i && i.extention && i.extention.modelInfo && i.extention.modelInfo.compatibility;
     const other = i && i.extention && i.extention.otherCompatibilityModelInfo;
@@ -71,9 +77,31 @@ const val PRINT_BUTTON_JS = """
   window.__pandyPrint = print;
   const HANDY_ITEM = /^(open in bambu handy|open in bambu studio)$/i;
   function patch(){
+    document.documentElement.classList.toggle('pandy-print', canPrint());
     for (const label of document.querySelectorAll('span.primaryButton')) {
-      if (!LABEL.test((label.textContent || '').trim())) continue;
+      const box = label.parentElement;
+      const text = (label.textContent || '').trim();
       const leaf = [...label.querySelectorAll('span')].pop() || label;
+      // "Download 3MF" as the main button stays a download; Pandy's own Print goes above it.
+      if (DOWNLOAD.test(text)) {
+        if (box && !(box.previousElementSibling && box.previousElementSibling.classList.contains('pandy-print-button'))) {
+          const own = document.createElement('div');
+          own.className = 'pandy-print-button'; own.textContent = 'Print';
+          own.addEventListener('click', e => { e.preventDefault(); e.stopImmediatePropagation(); print(); });
+          box.parentElement && box.parentElement.insertBefore(own, box);
+        }
+        if (box) box.classList.remove('pandy-split');
+        continue;
+      }
+      if (!LABEL.test(text)) continue;
+      if (!canPrint()) {
+        // Pandy can't print: MakerWorld's own label and action come back.
+        if (label.__pandyLabel && leaf.textContent === 'Print') leaf.textContent = label.__pandyLabel;
+        if (box) box.classList.remove('pandy-split');
+        continue;
+      }
+      if (box) box.classList.add('pandy-split');
+      if (!/^print$/i.test(leaf.textContent.trim())) label.__pandyLabel = leaf.textContent;
       if (leaf.textContent !== 'Print') leaf.textContent = 'Print';
       if (label.__pandy) continue;
       label.__pandy = true;
@@ -83,7 +111,7 @@ const val PRINT_BUTTON_JS = """
         const target = e.target;
         if (target !== button && !label.contains(target)) return;
         // MakerWorld reuses this node when the selected profile changes. Only hijack it while it still means Print.
-        if (!LABEL.test((label.textContent || '').trim())) return;
+        if (!canPrint() || !LABEL.test((label.textContent || '').trim())) return;
         e.preventDefault(); e.stopImmediatePropagation(); print();
       }, true);
     }
@@ -99,11 +127,12 @@ const val PRINT_BUTTON_JS = """
       item.addEventListener('click', e => {
         // The menu node can also be recycled for Download 3MF or another action.
         const current = (item.textContent || '').trim();
-        if (!HANDY_ITEM.test(current) && !/^print$/i.test(current)) return;
+        if (!canPrint() || (!HANDY_ITEM.test(current) && !/^print$/i.test(current))) return;
         e.preventDefault(); e.stopImmediatePropagation(); print();
       }, true);
     }
   }
+  window.__pandyRepatch = patch;
   // Re-checked once per frame at most when the page changes (MakerWorld re-renders a lot).
   let queued = false;
   new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; patch(); }); } })

@@ -40,6 +40,14 @@ const val DONATE_URL = "https://buymeacoffee.com/cammelli"
 fun guide(path: String) = "$REPO_URL/blob/main/$path"
 
 class ApiException(message: String) : Exception(message)
+
+/** What the user sees when the printer takes commands only from Bambu's own apps (Developer Mode off). */
+const val CONTROL_BLOCKED = "Your printer only takes commands from Bambu's own apps right now. Use Bambu Handy, or turn on LAN Only mode and Developer Mode on the printer to use Pandy."
+
+/** Bambu Handy, for when the printer is in cloud mode: its Android package and its stores. */
+const val HANDY_PACKAGE = "bbl.intl.bambulab.com"
+const val HANDY_PLAY = "https://play.google.com/store/apps/details?id=bbl.intl.bambulab.com"
+const val HANDY_APP_STORE = "https://apps.apple.com/app/bambu-handy/id1625671285"
 class AuthException(message: String) : Exception(message)
 
 val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -219,6 +227,11 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     /** The name the user gave the printer on its screen (or in Home Assistant), as Handy shows it. */
     val name get() = state("sensor.printer_name") ?: info.name
     val online get() = get("binary_sensor.online")?.on ?: false
+    /**
+     * The printer only takes commands signed by Bambu's apps (Developer Mode off), or Home Assistant's cloud connection
+     * is blocked from controlling it: Pandy can watch but not control or print.
+     */
+    val controlBlocked get() = get("binary_sensor.developer_lan_mode")?.state == "off" || get("binary_sensor.hybrid_mode_blocks_control")?.on == true
     /** "printing", "idle", "finish", "failed", "pause", "prepare", "offline"… (the integration's print_status). */
     val status get() = state("sensor.print_status") ?: if (online) "idle" else "offline"
     val printing get() = status in setOf("running", "printing", "pause", "prepare", "slicing")
