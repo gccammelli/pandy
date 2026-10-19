@@ -97,6 +97,7 @@ jobs:
     # Releases and manual runs only: a pushed commit doesn't need a new .ipa.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-15-intel
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
