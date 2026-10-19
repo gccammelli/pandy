@@ -1,5 +1,11 @@
 # Pandy
 
+[![Build](https://github.com/gccammelli/pandy/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/gccammelli/pandy/actions/workflows/build.yml)
+[![Coverage](https://codecov.io/gh/gccammelli/pandy/graph/badge.svg)](https://codecov.io/gh/gccammelli/pandy)
+[![Latest release](https://img.shields.io/github/v/release/gccammelli/pandy)](https://github.com/gccammelli/pandy/releases/latest)
+[![License](https://img.shields.io/github/license/gccammelli/pandy)](LICENSE)
+[![Open issues](https://img.shields.io/github/issues/gccammelli/pandy)](https://github.com/gccammelli/pandy/issues)
+
 **Bambu Handy for printers in LAN-only mode.**
 
 Pandy was built from scratch for people who keep their Bambu printer in LAN-only mode but still want the Handy
@@ -50,6 +56,9 @@ See [the setup guide](docs/setup.md) for both options.
 
 ## Install
 
+[![Download Android APK](https://img.shields.io/badge/Download-Android_APK-3DDC84?logo=android&logoColor=white)](https://github.com/gccammelli/pandy/releases/latest/download/pandy.apk)
+[![Download iPhone IPA](https://img.shields.io/badge/Download-iPhone_IPA-000000?logo=apple&logoColor=white)](https://github.com/gccammelli/pandy/releases/latest/download/pandy.ipa)
+
 Download the latest release for [Android or iOS](https://github.com/gccammelli/pandy/releases/latest).
 
 - Android: install the APK.
@@ -75,6 +84,10 @@ Pandy is not made by or affiliated with Bambu Lab. Protocol details and Bambu's 
 uses [Bambu Studio](https://github.com/bambulab/BambuStudio) (AGPL-3.0), unmodified in its own container.
 
 Developed by Giancarlo Cammelli. MIT licence.
+
+## Contributing
+
+Bug reports, feature requests and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for tests, privacy rules and the required before/after visual evidence for user-facing changes.
 
 ## Support Pandy
 
