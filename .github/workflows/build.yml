@@ -16,6 +16,7 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,6 +40,27 @@ jobs:
           name: coverage
           path: shared/build/reports/kover/reportDebug.xml
           retention-days: 1
+
+      - name: Build isolated Android UI test app
+        run: ./gradlew -Ppandy.testbed assembleDebug
+
+      - name: Enable emulator acceleration
+        run: sudo chmod 666 /dev/kvm
+
+      - name: Android demo UI and pause/resume round trip
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: bash tools/android-smoke.sh app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Android UI evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-ui-evidence
+          path: build/android-smoke/
 
       # Run by hand: debug-signed, so it installs without the release key.
       - name: Build debug APK
