@@ -11,19 +11,22 @@ on:
   pull_request:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
   android:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
 
       - name: Test
         run: |
@@ -31,12 +34,11 @@ jobs:
           ./gradlew testDebugUnitTest :shared:koverXmlReportDebug
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: actions/upload-artifact@v4
         with:
-          files: shared/build/reports/kover/reportDebug.xml
-          flags: android-unit
-          fail_ci_if_error: false
-          use_oidc: true
+          name: coverage
+          path: shared/build/reports/kover/reportDebug.xml
+          retention-days: 1
 
       # Run by hand: debug-signed, so it installs without the release key.
       - name: Build debug APK
@@ -67,14 +69,6 @@ jobs:
           name: apk
           path: pandy*.apk
 
-      - if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            pandy-${{ github.ref_name }}.apk
-            pandy.apk
-          generate_release_notes: true
-
   # Unsigned .ipa: sign it with your own Apple ID via SideStore or AltStore. Plus one simulator screenshot of the
   # first screen, to check the app starts.
   ios:
@@ -83,11 +77,15 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
 
       - name: Shared tests on the iOS simulator
         run: ./gradlew :shared:iosSimulatorArm64Test
@@ -123,15 +121,54 @@ jobs:
             pandy.ipa
             screenshots/
 
-      - if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  coverage:
+    needs: android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
         with:
-          files: pandy.ipa
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: reportDebug.xml
+          flags: android-unit
+          fail_ci_if_error: false
+          use_oidc: true
+
+  release:
+    needs: [android, ios]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.android.result == 'success' && needs.ios.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios
+          path: ios-artifact
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/pandy-${{ github.ref_name }}.apk
+            release/pandy.apk
+            ios-artifact/pandy.ipa
+          generate_release_notes: true
 
   discord:
     name: Announce release in Discord
-    needs: [android, ios]
-    if: startsWith(github.ref, 'refs/tags/v') && needs.android.result == 'success' && needs.ios.result == 'success'
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v') && needs.release.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Post release
