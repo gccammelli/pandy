@@ -96,7 +96,7 @@ jobs:
   ios:
     # Releases and manual runs only: a pushed commit doesn't need a new .ipa.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: macos-15
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
         with:
@@ -110,7 +110,7 @@ jobs:
           cache-disabled: true
 
       - name: Shared tests on the iOS simulator
-        run: ./gradlew :shared:iosSimulatorArm64Test
+        run: ./gradlew :shared:iosX64Test
 
       - name: Build unsigned .ipa
         run: |
@@ -121,7 +121,7 @@ jobs:
 
       - name: Simulator screenshot of the first screen
         run: |
-          xcodebuild -project iosApp/iosApp.xcodeproj -target iosApp -configuration Debug -sdk iphonesimulator -arch arm64 \
+          xcodebuild -project iosApp/iosApp.xcodeproj -target iosApp -configuration Debug -sdk iphonesimulator -arch x86_64 \
             SYMROOT="$PWD/build/ios-sim" CODE_SIGNING_ALLOWED=NO build
           TYPE=$(xcrun simctl list devicetypes | grep -oE 'com.apple.CoreSimulator.SimDeviceType.iPhone-1[0-9](-Pro)?' | tail -1)
           RUNTIME=$(xcrun simctl list runtimes | grep -oE 'com.apple.CoreSimulator.SimRuntime.iOS-[0-9-]+' | tail -1)
