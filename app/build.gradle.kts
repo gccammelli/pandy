@@ -9,7 +9,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "io.github.gccammelli.pandy"
+        applicationId = "io.github.gccammelli.pandy" + if (providers.gradleProperty("pandy.testbed").isPresent) ".testbed" else ""
         minSdk = 26
         targetSdk = 36
         versionCode = 8
