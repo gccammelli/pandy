@@ -80,8 +80,6 @@ class WebState {
     var canGoBack by androidx.compose.runtime.mutableStateOf(false)
     var goBack: () -> Unit = {}
     var currentUrl by androidx.compose.runtime.mutableStateOf("")
-    var hidePromotions by androidx.compose.runtime.mutableStateOf(false)
-    var onHidePromotions: (() -> Unit)? = null
     var overlayBack: (() -> Unit)? = null
     /**
      * Pandy can print on the user's printer now. When false (the printer takes commands only from Bambu's apps)

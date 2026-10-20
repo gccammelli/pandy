@@ -79,7 +79,7 @@ class HaHttp(url: String, private val token: String) : HaBackend {
         install(HttpTimeout) { connectTimeoutMillis = 15_000; requestTimeoutMillis = 120_000; socketTimeoutMillis = 120_000 }
         install(WebSockets) { pingIntervalMillis = 20_000 }
         expectSuccess = false
-    }
+    }.localOnlyCleartext()
     private val wsUrl get() = base.replaceFirst("http", "ws") + "/api/websocket"
 
     private suspend fun DefaultClientWebSocketSession.next() = json.parseToJsonElement((incoming.receive() as Frame.Text).readText()).jsonObject

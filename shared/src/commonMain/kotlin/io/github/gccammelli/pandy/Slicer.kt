@@ -9,6 +9,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.readRawBytes
 import io.ktor.utils.io.readAvailable
 import io.ktor.http.HttpHeaders
 import kotlinx.serialization.json.JsonArray
@@ -32,7 +33,7 @@ private const val MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 private val http = HttpClient {
     install(HttpTimeout) { connectTimeoutMillis = 15_000; requestTimeoutMillis = 20 * 60_000; socketTimeoutMillis = 20 * 60_000 }
     expectSuccess = false
-}
+}.localOnlyCleartext()
 
 /** One plate of a sliced file, as Pandy Slicer reports it. */
 data class SlicedPlate(val index: Int, val seconds: Int, val grams: Double, val filaments: List<Map<String, String>>)
@@ -63,24 +64,49 @@ class SlicerClient(url: String?, private val token: String?, private val ha: HaB
         return o.s("version") ?: "?"
     }
 
-    /** Slices [plate] of a 3MF and puts it on the printer [to]; returns its path there and the plate's details. */
+    /**
+     * Slices [plate] of a 3MF and puts it on the printer [to]; returns its path there and the plate's details. The
+     * printer's access code goes to the slicer only through Home Assistant over HTTPS; otherwise Pandy downloads the
+     * sliced file and sends it to the printer itself, over FTPS.
+     */
     suspend fun sliceAndUpload(data: ByteArray, plate: Int, name: String, to: LanConfig, printer: String? = null, bedType: String = "auto"): Pair<String, SlicedPlate?> {
         val printerParam = printer?.let { "&printer=${it.encodeURLParam()}" }.orEmpty()
         val bed = "&bed_type=${bedType.encodeURLParam()}"
         val (at, cookie) = target()
-        val r = http.post("$at/slice?plate=$plate&upload=1&name=${name.encodeURLParam()}$printerParam$bed") {
+        val query = "plate=$plate&name=${name.encodeURLParam()}$printerParam$bed"
+        if (cookie == null || !at.startsWith("https://", ignoreCase = true)) {
+            val r = http.post("$at/slice?$query") { auth(cookie); setBody(data) }
+            if (r.status.value != 200) {
+                val o = runCatching { json.parseToJsonElement(r.bodyAsText()).jsonObject }.getOrNull()
+                throw ApiException(o?.s("error") ?: "The slicer answered HTTP ${r.status.value}")
+            }
+            val sliced = r.readRawBytes()
+            val info = runCatching { json.parseToJsonElement(r.headers["X-Pandy-Result"].orEmpty()).jsonObject }.getOrNull()
+            val file = slicedFileName(r.headers[HttpHeaders.ContentDisposition])
+            printerStorage(to).write("/cache/$file", sliced)
+            return "cache/$file" to info?.let { firstPlate(it, plate) }
+        }
+        val r = http.post("$at/slice?$query&upload=1") {
             auth(cookie)
             header("X-Printer-Ip", to.ip); header("X-Printer-Serial", to.serial); header("X-Printer-Code", to.code)
             setBody(data)
         }
         val o = runCatching { json.parseToJsonElement(r.bodyAsText()).jsonObject }.getOrNull()
         if (r.status.value != 200 || o == null) throw ApiException(o?.s("error") ?: "The slicer answered HTTP ${r.status.value}")
-        val p = (o["plates"] as? JsonArray)?.firstOrNull() as? JsonObject
-        return (o.s("path") ?: throw ApiException("The slicer didn't say where it put the file")) to p?.let {
-            SlicedPlate(it.s("index")?.toIntOrNull() ?: plate, it.s("seconds")?.toIntOrNull() ?: 0, it.s("grams")?.toDoubleOrNull() ?: 0.0,
-                (it["filaments"] as? JsonArray).orEmpty().mapNotNull { f -> (f as? JsonObject)?.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull.orEmpty() } })
-        }
+        return (o.s("path") ?: throw ApiException("The slicer didn't say where it put the file")) to firstPlate(o, plate)
     }
+
+    private fun firstPlate(o: JsonObject, plate: Int): SlicedPlate? = ((o["plates"] as? JsonArray)?.firstOrNull() as? JsonObject)?.let {
+        SlicedPlate(it.s("index")?.toIntOrNull() ?: plate, it.s("seconds")?.toIntOrNull() ?: 0, it.s("grams")?.toDoubleOrNull() ?: 0.0,
+            (it["filaments"] as? JsonArray).orEmpty().mapNotNull { f -> (f as? JsonObject)?.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull.orEmpty() } })
+    }
+}
+
+/** The sliced file's name from the slicer's Content-Disposition, reduced to a plain name for the printer's /cache. */
+fun slicedFileName(disposition: String?): String {
+    val raw = disposition?.let { Regex("filename=\"([^\"]+)\"").find(it)?.groupValues?.get(1) }.orEmpty()
+    val name = raw.substringAfterLast('/').substringAfterLast('\\').filter { it.isLetterOrDigit() || it in " ._()+-" }.trim()
+    return if (name.endsWith(".gcode.3mf") && !name.startsWith(".")) name else "model.gcode.3mf"
 }
 
 /** The Pandy Slicer add-on's address through Home Assistant's ingress, and a fresh ingress session for it. */

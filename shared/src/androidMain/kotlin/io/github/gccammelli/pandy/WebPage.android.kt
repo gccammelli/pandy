@@ -30,7 +30,9 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
     var view: WebView? = null
     AndroidView({ ctx ->
         // Debug builds: the page can be inspected from a computer (chrome://inspect), to keep up with MakerWorld's changes.
-        if (ctx.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) WebView.setWebContentsDebuggingEnabled(true)
+        val isDebuggable = ctx.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+        if (isDebuggable) WebView.setWebContentsDebuggingEnabled(true)
+        fun debugLog(message: String) { if (isDebuggable) android.util.Log.d("PandyWeb", message) }
         WebView(ctx).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -39,7 +41,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
-                    if (m.message().startsWith("pandy")) android.util.Log.d("PandyWeb", m.message())
+                    if (m.message().startsWith("pandy")) debugLog(m.message())
                     return super.onConsoleMessage(m)
                 }
             }
@@ -141,9 +143,6 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                         main.post { toast(message) }
                     }
                 }
-                @JavascriptInterface fun hidePromotions(token: String) {
-                    if (validToken(token) && makerWorldPage()) main.post { state?.onHidePromotions?.invoke() }
-                }
             }, "PandyBridge")
             webViewClient = object : WebViewClient() {
                 override fun doUpdateVisitedHistory(v: WebView, u: String?, reload: Boolean) {
@@ -161,15 +160,18 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                         v.evaluateJavascript("window.__pandyBridgeToken = ${org.json.JSONObject.quote(bridgeToken)}; window.__pandyPrinter = ${org.json.JSONObject.quote(currentPrinter.value.orEmpty())};", null)
                         v.evaluateJavascript(canPrintJs(state?.canPrint != false), null)
                         v.evaluateJavascript(PRINT_BUTTON_JS, null)
-                        v.evaluateJavascript(PROMOTION_FILTER_JS, null)
-                        v.evaluateJavascript("window.__pandyPromotions(${state?.hidePromotions == true});", null)
                     }
                 }
 
                 override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
                     val u = r.url
-                    android.util.Log.d("PandyWeb", "navigate ${u.scheme}://${u.host}${u.path}")
-                    if (u.scheme?.lowercase() !in SLICER_SCHEMES) return false
+                    debugLog("navigate ${u.scheme}://${u.host}${u.path}")
+                    if (u.scheme?.lowercase() !in SLICER_SCHEMES) {
+                        if (!r.isForMainFrame || inAppPage(u.scheme, u.host)) return false
+                        // Other web pages open in the browser; other schemes (intent:, file:…) don't open at all.
+                        if (u.scheme?.lowercase() in setOf("http", "https")) runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, u)) }
+                        return true
+                    }
                     if (state?.canPrint == false) {
                         // Pandy can't print right now: let MakerWorld's link open Bambu Handy, as it would in a browser.
                         runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, u)) }
@@ -195,13 +197,14 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
             setDownloadListener { u, _, disposition, mime, _ ->
                 // Some MakerWorld responses append the RFC 5987 filename parameter to the guessed name.
                 val name = URLUtil.guessFileName(u, disposition, mime).substringBefore(';')
-                android.util.Log.d("PandyWeb", "download $name (${u.take(40)}…)")
+                debugLog("download $name (${u.take(40)}…)")
                 if (u.startsWith("blob:")) {
                     // Made in the page: read it there and pass the bytes back.
                     evaluateJavascript("""(async()=>{const b=await (await fetch(${org.json.JSONObject.quote(u)})).blob();
                         if (b.size > $MAX_PRINT_BYTES) { PandyBridge.problem('The download is too large to save.',window.__pandyBridgeToken); return; }
                         const r=new FileReader();r.onload=()=>PandyBridge.blob(${org.json.JSONObject.quote(name)},r.result.split(',')[1],window.__pandyBridgeToken);r.readAsDataURL(b);})()""", null)
-                } else onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u)))
+                } else if (trustedFile(u)) onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u)))
+                else toast("Pandy only opens downloads from MakerWorld")
             }
             state?.goBack = { goBack() }
             loadUrl(url)
@@ -212,10 +215,6 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
         if (it.url?.let { u -> Uri.parse(u).host?.let { h -> h == "makerworld.com" || h.endsWith(".makerworld.com") } == true } == true) {
             it.evaluateJavascript("window.__pandyPrinter = ${org.json.JSONObject.quote(currentPrinter.value.orEmpty())};", null)
             it.evaluateJavascript(canPrintJs(state?.canPrint != false), null)
-            if (state != null) {
-                it.evaluateJavascript(PROMOTION_FILTER_JS, null)
-                it.evaluateJavascript("window.__pandyPromotions(${state.hidePromotions});", null)
-            }
         }
     })
     if (state != null) BackHandler(enabled = state.overlayBack != null || state.canGoBack) {

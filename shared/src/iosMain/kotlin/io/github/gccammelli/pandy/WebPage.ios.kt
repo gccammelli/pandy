@@ -52,7 +52,6 @@ window.PandyBridge = {
   file: (name, url, token) => window.webkit.messageHandlers.pandy.postMessage({ t: 'file', name: name, url: url, token: token }),
   nativeFile: (name, url, token) => window.webkit.messageHandlers.pandy.postMessage({ t: 'nativeFile', name: name, url: url, token: token }),
   problem: (m, token) => window.webkit.messageHandlers.pandy.postMessage({ t: 'problem', m: String(m), token: token }),
-  hidePromotions: token => window.webkit.messageHandlers.pandy.postMessage({ t: 'hidePromotions', token: token }),
   blob: (name, b64, token) => window.webkit.messageHandlers.pandy.postMessage({ t: 'blob', name: name, b64: b64, token: token }),
   blobChunk: (id, name, i, total, b64, token) => window.webkit.messageHandlers.pandy.postMessage({ t: 'blobChunk', id: id, name: name, i: i, total: total, b64: b64, token: token })
 };
@@ -79,7 +78,6 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
             val content = WKUserContentController()
             content.addUserScript(WKUserScript(makerWorldOnly(BRIDGE_JS + printerJs()), WKUserScriptInjectionTime.WKUserScriptInjectionTimeAtDocumentStart, true))
             content.addUserScript(WKUserScript(makerWorldOnly(PRINT_BUTTON_JS), WKUserScriptInjectionTime.WKUserScriptInjectionTimeAtDocumentEnd, true))
-            content.addUserScript(WKUserScript(makerWorldOnly(PROMOTION_FILTER_JS), WKUserScriptInjectionTime.WKUserScriptInjectionTimeAtDocumentEnd, true))
             content.addScriptMessageHandler(handlers.messages, "pandy")
             val config = WKWebViewConfiguration().apply { userContentController = content; websiteDataStore = WKWebsiteDataStore.defaultDataStore() }
             WKWebView(frame = platform.CoreGraphics.CGRectZero.readValue(), configuration = config).apply {
@@ -99,7 +97,6 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
             if (host == "makerworld.com" || host?.endsWith(".makerworld.com") == true) {
                 view.evaluateJavaScript(printerJs(), null)
                 view.evaluateJavaScript(canPrintJs(state?.canPrint != false), null)
-                if (state != null) view.evaluateJavaScript("window.__pandyPromotions(${state.hidePromotions});", null)
             }
         },
     )
@@ -190,7 +187,6 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
                     clearTransfers()
                     toast((m["m"] as? String).orEmpty().take(200))
                 }
-                "hidePromotions" -> if (makerWorldPage()) state?.onHidePromotions?.invoke()
                 "blob" -> (m["b64"] as? String)?.let { b64 ->
                     if (!makerWorldPage() || b64.length > MAX_BRIDGE_BASE64) return
                     runCatching { kotlin.io.encoding.Base64.decode(b64) }.getOrNull()?.takeIf { it.size <= MAX_PRINT_BYTES }
@@ -223,6 +219,12 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
     val navigation: WKNavigationDelegateProtocol = object : NSObject(), WKNavigationDelegateProtocol {
         override fun webView(webView: WKWebView, decidePolicyForNavigationAction: WKNavigationAction, decisionHandler: (WKNavigationActionPolicy) -> Unit) {
             val u = decidePolicyForNavigationAction.request.URL
+            val mainFrame = decidePolicyForNavigationAction.targetFrame?.isMainFrame() ?: true // no frame: a new window
+            if (mainFrame && u != null && u.scheme?.lowercase() !in SLICER_SCHEMES && !inAppPage(u.scheme, u.host)) {
+                // Other web pages open in the browser; other schemes don't open at all.
+                if (u.scheme?.lowercase() in setOf("http", "https")) platform.UIKit.UIApplication.sharedApplication.openURL(u, emptyMap<Any?, Any>(), null)
+                return decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+            }
             if (decidePolicyForNavigationAction.targetFrame?.isMainFrame() == true && u != null && u.scheme?.lowercase() !in SLICER_SCHEMES) pageChanged(u.absoluteString)
             if (u?.scheme?.lowercase() in SLICER_SCHEMES && state?.canPrint == false) {
                 // Pandy can't print right now: let MakerWorld's link open Bambu Handy.
@@ -265,8 +267,6 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
             if (makerWorldPage()) {
                 webView.evaluateJavaScript("window.__pandyPrinter = ${json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(printer.orEmpty()))};", null)
                 webView.evaluateJavaScript(canPrintJs(state?.canPrint != false), null)
-                webView.evaluateJavaScript(PROMOTION_FILTER_JS, null)
-                webView.evaluateJavaScript("window.__pandyPromotions(${state?.hidePromotions == true});", null)
             }
             state?.canGoBack = webView.canGoBack; state?.currentUrl = webView.URL?.absoluteString.orEmpty()
         }
