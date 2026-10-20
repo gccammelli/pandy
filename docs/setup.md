@@ -45,6 +45,7 @@ You need:
 
 - Home Assistant's address, as you'd open it in a browser (`http://homeassistant.local:8123`, or your remote address).
 - A **long-lived access token**: in Home Assistant, your profile › Security › Long-lived access tokens › Create token.
+  Use a dedicated non-administrator Home Assistant user for the app's token; it can do whatever that user can. The Pandy Slicer add-on is the exception and needs an administrator user.
 
 ### File cache
 

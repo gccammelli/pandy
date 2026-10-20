@@ -330,11 +330,6 @@ fun SettingsScreen() {
                     timelapseDefault = it
                     Repo.setTimelapseDefault(it)
                 }
-                var showPromotions by remember { mutableStateOf(!Repo.hidePromotions) }
-                ToggleRow("Show promotional content", showPromotions) {
-                    showPromotions = it
-                    Repo.setHidePromotions(!it)
-                }
                 if (pl.canNotify && !Repo.demo) {
                     var notify by remember { mutableStateOf(Repo.notify) }
                     ToggleRow("Print notifications", notify) {

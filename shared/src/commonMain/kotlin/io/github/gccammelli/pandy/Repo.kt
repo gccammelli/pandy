@@ -181,8 +181,6 @@ object Repo {
     fun setNotify(value: Boolean) = store.settings.putString("notify", value.toString())
     /** Pandy should stay connected with the screen off, to send alerts. */
     val watching get() = notifier != null && notify && connected && !demo
-    val hidePromotions get() = store.settings.getString("hide_promotions") == "true"
-    fun setHidePromotions(value: Boolean) = store.settings.putString("hide_promotions", value.toString())
 
     fun filamentPreset(serial: String): Map<String, Int> = store.settings.getString("filament_preset_$serial").orEmpty().split(',').mapNotNull { item ->
         val parts = item.split(':', limit = 2)

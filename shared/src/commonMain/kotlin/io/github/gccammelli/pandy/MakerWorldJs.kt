@@ -167,68 +167,15 @@ const val PRINT_BUTTON_JS = """
 })();
 """
 
-/** Hides contest/campaign cards after a long press; the setting can reveal them again. */
-const val PROMOTION_FILTER_JS = """
-(function(){
-  if (window.__pandyPromoFilter) return;
-  window.__pandyPromoFilter = true;
-  const words = /\b(contest|crowdfunding|campaign|win an|make for good|3d scanner|print challenge|print this week|make your models move|print,? play|s1 3d scanner)\b/i;
-  const key = 'pandy.hidePromotions';
-  function candidate(node) {
-    const text = (node.innerText || node.textContent || '').trim().replace(/\s+/g, ' ');
-    const rect = node.getBoundingClientRect();
-    return text && text.length <= 180 && words.test(text) && rect.width > 180 && rect.height > 60;
-  }
-  function patch() {
-    // Promotions are links or explicitly marked banner/carousel controls; scanning every div is expensive on older phones.
-    document.querySelectorAll('a,button,[role="button"],[data-testid*="banner"],[data-testid*="campaign"],[data-testid*="promotion"]').forEach(node => {
-      if (!candidate(node)) return;
-      const box = node.closest('a,button,[role="button"]') || node;
-      if (!box.hasAttribute('data-pandy-promo')) {
-        box.setAttribute('data-pandy-promo', '1');
-        box.setAttribute('data-pandy-promo-display', box.style.display || '');
-      }
-      box.style.display = 'none';
-    });
-  }
-  function reveal() {
-    document.querySelectorAll('[data-pandy-promo]').forEach(node => {
-      node.style.display = node.getAttribute('data-pandy-promo-display') || '';
-      node.removeAttribute('data-pandy-promo');
-      node.removeAttribute('data-pandy-promo-display');
-    });
-  }
-  function setHidden(on, notify) {
-    if (on) { localStorage.setItem(key, '1'); patch(); }
-    else { localStorage.removeItem(key); reveal(); }
-    if (notify && on && window.PandyBridge && window.PandyBridge.hidePromotions)
-      window.PandyBridge.hidePromotions(window.__pandyBridgeToken || '');
-  }
-  window.__pandyPromotions = on => setHidden(!!on, false);
-  function pressedNode(target) {
-    const control = target && target.closest ? target.closest('a,button,[role="button"]') : null;
-    if (control && candidate(control)) return control;
-    let node = target;
-    for (let i = 0; node && i < 6; i++, node = node.parentElement) if (candidate(node)) return node;
-    return null;
-  }
-  let timer = null;
-  let suppressClickUntil = 0;
-  let queued = false;
-  const observer = new MutationObserver(() => {
-    if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; if (localStorage.getItem(key) === '1') patch(); }); }
-  });
-  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-  document.addEventListener('click', e => {
-    if (Date.now() < suppressClickUntil) { e.preventDefault(); e.stopImmediatePropagation(); }
-  }, true);
-  document.addEventListener('pointerdown', e => {
-    const node = pressedNode(e.target);
-    if (!node || !candidate(node)) return;
-    timer = setTimeout(() => { suppressClickUntil = Date.now() + 1000; setHidden(true, true); }, 700);
-  }, true);
-  document.addEventListener('pointerup', () => { if (timer) { clearTimeout(timer); timer = null; } }, true);
-  document.addEventListener('pointercancel', () => { if (timer) { clearTimeout(timer); timer = null; } }, true);
-  if (localStorage.getItem(key) === '1') patch();
-})();
-"""
+/** Sites the MakerWorld page may open inside Pandy: MakerWorld, Bambu's sign-in and files, and the sign-in providers. */
+private val IN_APP_HOSTS = listOf("makerworld.com", "bambulab.com", "bblmw.com", "appleid.apple.com", "accounts.google.com", "facebook.com")
+
+/**
+ * Whether a top-level page may load in Pandy's web view. Others open in the browser, so the bridge to the printer is
+ * only ever next to MakerWorld; frames inside a page (sign-in captchas, videos) aren't affected.
+ */
+fun inAppPage(scheme: String?, host: String?): Boolean {
+    if (scheme?.lowercase() !in setOf("http", "https")) return true // about:blank, blob: and data: stay in the page
+    val h = host?.lowercase()?.removeSuffix(".") ?: return false
+    return scheme.equals("https", ignoreCase = true) && IN_APP_HOSTS.any { h == it || h.endsWith(".$it") }
+}

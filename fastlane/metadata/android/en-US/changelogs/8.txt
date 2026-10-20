@@ -1,0 +1,1 @@
+Pandy Slicer support through Home Assistant, quieter alerts, and a panda status-bar icon.

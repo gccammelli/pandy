@@ -107,13 +107,7 @@ fun MakerWorld(modifier: Modifier) {
     var sheetBack by remember { mutableStateOf<(() -> Unit)?>(null) }
     val platform = LocalPlatform.current
     val st by Repo.state.collectAsState()
-    web.hidePromotions = Repo.hidePromotions
     web.canPrint = st.printer()?.let { it.online && !it.controlBlocked } ?: false
-    web.onHidePromotions = {
-        Repo.setHidePromotions(true)
-        web.hidePromotions = true
-        platform.toast("Promotional content hidden. Restore it in Me › Settings.")
-    }
     web.overlayBack = if (printDownload != null) (sheetBack ?: { printDownload = null }) else null
     Box(modifier) {
         WebPage(MAKERWORLD, Modifier.fillMaxSize(), onDownload = { d ->

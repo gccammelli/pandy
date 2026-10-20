@@ -6,10 +6,10 @@
 [![License](https://img.shields.io/github/license/gccammelli/pandy)](LICENSE)
 [![Open issues](https://img.shields.io/github/issues/gccammelli/pandy)](https://github.com/gccammelli/pandy/issues)
 
-**Bambu Handy for printers in LAN-only mode.**
+**An unofficial companion app for Bambu printers in LAN-only mode.**
 
-Pandy was built from scratch for people who keep their Bambu printer in LAN-only mode but still want the Handy
-features they love. It talks directly to the printer on the local network, without sending printer control through
+Pandy was built from scratch for people who keep their Bambu printer in LAN-only mode but still want useful printer
+features. It talks directly to the printer on the local network, without sending printer control through
 Bambu's cloud.
 
 These are demo-mode screens; the demo printer lets you explore the app without a printer:
@@ -53,6 +53,7 @@ want more than a local connection. For example, it can provide:
 
 You can add Home Assistant as an extra source while keeping direct printer control, or use it as Pandy's connection.
 See [the setup guide](docs/setup.md) for both options.
+Use a dedicated non-administrator Home Assistant user for Pandy's long-lived token; it can do whatever that user can. The Pandy Slicer add-on is the exception and needs an administrator user.
 
 ## Install
 
@@ -62,8 +63,8 @@ See [the setup guide](docs/setup.md) for both options.
 Download the latest release for [Android or iOS](https://github.com/gccammelli/pandy/releases/latest).
 
 - Android: install the APK.
-- iPhone: install the IPA with [iLoader](https://iloader.app/), [SideStore](https://sidestore.io) or
-  [AltStore](https://altstore.io), signed with your own Apple ID. Pandy is not on the App Store.
+- iPhone: install the unsigned IPA with [iLoader](https://iloader.app/), [SideStore](https://sidestore.io) or
+  [AltStore](https://altstore.io), signed with your own Apple ID. Pandy is not on the App Store or Google Play.
 
 ## Build
 

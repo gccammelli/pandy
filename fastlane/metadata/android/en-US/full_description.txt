@@ -1,0 +1,21 @@
+<p>Pandy is a companion app for Bambu printers in LAN-only mode. It talks directly to your printer on your local network and helps you monitor and control prints from your phone.</p>
+
+<p>Pandy is not a replacement for Bambu Handy. It is an unofficial companion for people who keep their printer in LAN-only mode.</p>
+
+<b>What it does</b>
+<ul>
+<li>View printer status, progress, temperatures, fans, lights, speed, motion controls and HMS messages</li>
+<li>Pause, stop and skip prints, with AMS and filament controls</li>
+<li>Browse print files, thumbnails, history, reprints and timelapses</li>
+<li>Receive Android alerts when a print finishes, fails or needs attention</li>
+<li>Browse MakerWorld and send models to Pandy Slicer through Home Assistant</li>
+<li>Use light and dark themes and explore the built-in demo printer</li>
+</ul>
+
+<b>What you need</b>
+<p>A compatible Bambu printer with <b>LAN Only Mode</b> and <b>Developer Mode</b> enabled, its access code, and a phone on the same network. You may also need the printer's IP address and serial number if automatic discovery is unavailable.</p>
+
+<b>Privacy</b>
+<p>In direct mode, printer communication stays on your local network and Pandy does not send printer control through Bambu's cloud. Home Assistant is optional; if you connect it, Pandy uses the Home Assistant connection and features you choose.</p>
+
+<p>Pandy is unofficial and is not affiliated with Bambu Lab. Bambu Lab and related product names are trademarks of their respective owner.</p>
