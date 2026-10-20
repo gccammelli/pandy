@@ -16,5 +16,6 @@ class InAppPageTest {
         for (h in listOf("evil.com", "makerworld.com.evil.com", "notmakerworld.com", "example.org")) assertFalse(inAppPage("https", h), h)
         assertFalse(inAppPage("http", "makerworld.com"))
         assertFalse(inAppPage("https", null))
+        for (s in listOf("file", "javascript", "intent", null)) assertFalse(inAppPage(s, "makerworld.com"), s)
     }
 }

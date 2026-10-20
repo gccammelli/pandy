@@ -175,7 +175,9 @@ private val IN_APP_HOSTS = listOf("makerworld.com", "bambulab.com", "bblmw.com",
  * only ever next to MakerWorld; frames inside a page (sign-in captchas, videos) aren't affected.
  */
 fun inAppPage(scheme: String?, host: String?): Boolean {
-    if (scheme?.lowercase() !in setOf("http", "https")) return true // about:blank, blob: and data: stay in the page
+    val s = scheme?.lowercase()
+    if (s in setOf("about", "blob", "data")) return true // made by the page itself
+    if (s != "http" && s != "https") return false
     val h = host?.lowercase()?.removeSuffix(".") ?: return false
-    return scheme.equals("https", ignoreCase = true) && IN_APP_HOSTS.any { h == it || h.endsWith(".$it") }
+    return s == "https" && IN_APP_HOSTS.any { h == it || h.endsWith(".$it") }
 }

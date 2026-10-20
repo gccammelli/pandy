@@ -168,7 +168,8 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                     debugLog("navigate ${u.scheme}://${u.host}${u.path}")
                     if (u.scheme?.lowercase() !in SLICER_SCHEMES) {
                         if (!r.isForMainFrame || inAppPage(u.scheme, u.host)) return false
-                        runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, u)) }
+                        // Other web pages open in the browser; other schemes (intent:, file:…) don't open at all.
+                        if (u.scheme?.lowercase() in setOf("http", "https")) runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, u)) }
                         return true
                     }
                     if (state?.canPrint == false) {
@@ -202,7 +203,8 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                     evaluateJavascript("""(async()=>{const b=await (await fetch(${org.json.JSONObject.quote(u)})).blob();
                         if (b.size > $MAX_PRINT_BYTES) { PandyBridge.problem('The download is too large to save.',window.__pandyBridgeToken); return; }
                         const r=new FileReader();r.onload=()=>PandyBridge.blob(${org.json.JSONObject.quote(name)},r.result.split(',')[1],window.__pandyBridgeToken);r.readAsDataURL(b);})()""", null)
-                } else onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u)))
+                } else if (trustedFile(u)) onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u)))
+                else toast("Pandy only opens downloads from MakerWorld")
             }
             state?.goBack = { goBack() }
             loadUrl(url)

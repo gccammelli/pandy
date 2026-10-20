@@ -221,7 +221,8 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
             val u = decidePolicyForNavigationAction.request.URL
             val mainFrame = decidePolicyForNavigationAction.targetFrame?.isMainFrame() ?: true // no frame: a new window
             if (mainFrame && u != null && u.scheme?.lowercase() !in SLICER_SCHEMES && !inAppPage(u.scheme, u.host)) {
-                platform.UIKit.UIApplication.sharedApplication.openURL(u, emptyMap<Any?, Any>(), null)
+                // Other web pages open in the browser; other schemes don't open at all.
+                if (u.scheme?.lowercase() in setOf("http", "https")) platform.UIKit.UIApplication.sharedApplication.openURL(u, emptyMap<Any?, Any>(), null)
                 return decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
             }
             if (decidePolicyForNavigationAction.targetFrame?.isMainFrame() == true && u != null && u.scheme?.lowercase() !in SLICER_SCHEMES) pageChanged(u.absoluteString)
