@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.gccammelli.pandy" + if (providers.gradleProperty("pandy.testbed").isPresent) ".testbed" else ""
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.0.8"
+        versionCode = 9
+        versionName = "1.0.9"
     }
 
     buildTypes {
