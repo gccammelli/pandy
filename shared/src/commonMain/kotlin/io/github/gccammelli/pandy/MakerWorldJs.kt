@@ -17,16 +17,30 @@ const val PRINT_BUTTON_JS = """
   // Styles apply only while Pandy can print (the class on <html>), so a cloud-mode printer leaves MakerWorld's look.
   const css = document.createElement('style');
   css.textContent = `
-    html.pandy-print div.pandy-split, html.pandy-print div.pandy-split:hover, html.pandy-print div.pandy-split:active { background: #AE006D !important; border-color: #AE006D !important; }
-    html.pandy-print div.pandy-split span.primaryButton, html.pandy-print div.pandy-split span.primaryButton * { background: transparent !important; color: #fff !important; }
-    html.pandy-print div.pandy-split > .icon-box, html.pandy-print div.pandy-split > .icon-box:hover { background: #7E004F !important; }
+    html.pandy-print .pandy-split, html.pandy-print .pandy-split:hover, html.pandy-print .pandy-split:active { background: #AE006D !important; border-color: #AE006D !important; color: #fff !important; }
+    html.pandy-print .pandy-split > :not(.icon-box), html.pandy-print .pandy-split > :not(.icon-box) * { background: transparent !important; color: #fff !important; }
+    html.pandy-print .pandy-split .primaryButton, html.pandy-print .pandy-split .primaryButton * { background: transparent !important; color: #fff !important; }
+    html.pandy-print .pandy-split > .icon-box, html.pandy-print .pandy-split > .icon-box:hover { background: #7E004F !important; }
     .pandy-print-button { display: none; }
     html.pandy-print .pandy-print-button { display: flex; align-items: center; justify-content: center; height: 48px; margin-bottom: 10px;
       border-radius: 8px; background: #AE006D; color: #fff; font-weight: 600; font-size: 17px; cursor: pointer; }`;
   (document.head || document.documentElement).appendChild(css);
-  const LABEL = /^(open in bambu (handy|studio)|print)$/i;
+  const LABEL = /^(open in bambu (handy|studio)|download and open|print)$/i;
   const DOWNLOAD = /^download 3mf$/i;
   const canPrint = () => window.__pandyCanPrint !== false;
+  const textOf = node => (node.innerText || node.textContent || '').trim().replace(/\s+/g, ' ');
+  const isPrimaryLabel = node => node.tagName === 'SPAN' && /primaryButton/i.test(node.className || '');
+  const labels = () => {
+    const preferred = [...document.querySelectorAll('span.primaryButton, span[class*="primaryButton"]')]
+      .filter(node => LABEL.test(textOf(node)) || DOWNLOAD.test(textOf(node)));
+    return preferred.length ? preferred : [...document.querySelectorAll('button,[role="button"],a')]
+      .filter(node => LABEL.test(textOf(node)) || DOWNLOAD.test(textOf(node)));
+  };
+  const actionFor = label => isPrimaryLabel(label) ? (label.parentElement || label) : (label.closest('button,[role="button"],a') || label);
+  const splitFor = action => {
+    const parent = action.parentElement;
+    return parent && [...parent.children].some(child => child !== action && child.classList.contains('icon-box')) ? parent : action;
+  };
   const variants = i => {
     const primary = i && i.extention && i.extention.modelInfo && i.extention.modelInfo.compatibility;
     const other = i && i.extention && i.extention.otherCompatibilityModelInfo;
@@ -75,7 +89,7 @@ const val PRINT_BUTTON_JS = """
     finally { busy = false; }
   }
   window.__pandyPrint = print;
-  const HANDY_ITEM = /^(open in bambu handy|open in bambu studio)$/i;
+  const HANDY_ITEM = /^(open in bambu handy|open in bambu studio|download and open)$/i;
   // MakerWorld's "Get the full app experience" dialog: Pandy is the app. Press its own Cancel so the dimmed backdrop and scroll lock go too.
   // Said instead of the dialog, once per page load.
   function welcome(){
@@ -101,43 +115,62 @@ const val PRINT_BUTTON_JS = """
       }
     }
   }
+  // MakerWorld's MUI menu collapses this panel to the header height in a WebView.
+  function fixMakerWorldMenus(){
+    const max = Math.max(0, (window.innerHeight || document.documentElement.clientHeight) - 96);
+    if (!max) return;
+    for (const paper of document.querySelectorAll('.MuiPopover-paper')) {
+      const panel = paper.querySelector('.makerlab-selector');
+      if (!panel) continue;
+      const height = Math.min(panel.scrollHeight, max);
+      paper.style.setProperty('height', height + 'px', 'important');
+      paper.style.setProperty('max-height', max + 'px', 'important');
+      panel.style.setProperty('height', height + 'px', 'important');
+      panel.style.setProperty('max-height', max + 'px', 'important');
+      panel.style.setProperty('overflow-y', 'auto', 'important');
+    }
+  }
   function patch(){
     hideAppBanner();
+    fixMakerWorldMenus();
     document.documentElement.classList.toggle('pandy-print', canPrint());
-    for (const label of document.querySelectorAll('span.primaryButton')) {
-      const box = label.parentElement;
-      const text = (label.textContent || '').trim();
-      const leaf = [...label.querySelectorAll('span')].pop() || label;
+    for (const label of labels()) {
+      const text = textOf(label);
+      const action = actionFor(label);
+      const split = splitFor(action);
+      const leaf = [...label.querySelectorAll('span')].find(node => textOf(node) === text) || label;
       // "Download 3MF" as the main button stays a download; Pandy's own Print goes above it.
       if (DOWNLOAD.test(text)) {
-        if (box && !(box.previousElementSibling && box.previousElementSibling.classList.contains('pandy-print-button'))) {
+        const container = action.parentElement;
+        if (container && ![...container.children].some(child => child.classList.contains('pandy-print-button'))) {
           const own = document.createElement('div');
           own.className = 'pandy-print-button'; own.textContent = 'Print';
+          own.setAttribute('role', 'button'); own.setAttribute('tabindex', '0');
           own.addEventListener('click', e => { e.preventDefault(); e.stopImmediatePropagation(); print(); });
-          box.parentElement && box.parentElement.insertBefore(own, box);
+          own.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); print(); } });
+          container.insertBefore(own, action);
         }
-        if (box) box.classList.remove('pandy-split');
+        split.classList.remove('pandy-split');
         continue;
       }
       if (!LABEL.test(text)) continue;
       if (!canPrint()) {
         // Pandy can't print: MakerWorld's own label and action come back.
         if (label.__pandyLabel && leaf.textContent === 'Print') leaf.textContent = label.__pandyLabel;
-        if (box) box.classList.remove('pandy-split');
+        split.classList.remove('pandy-split');
         continue;
       }
-      if (box) box.classList.add('pandy-split');
+      split.classList.add('pandy-split');
       if (!/^print$/i.test(leaf.textContent.trim())) label.__pandyLabel = leaf.textContent;
       if (leaf.textContent !== 'Print') leaf.textContent = 'Print';
       if (label.__pandy) continue;
       label.__pandy = true;
-      const button = label.parentElement || label;
-      button.addEventListener('click', e => {
+      action.addEventListener('click', e => {
         // Cover bare padding around the text, but leave every other child (arrow/menu) to MakerWorld.
         const target = e.target;
-        if (target !== button && !label.contains(target)) return;
+        if (target !== action && !label.contains(target)) return;
         // MakerWorld reuses this node when the selected profile changes. Only hijack it while it still means Print.
-        if (!canPrint() || !LABEL.test((label.textContent || '').trim())) return;
+        if (!canPrint() || !LABEL.test(textOf(label))) return;
         e.preventDefault(); e.stopImmediatePropagation(); print();
       }, true);
     }

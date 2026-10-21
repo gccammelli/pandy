@@ -267,6 +267,7 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
             if (makerWorldPage()) {
                 webView.evaluateJavaScript("window.__pandyPrinter = ${json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(printer.orEmpty()))};", null)
                 webView.evaluateJavaScript(canPrintJs(state?.canPrint != false), null)
+                webView.evaluateJavaScript(makerWorldOnly(PRINT_BUTTON_JS), null)
             }
             state?.canGoBack = webView.canGoBack; state?.currentUrl = webView.URL?.absoluteString.orEmpty()
         }
