@@ -545,6 +545,7 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
         catch (e: Exception) {
             if (strict || e.message?.contains("access code") == true) throw ApiException("Couldn't reach the printer at ${config.ip}: ${e.message ?: "no answer"}. Check its IP address and access code, and that LAN mode (with Developer Mode) is on.")
         }
+        if (strict && link == null) throw ApiException("The direct printer connection is unavailable")
     }
 
     override suspend fun stream(subscribe: JsonObject, onEvent: (JsonObject) -> Unit) {
@@ -555,6 +556,7 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
         try {
             while (true) {
                 changed.receive()
+                if (strict && link == null) throw ApiException("The direct printer connection dropped")
                 val ents = entities()
                 rows = ents.map { it.first }
                 if (rows.map { it.device }.toSet() != registered) throw ApiException("The printer's parts changed") // the caller reconnects and re-reads the registry
