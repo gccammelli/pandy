@@ -39,6 +39,7 @@ object Repo {
 
     val connected get() = ha != null
     private var token: String? = null
+    private var directBackend: DirectPrinter? = null
     /** Home Assistant's token as an HTTP header, for players and downloads that fetch from it directly. */
     fun authHeaders(): Map<String, String> = token?.let { mapOf("Authorization" to "Bearer $it") }.orEmpty()
     val haUrl get() = store.settings.getString("ha_url")
@@ -58,9 +59,17 @@ object Repo {
         val url = haUrl
         val t = token
         val haConn = if (url != null && t != null) HaHttp(url, t) else null
+        directBackend = lan?.let { DirectPrinter(it, strict = haConn != null) }
         when {
             demo -> { ha = FakeHomeAssistant(); extras = ha }
-            mode == "lan" -> { ha = lan?.let { DirectPrinter(it) }; extras = haConn ?: ha }
+            mode == "lan" -> {
+                ha = when {
+                    directBackend != null && haConn != null -> PreferPrimaryBackend(directBackend!!, haConn)
+                    directBackend != null -> directBackend
+                    else -> haConn
+                }
+                extras = haConn ?: directBackend ?: ha
+            }
             else -> { ha = haConn; extras = haConn }
         }
         if (ha != null) state.value = UiState(on = true)
@@ -70,12 +79,14 @@ object Repo {
     suspend fun connectPrinter(c: LanConfig) {
         val d = DirectPrinter(c, strict = true)
         try { withContext(Dispatchers.Default) { d.printers() } } catch (e: Exception) { d.stop(); throw e }
+        val remote = extras as? HaHttp
         stop()
-        (ha as? DirectPrinter)?.stop()
+        directBackend?.stop()
+        directBackend = d
         store.settings.putString("mode", "lan")
         store.settings.putString("lan_ip", c.ip); store.settings.putString("lan_serial", c.serial); store.settings.putString("lan_model", c.model); store.settings.putString("lan_name", c.name)
         store.secrets.set("lan_code", c.code)
-        ha = d
+        ha = remote?.let { PreferPrimaryBackend(d, it) } ?: d
         if (extras == null || extras is DirectPrinter) extras = d
         state.value = UiState(on = true)
         start()
@@ -95,9 +106,14 @@ object Repo {
         this.token = t
         extras = b
         if (asPrinter) {
-            stop(); (ha as? DirectPrinter)?.stop()
+            stop(); directBackend?.stop(); directBackend = null
             store.settings.putString("mode", "ha")
             ha = b
+            state.value = UiState(on = true)
+            start()
+        } else if (directBackend != null) {
+            stop()
+            ha = PreferPrimaryBackend(directBackend!!, b)
             state.value = UiState(on = true)
             start()
         }
@@ -126,14 +142,20 @@ object Repo {
 
     /** Forgets Home Assistant (direct mode keeps working). */
     fun removeHa() {
+        stop()
+        directBackend?.stop()
+        val d = lan?.let { DirectPrinter(it) }
+        directBackend = d
         store.settings.putString("ha_url", null); store.secrets.set("ha_token", null)
-        token = null; extras = ha as? DirectPrinter
+        token = null; ha = d; extras = d
+        state.value = UiState(on = d != null)
+        if (d != null) start()
     }
 
     /** Removes only the saved direct printer; Home Assistant and slicer settings remain available. */
     fun removeDirectPrinter() {
         stop()
-        (ha as? DirectPrinter)?.stop()
+        directBackend?.stop(); directBackend = null
         store.settings.putString("lan_ip", null); store.settings.putString("lan_serial", null)
         store.settings.putString("lan_model", null); store.settings.putString("lan_name", null)
         store.secrets.set("lan_code", null)
@@ -152,7 +174,7 @@ object Repo {
 
     fun logout() {
         stop()
-        (ha as? DirectPrinter)?.stop()
+        directBackend?.stop(); directBackend = null
         store.secrets.set("ha_token", null); store.secrets.set("lan_code", null)
         token = null
         store.settings.clear()

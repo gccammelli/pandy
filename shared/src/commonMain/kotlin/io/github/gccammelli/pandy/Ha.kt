@@ -16,6 +16,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -136,6 +137,66 @@ class HaHttp(url: String, private val token: String) : HaBackend {
             in 200..299 -> return text
             401, 403 -> throw AuthException("Home Assistant didn't accept the access token")
             else -> throw ApiException("Home Assistant: HTTP ${r.status.value} ${text.take(200)}")
+        }
+    }
+}
+
+/** Prefers the local backend until it fails, then uses the remote backend for the rest of this session. */
+internal class PreferPrimaryBackend(
+    private val primary: HaBackend,
+    private val fallback: HaBackend
+) : HaBackend {
+    private var primaryAvailable = true
+    internal val usingPrimary get() = primaryAvailable
+    override val base get() = if (primaryAvailable) primary.base else fallback.base
+
+    private fun useFallback() {
+        if (!primaryAvailable) return
+        primaryAvailable = false
+        (primary as? DirectPrinter)?.stop()
+    }
+
+    private suspend fun <T> read(block: suspend HaBackend.() -> T): T {
+        if (!primaryAvailable) return fallback.block()
+        return try {
+            primary.block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ApiException) {
+            if (e.message == DirectPrinter.NEEDS_HA) fallback.block()
+            else { useFallback(); fallback.block() }
+        } catch (e: Exception) {
+            useFallback(); fallback.block()
+        }
+    }
+
+    override suspend fun get(path: String) = read { get(path) }
+    override suspend fun bytes(path: String) = read { bytes(path) }
+    override suspend fun ws(commands: List<JsonObject>): List<JsonElement?> = read { ws(commands) }
+
+    override suspend fun stream(subscribe: JsonObject, onEvent: (JsonObject) -> Unit) {
+        if (!primaryAvailable) return fallback.stream(subscribe, onEvent)
+        try {
+            primary.stream(subscribe, onEvent)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            useFallback()
+            throw e // Repo retries so it can rebuild the registry with the fallback's entity IDs.
+        }
+    }
+
+    override suspend fun post(path: String, body: String): String {
+        if (!primaryAvailable) return fallback.post(path, body)
+        return try {
+            primary.post(path, body)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ApiException) {
+            if (e.message == DirectPrinter.NEEDS_HA) fallback.post(path, body)
+            else { useFallback(); throw e }
+        } catch (e: Exception) {
+            useFallback(); throw e // Retrying a printer command could send it twice.
         }
     }
 }
@@ -426,7 +487,7 @@ suspend fun HaBackend.ensureOnPrinter(serial: String, f: CachedFile): String {
 suspend fun HaBackend.startPrint(p: Printer, path: String, plate: Int, amsMapping: List<Int>?, timelapse: Boolean, bedLeveling: Boolean, flowCali: Boolean, bedType: String = "auto") =
     bambu("print_project_file", p, buildJsonObject {
         put("filepath", path); put("plate", plate); put("timelapse", timelapse); put("bed_leveling", bedLeveling)
-        put("flow_cali", flowCali); if (this@startPrint is DirectPrinter) put("bed_type", bedType); put("vibration_cali", false); put("layer_inspect", true)
+        put("flow_cali", flowCali); if (this@startPrint is DirectPrinter || (this@startPrint as? PreferPrimaryBackend)?.usingPrimary == true) put("bed_type", bedType); put("vibration_cali", false); put("layer_inspect", true)
         val useAms = amsMapping?.any(::isAmsTrayId) == true
         put("use_ams", useAms)
         if (useAms) put("ams_mapping", amsMapping!!.joinToString(","))
