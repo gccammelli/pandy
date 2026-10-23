@@ -207,6 +207,90 @@ class ScreenTest {
     @Test fun calibrationShowsOptions() = show("Calibration") { CalibrationScreen(printer) }
     @Test fun optionsShowMonitoring() = show("Print Options") { PrintOptionsScreen(printer) }
     @Test fun amsShowsSettings() = show("AMS Settings") { AmsSettingsScreen(printer) }
+
+    private fun homeAssistantMode() {
+        val store=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
+        val before=listOf("demo","mode").associateWith { store.settings.getString(it) }
+        restorePrintSettings={ before.forEach { (key,value) -> store.settings.putString(key,value) } }
+        store.settings.putString("demo","false"); store.settings.putString("mode","ha")
+    }
+
+    @Test fun missingPrinterStateStaysOfflineAndDoesNotInventSpoolsOrTemperatures() {
+        val p=Printer(printer.info.copy(ids=emptyMap(),ams=emptyList(),external=emptyList(),firmware=null),emptyMap())
+        show(p.name) { DevicesTab(UiState(on=true,printers=listOf(p),live=true),p) }
+        compose.onNodeWithText("Device Offline").assertExists()
+        compose.onNodeWithText("No AMS or external spool in Home Assistant").performScrollTo().assertExists()
+        compose.onAllNodesWithText("--").onFirst().assertExists()
+    }
+
+    @Test fun disconnectedAmsShowsAnExplicitEmptyState() {
+        val p=Printer(printer.info.copy(ams=emptyList()),snapshot)
+        show("AMS Settings") { AmsSettingsScreen(p) }
+        compose.onNodeWithText("No AMS connected").assertExists()
+    }
+
+    @Test fun homeAssistantCalibrationCannotSendUnsupportedCommands() {
+        homeAssistantMode()
+        val p=changed("sensor.print_status" to "idle")
+        show("Calibration") { CalibrationScreen(p) }
+        compose.onNodeWithText("Home Assistant does not expose this printer command.",substring=true).assertExists()
+        val switches=compose.onAllNodes(isToggleable())
+        switches.fetchSemanticsNodes().indices.forEach { switches[it].assertIsNotEnabled().performClick() }
+        compose.onNodeWithText("Start calibration").assertIsNotEnabled().performClick()
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun idleNonLidarCalibrationRequiresAtLeastOneChosenCheck() {
+        val p=Printer(printer.info.copy(model="A1"),snapshot.toMutableMap().apply {
+            val id=printer.info.ids.getValue("sensor.print_status"); put(id,Entity(id,"idle",JsonObject(emptyMap())))
+        })
+        show("Calibration") { CalibrationScreen(p) }
+        compose.onNodeWithText("Micro lidar calibration").assertDoesNotExist()
+        compose.onAllNodes(isToggleable()).onFirst().performClick()
+        compose.onAllNodes(isToggleable())[1].performClick()
+        compose.onNodeWithText("Start calibration").assertIsNotEnabled()
+        compose.onAllNodes(isToggleable()).onLast().performClick()
+        compose.onNodeWithText("Start calibration").assertIsEnabled().performClick()
+        compose.onNodeWithText("Cancel").performClick()
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun unsupportedPrintOptionsCanBeHiddenWithoutInventingSwitchStates() {
+        Repo.setShowUnavailable(false)
+        val p=Printer(printer.info.copy(ids=printer.info.ids.filterKeys { it=="binary_sensor.online" }),snapshot)
+        show("Print Options") { PrintOptionsScreen(p) }
+        compose.onAllNodes(isToggleable()).assertCountEquals(0)
+        compose.onAllNodesWithText("Not available").assertCountEquals(0)
+        compose.onNodeWithText("Only switches reported by this printer",substring=true).assertExists()
+    }
+
+    @Test fun homeAssistantPrintOptionsRemainReadOnlyEvenWhenStateIsReported() {
+        homeAssistantMode()
+        show("Print Options") { PrintOptionsScreen(printer) }
+        compose.onNodeWithText("Home Assistant does not expose these printer settings",substring=true).assertExists()
+        val switches=compose.onAllNodes(isToggleable())
+        org.junit.Assert.assertTrue(switches.fetchSemanticsNodes().isNotEmpty())
+        switches.fetchSemanticsNodes().indices.forEach { switches[it].assertIsNotEnabled().performClick() }
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun homeAssistantAmsSettingsShowStateWithoutEnablingUnsupportedWrites() {
+        homeAssistantMode()
+        show("AMS Settings") { AmsSettingsScreen(printer) }
+        compose.onNodeWithText("Home Assistant shows AMS state",substring=true).assertExists()
+        val switches=compose.onAllNodes(isToggleable())
+        org.junit.Assert.assertTrue(switches.fetchSemanticsNodes().isNotEmpty())
+        switches.fetchSemanticsNodes().indices.forEach { switches[it].assertIsNotEnabled().performClick() }
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun sparseAmsFirmwareKeepsUnreportedOptionsExplicitlyUnavailable() {
+        val p=Printer(printer.info.copy(ids=printer.info.ids.filterKeys { !it.startsWith("switch.") },
+            ams=printer.info.ams.map { it.copy(ids=emptyMap()) }),snapshot)
+        show("AMS Settings") { AmsSettingsScreen(p) }
+        compose.onAllNodesWithText("Not available").onFirst().assertExists()
+        compose.onAllNodes(isToggleable()).assertCountEquals(0)
+    }
     @Test fun liveViewShowsSettings() = show("Liveview Settings") { LiveviewSettingsScreen() }
     @Test fun assistantShowsProblems() = show("Machine Assistant") { AssistantScreen(printer) }
     @Test fun historyShowsPreviousPrints() = show("History") { HistoryScreen(printer) }

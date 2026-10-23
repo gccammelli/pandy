@@ -27,6 +27,36 @@ class DirectPrinterTest {
     private fun report(extra: String = "") = """{"print":{"command":"push_status","gcode_state":"RUNNING","mc_percent":12${extra}},"info":{"module":[{"name":"ota","sw_ver":"1.2.3"}]}}"""
     private suspend fun DirectPrinter.command(service: String, vararg fields: Pair<String, String>) = post("/api/services/$service", buildJsonObject { fields.forEach { (k,v) -> put(k,v) } }.toString())
 
+    @Test fun cameraRequestsShareTheLiveStreamAndStopReleasesIt() = runBlocking<Unit> {
+        val starts=kotlinx.coroutines.flow.MutableStateFlow(0)
+        val closed=CompletableDeferred<Unit>()
+        val frame=byteArrayOf(1,2,3)
+        val printer=DirectPrinter(config.copy(model="P1S"),jpegStream={ received,onFrame ->
+            assertEquals(config.serial,received.serial)
+            starts.value += 1; onFrame(frame)
+            try { awaitCancellation() } finally { closed.complete(Unit) }
+        })
+        try {
+            assertContentEquals(frame,withTimeout(3000) { printer.bytes("/api/camera_proxy/live") })
+            assertContentEquals(frame,printer.bytes("/api/camera_proxy/live"))
+            assertEquals(1,starts.value)
+        } finally { printer.stop() }
+        withTimeout(3000) { closed.await() }
+    }
+
+    @Test fun cameraFailureIsRetriedAndNeverReturnsAnInventedImage() = runBlocking<Unit> {
+        val starts=kotlinx.coroutines.flow.MutableStateFlow(0)
+        val printer=DirectPrinter(config.copy(model="P1S"),jpegStream={ _,_ ->
+            starts.value += 1; throw ApiException("Camera offline")
+        })
+        try {
+            assertEquals("The camera didn't send a picture",withTimeout(15_000) {
+                assertFailsWith<ApiException> { printer.bytes("/api/camera_proxy/live") }.message
+            })
+            assertTrue(starts.value>=2)
+        } finally { printer.stop() }
+    }
+
     @Test fun registryStateAndCameraAreConsistent() = runBlocking<Unit> {
         val link = Link(report())
         val printer = DirectPrinter(config, true, { link })

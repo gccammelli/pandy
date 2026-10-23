@@ -325,6 +325,7 @@ class DirectPrinter(
     private val strict: Boolean = false,
     private val linkFactory: (LanConfig) -> LanLink = ::lanLink,
     private val storageFactory: (LanConfig) -> PrinterStorage = ::printerStorage,
+    private val jpegStream: suspend (LanConfig, (ByteArray) -> Unit) -> Unit = ::lanJpegStream,
 ) : HaBackend {
     override val base = "lan://${config.ip}"
     private var report = JsonObject(emptyMap())
@@ -530,7 +531,10 @@ class DirectPrinter(
         }
     }
 
-    fun stop() { running?.cancel(); running = null }
+    fun stop() {
+        running?.cancel(); running = null
+        camJob?.cancel(); camJob = null; frame = null
+    }
 
     override suspend fun ws(commands: List<JsonObject>): List<JsonElement?> {
         ensureRunning()
@@ -711,7 +715,7 @@ class DirectPrinter(
             // Close the camera once nobody has asked for a picture for 15 s.
             launch { while (isActive) { delay(5_000); if (Clock.System.now().toEpochMilliseconds() - lastAsked > 15_000) job.cancel() } }
             while (isActive) {
-                runCatching { lanJpegStream(config) { frame = it } }
+                runCatching { jpegStream(config) { frame = it } }
                 delay(2_000)
             }
         }
