@@ -15,4 +15,11 @@ class DisplayContractsTest {
         assertEquals("High flow hardened steel",nozzleType("high_flow_hardened_steel"))
         assertEquals("",nozzleType(null)); assertEquals("New alloy",nozzleType("new_alloy"))
     }
+    @Test fun firmwarePreparationStagesHaveReadableLabels() {
+        for ((stage,label) in listOf(2 to "Heatbed preheating",9 to "Scanning bed surface",10 to "Inspecting first layer",
+            11 to "Identifying build plate type",14 to "Cleaning nozzle tip",13 to "Homing toolhead",4 to "Changing filament")) {
+            assertEquals(label,stageText(stageName(stage)))
+        }
+    }
+
 }

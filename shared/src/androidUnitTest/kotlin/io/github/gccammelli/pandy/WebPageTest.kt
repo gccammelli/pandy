@@ -36,6 +36,8 @@ class WebPageTest {
         compose.runOnIdle {
             val web = views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
             val shadow = shadowOf(web)
+            shadow.webChromeClient.onConsoleMessage(android.webkit.ConsoleMessage("pandy fixture diagnostic","test",1,android.webkit.ConsoleMessage.MessageLevel.LOG))
+            assertFalse(shadow.webChromeClient.onConsoleMessage(android.webkit.ConsoleMessage("ordinary page message","test",2,android.webkit.ConsoleMessage.MessageLevel.LOG)))
             val client = shadow.webViewClient
             client.onPageFinished(web,"https://makerworld.com/en/models")
             client.doUpdateVisitedHistory(web,"https://makerworld.com/en/models",false)
@@ -81,10 +83,14 @@ class WebPageTest {
             native.invoke(bridge,"bad.3mf","https://attacker.example/test.3mf",token)
             assertTrue(downloads.isEmpty())
             blob.invoke(bridge,"test.3mf","AQID",token)
+            native.invoke(bridge,"native.3mf","https://cdn.bblmw.com/native.3mf",token)
+            val error=bridge.javaClass.getDeclaredMethod("problem",String::class.java,String::class.java).apply { isAccessible=true }
+            error.invoke(bridge,"Test download failed",token)
         }
         compose.runOnIdle {
-            assertEquals(1,downloads.size)
-            assertArrayEquals(byteArrayOf(1,2,3),downloads.single().bytes)
+            assertEquals(2,downloads.size)
+            assertArrayEquals(byteArrayOf(1,2,3),downloads.first().bytes)
+            assertEquals("https://cdn.bblmw.com/native.3mf",downloads.last().url)
         }
     }
     @Test fun chunkedPrintTransferCompletesOnceAndCannotSurvivePageNavigation() {
