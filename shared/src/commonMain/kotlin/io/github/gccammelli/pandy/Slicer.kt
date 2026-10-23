@@ -30,7 +30,7 @@ import kotlin.math.roundToInt
 const val SLICER_PORT = 8737
 private const val MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 
-private val http = HttpClient {
+private val slicerHttp = HttpClient {
     install(HttpTimeout) { connectTimeoutMillis = 15_000; requestTimeoutMillis = 20 * 60_000; socketTimeoutMillis = 20 * 60_000 }
     expectSuccess = false
 }.localOnlyCleartext()
@@ -42,7 +42,11 @@ data class SlicedPlate(val index: Int, val seconds: Int, val grams: Double, val 
  * Pandy Slicer, reached at [url] (Docker, or any slicer with an address), or through Home Assistant [ha]: its add-on's
  * ingress path on Home Assistant's own address, so Pandy needs only its Home Assistant connection.
  */
-class SlicerClient(url: String?, private val token: String?, private val ha: HaBackend? = null) {
+class SlicerClient(
+    url: String?, private val token: String?, private val ha: HaBackend? = null,
+    private val http: HttpClient = slicerHttp,
+    private val storageFactory: (LanConfig) -> PrinterStorage = ::printerStorage,
+) {
     val base = url?.trim()?.trimEnd('/')?.let { if ("://" in it) it else "http://$it" }?.let { if (Regex(""":\d+$""").containsMatchIn(it.substringAfter("://"))) it else "$it:$SLICER_PORT" }
     val viaHa get() = ha != null && base == null
 
@@ -83,7 +87,7 @@ class SlicerClient(url: String?, private val token: String?, private val ha: HaB
             val sliced = r.readRawBytes()
             val info = runCatching { json.parseToJsonElement(r.headers["X-Pandy-Result"].orEmpty()).jsonObject }.getOrNull()
             val file = slicedFileName(r.headers[HttpHeaders.ContentDisposition])
-            printerStorage(to).write("/cache/$file", sliced)
+            storageFactory(to).write("/cache/$file", sliced)
             return "cache/$file" to info?.let { firstPlate(it, plate) }
         }
         val r = http.post("$at/slice?$query&upload=1") {
@@ -131,7 +135,7 @@ private fun JsonArray?.orEmpty() = this ?: JsonArray(emptyList())
 
 /** Fetches a MakerWorld file (with the web view's cookies, for files behind the sign-in). */
 suspend fun download(url: String, cookies: String?): ByteArray {
-    return http.prepareGet(url) { if (!cookies.isNullOrBlank()) header("Cookie", cookies) }.execute { r ->
+    return slicerHttp.prepareGet(url) { if (!cookies.isNullOrBlank()) header("Cookie", cookies) }.execute { r ->
         if (r.status.value !in 200..299) throw ApiException("The download failed (HTTP ${r.status.value})")
         r.headers[HttpHeaders.ContentLength]?.toLongOrNull()?.takeIf { it > MAX_DOWNLOAD_BYTES }?.let {
             throw ApiException("The download is too large (64 MiB maximum)")

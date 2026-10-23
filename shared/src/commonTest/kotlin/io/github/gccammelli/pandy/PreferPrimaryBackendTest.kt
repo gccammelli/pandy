@@ -12,15 +12,18 @@ import kotlin.test.assertFailsWith
 
 class PreferPrimaryBackendTest {
     private class Backend(override val base: String) : HaBackend {
+        var failPost = false
+        var failRead: Exception? = null
         var failWs = false
         var failStream = false
         var wsCalls = 0
         var streamCalls = 0
         var postCalls = 0
 
-        override suspend fun get(path: String) = base
+        override suspend fun get(path: String): String { failRead?.let { throw it }; return base }
         override suspend fun post(path: String, body: String): String {
             postCalls++
+            if(failPost) error("Connection dropped after sending")
             return base
         }
         override suspend fun bytes(path: String) = base.encodeToByteArray()
@@ -62,4 +65,26 @@ class PreferPrimaryBackendTest {
         backend.stream(buildJsonObject {}) {}
         assertEquals(1, remote.streamCalls)
     }
+    @Test fun failedCommandsAreNeverAutomaticallySentTwice() = runTest {
+        val local = Backend("lan://printer").apply { failPost=true }
+        val remote = Backend("https://ha.example")
+        val backend = PreferPrimaryBackend(local,remote)
+        assertFailsWith<IllegalStateException> { backend.post("/api/services/button/press","{}") }
+        assertEquals(1,local.postCalls); assertEquals(0,remote.postCalls)
+        assertFalse(backend.usingPrimary)
+    }
+
+    @Test fun unavailableLocalReadFallsBackButUnsupportedEndpointDoesNotSwitchControls() = runTest {
+        val local = Backend("lan://printer")
+        val remote = Backend("https://ha.example")
+        val backend = PreferPrimaryBackend(local,remote)
+        local.failRead=ApiException(DirectPrinter.NEEDS_HA)
+        assertEquals("https://ha.example",backend.get("/api/ha-only"))
+        kotlin.test.assertTrue(backend.usingPrimary)
+        local.failRead=ApiException("Printer offline")
+        assertEquals("https://ha.example",backend.get("/api/config"))
+        assertFalse(backend.usingPrimary)
+        kotlin.test.assertContentEquals("https://ha.example".encodeToByteArray(),backend.bytes("/image"))
+    }
+
 }

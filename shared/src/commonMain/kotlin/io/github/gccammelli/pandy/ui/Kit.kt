@@ -46,11 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -121,19 +117,6 @@ fun Page(title: String, onBack: (() -> Unit)?, bg: Color = C.Bg, action: (@Compo
             if (onBack != null) BackChevron(onBack, Modifier.align(Alignment.CenterStart))
             T(title, 18.sp, weight = FontWeight.Medium, modifier = Modifier.align(Alignment.Center).padding(horizontal = 56.dp), align = TextAlign.Center)
             if (action != null) Box(Modifier.align(Alignment.CenterEnd).padding(end = 12.dp)) { action() }
-        }
-        Column(Modifier.weight(1f).fillMaxWidth(), content = content)
-        if (bottom != null) bottom()
-    }
-}
-
-/** Back chevron plus a large bold title under it ("Schedule", "Settings", "Logs"). */
-@Composable
-fun BigTitlePage(title: String, onBack: () -> Unit, bg: Color = C.Bg, bottom: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().background(bg)) {
-        Column(Modifier.fillMaxWidth().background(C.Card).statusBarsPadding()) {
-            Box(Modifier.height(56.dp)) { BackChevron(onBack, Modifier.align(Alignment.CenterStart)) }
-            T(title, 32.sp, weight = FontWeight.Bold, modifier = Modifier.padding(start = 26.dp, bottom = 14.dp))
         }
         Column(Modifier.weight(1f).fillMaxWidth(), content = content)
         if (bottom != null) bottom()
@@ -218,25 +201,8 @@ fun Bar(fraction: Float, color: Color, modifier: Modifier = Modifier, track: Col
         Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height).clip(CircleShape).background(color))
     }
 
-/** The open ring gauge (Hydration History / Water Intake): 270° arc with a gap at the bottom. */
-@Composable
-fun Ring(fraction: Float, color: Color, modifier: Modifier, stroke: Dp = 7.dp, track: Color = Color.Transparent, content: @Composable () -> Unit = {}) =
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            val w = stroke.toPx()
-            val tl = Offset(w / 2, w / 2)
-            val sz = Size(size.width - w, size.height - w)
-            if (track != Color.Transparent) drawArc(track, 135f, 270f, false, tl, sz, style = Stroke(w, cap = StrokeCap.Round))
-            drawArc(color, 135f, 270f * fraction.coerceIn(0f, 1f), false, tl, sz, style = Stroke(w, cap = StrokeCap.Round))
-        }
-        content()
-    }
-
 @Composable
 fun SmallIcon(v: ImageVector, tint: Color = C.Text, size: Dp = 20.dp) = Icon(v, null, Modifier.size(size), tint = tint)
-
-@Composable
-fun RowScope.Fill() = Spacer(Modifier.weight(1f))
 
 @Composable
 fun Radio(selected: Boolean, label: String, enabled: Boolean = true, onClick: () -> Unit) =

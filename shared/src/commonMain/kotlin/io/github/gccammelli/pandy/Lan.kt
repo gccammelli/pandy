@@ -320,7 +320,12 @@ fun amsUserSettingCommand(sequenceId: String, amsId: Int, startup: Boolean, inse
  * [strict]: fail if the printer doesn't answer (when it's being set up); otherwise an unreachable printer just shows as
  * offline while the connection keeps retrying, as Handy shows it.
  */
-class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) : HaBackend {
+class DirectPrinter(
+    val config: LanConfig,
+    private val strict: Boolean = false,
+    private val linkFactory: (LanConfig) -> LanLink = ::lanLink,
+    private val storageFactory: (LanConfig) -> PrinterStorage = ::printerStorage,
+) : HaBackend {
     override val base = "lan://${config.ip}"
     private var report = JsonObject(emptyMap())
     private var rows: List<LanRow> = emptyList()
@@ -333,7 +338,7 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
 
     // ---------- The printer's storage (FTPS) ----------
 
-    private val storage by lazy { printerStorage(config) }
+    private val storage by lazy { storageFactory(config) }
     private var job: LanJob? = null
     private var jobLoading: String? = null
     private var jobMissAt = 0L
@@ -501,7 +506,7 @@ class DirectPrinter(val config: LanConfig, private val strict: Boolean = false) 
         running = scope.launch {
             var wait = 1_000L
             while (isActive) {
-                val l = lanLink(config)
+                val l = linkFactory(config)
                 link = l
                 try {
                     l.run(onConnected = {

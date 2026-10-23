@@ -46,10 +46,14 @@ actual suspend fun cacheFile(name: String, bytes: ByteArray): String = withConte
  * offset and length), STOR. Data connections reuse the control connection's TLS session: they are wrapped as if to
  * port 990 so the session cache resumes it. One operation at a time per printer.
  */
-private class FtpsStorage(private val c: LanConfig) : PrinterStorage {
+internal class FtpsStorage(
+    private val c: LanConfig,
+    private val socketFactory: suspend (String) -> SSLSocketFactory = BambuTls::factory,
+    private val controlPort: Int = 990,
+) : PrinterStorage {
     private val lock = locks.getOrPut(c.serial) { Mutex() }
 
-    private class Session(val sock: SSLSocket, val factory: SSLSocketFactory, val host: String) {
+    private class Session(val sock: SSLSocket, val factory: SSLSocketFactory, val host: String, val controlPort: Int) {
         val r = BufferedReader(InputStreamReader(sock.inputStream, Charsets.UTF_8))
         val w = sock.outputStream
 
@@ -73,21 +77,21 @@ private class FtpsStorage(private val c: LanConfig) : PrinterStorage {
             val pasv = cmd("PASV")
             val n = Regex("""(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)""").find(pasv)!!.groupValues.drop(1).map { it.toInt() }
             // Android's TLS finds the session to resume by the socket's own port, so this one reports the control port.
-            val plain = object : Socket() { override fun getPort() = 990 }.apply { connect(InetSocketAddress(host, n[4] * 256 + n[5]), 10_000); soTimeout = 30_000 }
+            val plain = object : Socket() { override fun getPort() = controlPort }.apply { connect(InetSocketAddress(host, n[4] * 256 + n[5]), 10_000); soTimeout = 30_000 }
             if (rest > 0) cmd("REST $rest", 300..399)
             cmd(command, 100..199)
-            return (factory.createSocket(plain, host, 990, true) as SSLSocket).apply { enabledProtocols = arrayOf("TLSv1.2"); tickets(); soTimeout = 30_000; startHandshake() }
+            return (factory.createSocket(plain, host, controlPort, true) as SSLSocket).apply { enabledProtocols = arrayOf("TLSv1.2"); tickets(); soTimeout = 30_000; startHandshake() }
         }
     }
 
     private suspend fun <T> session(block: Session.() -> T): T = lock.withLock {
         withContext(Dispatchers.IO) {
-            val f = BambuTls.factory(c.serial)
+            val f = socketFactory(c.serial)
             // Connected with host and port known, so the session is cached under ip:990 for the data connections to resume.
             // TLS 1.2: its session-ID resumption is what the printer's FTP server checks reliably.
-            val sock = (Socket().apply { connect(InetSocketAddress(c.ip, 990), 10_000) }.let { f.createSocket(it, c.ip, 990, true) } as SSLSocket).apply { enabledProtocols = arrayOf("TLSv1.2"); tickets(); soTimeout = 30_000; startHandshake() }
+            val sock = (Socket().apply { connect(InetSocketAddress(c.ip, controlPort), 10_000) }.let { f.createSocket(it, c.ip, controlPort, true) } as SSLSocket).apply { enabledProtocols = arrayOf("TLSv1.2"); tickets(); soTimeout = 30_000; startHandshake() }
             sock.use {
-                val s = Session(sock, f, c.ip)
+                val s = Session(sock, f, c.ip, controlPort)
                 s.reply()
                 s.cmd("USER bblp", 300..399)
                 s.cmd("PASS ${c.code}", 200..299)
