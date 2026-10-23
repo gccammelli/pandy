@@ -76,8 +76,8 @@ object Repo {
     }
 
     /** Direct mode: checks the printer answers with this access code, then saves it. */
-    suspend fun connectPrinter(c: LanConfig) {
-        val d = DirectPrinter(c, strict = true)
+    suspend fun connectPrinter(c: LanConfig, createPrinter: (LanConfig) -> DirectPrinter = { DirectPrinter(it, strict = true) }) {
+        val d = createPrinter(c)
         try { withContext(Dispatchers.Default) { d.printers() } } catch (e: Exception) { d.stop(); throw e }
         val remote = extras as? HaHttp
         stop()

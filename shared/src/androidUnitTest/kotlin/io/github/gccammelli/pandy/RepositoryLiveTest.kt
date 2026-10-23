@@ -94,4 +94,33 @@ class RepositoryLiveTest {
             } finally { Repo.stop() }
         }
     }
+    @Test fun directPrinterSetupValidatesBeforeSavingAndRefusesBadCredentials() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        init(FakeHomeAssistant())
+        val store=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
+        store.settings.putString("demo","false")
+        val config=LanConfig("192.0.2.1","SETUP-TEST","test-code","P1S","Test printer")
+        fun printer(fail: Boolean) = DirectPrinter(config,true,{ object : LanLink {
+            override suspend fun run(onConnected: () -> Unit,onMessage: (String)->Unit) {
+                if(fail) throw ApiException("Access code rejected")
+                onConnected(); onMessage("""{"print":{"command":"push_status","gcode_state":"IDLE"}}""")
+                awaitCancellation()
+            }
+            override fun publish(payload: String)=Unit
+            override fun close()=Unit
+        } })
+        try {
+            // A malformed address must fail through the production factory without saving setup.
+            assertFailsWith<ApiException> { Repo.connectPrinter(config.copy(ip="127.0.0.1:invalid")) }
+            assertNull(store.settings.getString("lan_serial"))
+            assertFailsWith<ApiException> { Repo.connectPrinter(config) { printer(true) } }
+            assertNull(store.settings.getString("lan_serial"))
+            Repo.connectPrinter(config) { printer(false) }
+            assertEquals("lan",store.settings.getString("mode"))
+            assertEquals(config.serial,store.settings.getString("lan_serial"))
+            assertEquals(config.ip,store.settings.getString("lan_ip"))
+            assertTrue(Repo.connected)
+        } finally { Repo.logout(); Dispatchers.resetMain() }
+    }
+
 }

@@ -139,4 +139,18 @@ class DirectPrinterTest {
         } finally { printer.stop() }
     }
 
+    @Test fun physicalAmsSlotsUseAddressedProtocolCommands() = runBlocking<Unit> {
+        val ams=""","ams":{"ams":[{"id":"0","tray":[{"id":"1","tray_type":"PLA"}]},{"id":"128","tray":[{"id":"0","tray_type":"PETG"}]}]},"vt_tray":{"tray_type":"PLA"},"chamber_target_temper":35"""
+        val link=Link(report(ams));val printer=DirectPrinter(config,true,{link})
+        try {
+            val entities=registry(printer)
+            val trays=entities.map { it.jsonObject }.filter { it.s("translation_key") in listOf("tray","external_spool") }
+            for ((suffix,target) in listOf("AMS_1_tray_2" to 1,"AMS_2_tray_1" to 128,"external_spool" to 254)) {
+                val row=trays.first { it.s("unique_id")!!.endsWith(suffix) }
+                printer.command("bambu_lab/load_filament","entity_id" to row.s("entity_id")!!)
+                assertEquals(target.toString(),link.sent.last().o("print")?.s("target"))
+            }
+        } finally { printer.stop() }
+    }
+
 }

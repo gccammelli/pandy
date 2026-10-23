@@ -42,6 +42,34 @@ class LanTest {
         return Printer(info, ents.associate { it.second.id to it.second })
     }
 
+    @Test fun newerAdvertisementsAndSerialFallbackKeepTheirProductNames() {
+        for ((code, serial, expected) in listOf(
+            Triple("N7","22E123","P2S"), Triple("N2S","039123","A1"),
+            Triple("N1","030123","A1 mini"), Triple("O1D","094123","H2D"),
+            Triple("O1S","239123","H2S"), Triple("C13","03W123","X1E"),
+            Triple("C11","01S123","P1P"), Triple("C12","01P123","P1S"),
+            Triple("BL-P001","00M123","X1C"), Triple("BL-P002","00W123","X1"),
+        )) {
+            assertEquals(expected, modelName(code))
+            assertEquals(expected, modelName(null,serial))
+        }
+        assertEquals("future-model",modelName("future-model"))
+        assertEquals("Bambu printer",modelName(null,"future-serial"))
+    }
+
+    @Test fun stageAndErrorReportsRemainVisibleInThePrinterModel() {
+        for ((stage,expected) in listOf(
+            6 to "paused_filament_runout",11 to "identifying_build_plate_type",14 to "cleaning_nozzle_tip",
+            20 to "paused_nozzle_temperature_malfunction",22 to "filament_unloading",26 to "paused_ams_lost",
+            49 to "heating_chamber",99 to "stage_99",
+        )) {
+            val source=json.parseToJsonElement("""{"print":{"stg_cur":$stage,"print_error":65537,"gcode_state":"PAUSE"}}""").jsonObject
+            val p=printer(source)
+            assertEquals(expected,p.stage)
+            assertEquals("Print error 0001-0001",p.printError)
+        }
+    }
+
     @Test fun printing() {
         val p = printer()
         assertTrue(p.online); assertTrue(p.printing)

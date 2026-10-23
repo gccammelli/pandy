@@ -255,6 +255,7 @@ class ScreenTest {
                 fun put(name: String, text: String) {
                     zip.putNextEntry(java.util.zip.ZipEntry(name)); zip.write(text.toByteArray()); zip.closeEntry()
                 }
+                put("Metadata/slice_info.config", """<config><plate><metadata key="index" value="1"/><metadata key="prediction" value="3900"/><metadata key="weight" value="12.5"/><object identify_id="1"/></plate><plate><metadata key="index" value="2"/><metadata key="prediction" value="120"/><metadata key="weight" value="2"/><object identify_id="2"/><object identify_id="3"/></plate></config>""")
                 put("Metadata/project_settings.config", """{"printer_model":"Bambu Lab X1 Carbon","filament_type":["PLA","PETG"],"filament_colour":["#FFFFFF","#00AE42"]}""")
                 put("Metadata/model_settings.config", """<config><plate><metadata key="plater_id" value="1"/><metadata key="plater_name" value="Body"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>""")
                 put("3D/3dmodel.model", """<model><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2" p1="1"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>""")
@@ -691,6 +692,56 @@ class ScreenTest {
         compose.waitUntil(5000) { compose.waitForIdle(); savedImages.isNotEmpty() }
         val expected=java.io.File("src/commonMain/composeResources/files/demo_camera.jpg").readBytes()
         org.junit.Assert.assertArrayEquals(expected,savedImages.single())
+    }
+
+    @Test fun plateSelectionShowsTimeMaterialAndPartCountsAndSupportsPreviewGestures() {
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) {
+            AppTheme { PrintModelSheet(WebDownload(null,"Two plates.3mf",null,modelBytes(),true),{}) }
+        } }
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("◷ 1.1h").performScrollTo().assertExists()
+        compose.onNodeWithText("◎ 12.5g").assertExists()
+        compose.onNodeWithText("Plate 2").performScrollTo().performClick()
+        compose.onNodeWithText("◷ 2 min").assertExists()
+        compose.onNodeWithText("◎ 2g").assertExists()
+        compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithText("Model colors").assertExists()
+        compose.onRoot().performTouchInput { swipe(androidx.compose.ui.geometry.Offset(width*.4f,height*.4f),androidx.compose.ui.geometry.Offset(width*.6f,height*.5f),300) }
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Prepare to Print").assertExists()
+    }
+
+    @Test fun slicerAddOnFailureDoesNotPersistAnUnverifiedConfiguration() {
+        val port=java.net.ServerSocket(0).use { it.localPort }
+        Repo.setSlicer(null,null)
+        Repo::class.java.getDeclaredField("extras").apply { isAccessible=true }.set(Repo,HaHttp("http://127.0.0.1:$port","test-only"))
+        show("Slicer") { SlicerScreen() }
+        compose.onNodeWithText("Slicer elsewhere (Docker)").performScrollTo().assertExists()
+        compose.onNodeWithText("Check the add-on").performScrollTo().performClick()
+        compose.waitUntil(10000) { compose.waitForIdle(); compose.onAllNodesWithText("Checking…").fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithText("Check the add-on").assertExists()
+        org.junit.Assert.assertNull(Repo.slicerUrl)
+        compose.onNodeWithText("Connected:",substring=true).assertDoesNotExist()
+    }
+
+    @Test fun motionPadDistinguishesHomeFineStepsAndEachOuterDirection() {
+        val idle=Printer(printer.info,snapshot.mapValues { (_,e) -> if(e.id.contains("print_status")) Entity(e.id,"idle",e.attrs) else e })
+        org.junit.Assert.assertFalse(idle.printing)
+        show("XYZ") { MotionScreen(idle) }
+        val label=compose.onNodeWithText("Toolhead").fetchSemanticsNode().boundsInRoot
+        val density=compose.activity.resources.displayMetrics.density
+        val center=androidx.compose.ui.geometry.Offset(label.center.x,label.bottom+115*density)
+        for((dx,dy) in listOf(0 to 0,80 to 0,0 to -80,-80 to 0,0 to 80,45 to 0)) {
+            compose.onRoot().performTouchInput { click(center+androidx.compose.ui.geometry.Offset(dx*density,dy*density)) }
+            compose.waitForIdle()
+        }
+        compose.waitUntil(5000) { commands.count { it.first.endsWith("/move_axis") }>=6 }
+        val moves=commands.filter { it.first.endsWith("/move_axis") }.map { json.parseToJsonElement(it.second).jsonObject }
+        org.junit.Assert.assertTrue(moves.any { it.s("axis")=="Home" })
+        for((axis,mm) in listOf("X" to 10,"Y" to 10,"X" to -10,"Y" to -10,"X" to 1))
+            org.junit.Assert.assertTrue(moves.any { it.s("axis")==axis && it.s("distance")==mm.toString() })
     }
 
 }
