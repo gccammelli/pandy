@@ -32,7 +32,7 @@ jobs:
       - name: Test
         run: |
           python3 .github/scripts/public_issue_patch.py --self-test
-          ./gradlew testDebugUnitTest :shared:koverXmlReportDebug
+          ./gradlew testDebugUnitTest :shared:koverXmlReportDebug :shared:koverVerifyDebug
 
       - name: Upload coverage
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

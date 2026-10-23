@@ -55,28 +55,35 @@ object BambuTls {
             val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(ks) }
             (tmf.trustManagers.first { it is X509TrustManager } as X509TrustManager).also { trust = it }
         }
-        val tm = object : X509TrustManager {
-            override fun getAcceptedIssuers(): Array<X509Certificate> = base.acceptedIssuers
-            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = base.checkClientTrusted(chain, authType)
-            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
-                base.checkServerTrusted(chain, authType)
-                val cn = Regex("""CN=([^,]+)""").find(chain[0].subjectX500Principal.name)?.groupValues?.get(1)
-                if (!cn.equals(serial, ignoreCase = true)) throw CertificateException("This printer's certificate is for $cn, not $serial")
-            }
-        }
+        val tm = serialTrustManager(base, serial)
         return SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), null) }.also { sslContexts[serial] = it }.socketFactory
     }
 }
 
+internal fun serialTrustManager(base: X509TrustManager, serial: String): X509TrustManager = object : X509TrustManager {
+    override fun getAcceptedIssuers(): Array<X509Certificate> = base.acceptedIssuers
+    override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = base.checkClientTrusted(chain, authType)
+    override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+        base.checkServerTrusted(chain, authType)
+        val cn = Regex("""CN=([^,]+)""").find(chain[0].subjectX500Principal.name)?.groupValues?.get(1)
+        if (!cn.equals(serial, ignoreCase = true)) throw CertificateException("This printer's certificate is for $cn, not $serial")
+    }
+}
+
+
 actual fun lanLink(c: LanConfig): LanLink = PahoLink(c)
 
-private class PahoLink(private val c: LanConfig) : LanLink {
+internal class PahoLink(
+    private val c: LanConfig,
+    private val socketFactory: suspend (String) -> SSLSocketFactory = BambuTls::factory,
+    private val port: Int = 8883,
+) : LanLink {
     private var client: MqttClient? = null
 
     override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) {
-        val factory = BambuTls.factory(c.serial)
+        val factory = socketFactory(c.serial)
         withContext(Dispatchers.IO) {
-            val cl = MqttClient("ssl://${c.ip}:8883", "pandy-${System.currentTimeMillis()}", MemoryPersistence())
+            val cl = MqttClient("ssl://${c.ip}:$port", "pandy-${System.currentTimeMillis()}", MemoryPersistence())
             client = cl
             suspendCancellableCoroutine { cont ->
                 cl.setCallback(object : MqttCallback {
@@ -116,10 +123,14 @@ private class PahoLink(private val c: LanConfig) : LanLink {
 /** P1/A1 camera: TLS on port 6000, an 80-byte login, then frames of a 16-byte header (size, little-endian) and a JPEG. */
 actual suspend fun lanJpegStream(c: LanConfig, onFrame: (ByteArray) -> Unit) {
     val factory = BambuTls.factory(c.serial)
+    readLanJpegStream(c, factory, 6000, onFrame)
+}
+
+internal suspend fun readLanJpegStream(c: LanConfig, factory: SSLSocketFactory, port: Int, onFrame: (ByteArray) -> Unit) {
     withContext(Dispatchers.IO) {
         val sock = factory.createSocket() as SSLSocket
         try {
-            sock.connect(InetSocketAddress(c.ip, 6000), 10_000)
+            sock.connect(InetSocketAddress(c.ip, port), 10_000)
             sock.soTimeout = 15_000
             val auth = ByteBuffer.allocate(80).order(ByteOrder.LITTLE_ENDIAN).putInt(0x40).putInt(0x3000).putInt(0).putInt(0)
             auth.put("bblp".toByteArray().copyOf(32)).put(c.code.toByteArray().copyOf(32))
@@ -140,12 +151,14 @@ actual suspend fun lanJpegStream(c: LanConfig, onFrame: (ByteArray) -> Unit) {
 }
 
 /** Bambu printers announce themselves every few seconds (SSDP NOTIFY to 239.255.255.250 on port 2021). */
-actual suspend fun discoverPrinters(millis: Long): List<FoundPrinter> = withContext(Dispatchers.IO) {
+actual suspend fun discoverPrinters(millis: Long): List<FoundPrinter> = receivePrinterAnnouncements(millis) { MulticastSocket(2021) }
+
+internal suspend fun receivePrinterAnnouncements(millis: Long, openSocket: () -> MulticastSocket): List<FoundPrinter> = withContext(Dispatchers.IO) {
     val found = linkedMapOf<String, FoundPrinter>()
     val lock = (appContext?.applicationContext?.getSystemService(android.content.Context.WIFI_SERVICE) as? android.net.wifi.WifiManager)
         ?.createMulticastLock("pandy-discovery")?.apply { setReferenceCounted(false); acquire() }
     try {
-        MulticastSocket(2021).use { s ->
+        openSocket().use { s ->
             runCatching { s.joinGroup(java.net.InetAddress.getByName("239.255.255.250")) }
             s.soTimeout = 500
             val end = System.currentTimeMillis() + millis

@@ -50,6 +50,7 @@ kotlin {
             implementation(libs.ktor.client.darwin)
         }
         commonTest.dependencies {
+            implementation(libs.ktor.client.mock)
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.test)
         }
@@ -74,4 +75,24 @@ android {
 
 compose.resources {
     packageOfResClass = "io.github.gccammelli.pandy.res"
+}
+
+// Robolectric's Conscrypt test provider reads the peer hostname through JDK reflection.
+tasks.withType<Test>().configureEach {
+    jvmArgs("--add-opens=java.base/java.net=ALL-UNNAMED")
+}
+
+// Keep the full debug application above the agreed line-coverage floor.
+kover {
+    reports {
+        filters {
+            excludes {
+                // Compose-generated accessors/collectors; no handwritten code uses this package.
+                packages("io.github.gccammelli.pandy.res")
+            }
+        }
+        variant("debug") {
+            verify { rule { minBound(90) } }
+        }
+    }
 }

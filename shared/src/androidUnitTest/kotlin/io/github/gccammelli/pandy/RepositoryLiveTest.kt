@@ -1,0 +1,97 @@
+package io.github.gccammelli.pandy
+
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.*
+import kotlinx.serialization.json.*
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import kotlin.test.*
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+class RepositoryLiveTest {
+    private fun init(backend: HaBackend) {
+        val values = mutableMapOf<String,String>()
+        Repo.init(PlatformStorage(object : KeyValue {
+            override fun getString(key: String) = values[key]
+            override fun putString(key: String,value: String?) { if(value==null) values.remove(key) else values[key]=value }
+            override fun clear() = values.clear()
+        },object : SecretStore {
+            override fun get(key: String): String? = null
+            override fun set(key: String,value: String?) = Unit
+        },object : AppFiles {
+            override fun read(name: String): ByteArray? = null
+            override fun write(name: String,bytes: ByteArray) = Unit
+            override fun delete(name: String) = Unit
+        }))
+        Repo.stop(); Repo.state.value=UiState(on=true)
+        for (field in listOf("ha","extras")) Repo::class.java.getDeclaredField(field).apply { isAccessible=true }.set(Repo,backend)
+    }
+
+    @Test fun liveDemoUpdatesStateAndStopsWithoutARealPrinter() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            val demo = FakeHomeAssistant()
+            val posted = mutableListOf<Pair<String,JsonObject>>()
+            init(object : HaBackend by demo {
+                override suspend fun post(path: String,body: String): String {
+                    posted += path to json.parseToJsonElement(body).jsonObject
+                    return demo.post(path,body)
+                }
+            })
+            Repo.start(); Repo.start()
+            val live = withContext(Dispatchers.Default) { withTimeout(5000) { Repo.state.first { it.live && !it.printers.isNullOrEmpty() } } }
+            assertEquals("00M000000000000",live.printers!!.single().serial)
+            assertNull(live.error)
+            val printer = live.printers!!.single()
+            printer.calibrate(3,{}).join()
+            printer.setXcam("spaghetti_detector",true,true,{}).join()
+            printer.setPrintOption("auto_recovery",true,{}).join()
+            printer.setAmsSettings(0,true,false,true,{}).join()
+            assertEquals("3",posted.first().second.s("option"))
+            assertTrue(posted.any { it.second.s("print_halt")=="true" })
+            assertTrue(posted.any { it.second.s("startup_read_option")=="true" })
+            printer.light(true,{}).join(); printer.light(false,{}).join()
+            printer.setSpeed("Silent",{}).join()
+            printer.setTarget("nozzle",180,{}).join()
+            printer.setFan("fan.test",0,{}).join(); printer.setFan("fan.test",75,{}).join()
+            printer.button("pause_printing",{}).join()
+            printer.move("X",10,{}).join(); printer.extrude(false,{}).join()
+            printer.skip(listOf(2,4),{}).join()
+            printer.unload({}).join()
+            printer.load(Spool("sensor.test_tray",1,"Test spool","PLA",0,emptyList(),100,false,false,190,220,"test"),{}).join()
+            val withCamera = Printer(printer.info.copy(ids=printer.info.ids + ("switch.camera" to "switch.test_camera")), emptyMap())
+            withCamera.toggleCamera(true,{}).join(); withCamera.toggleCamera(false,{}).join()
+            assertTrue(posted.any { it.first.endsWith("/set_percentage") && it.second.s("percentage")=="75" })
+            assertTrue(posted.any { it.first.endsWith("/move_axis") && it.second.s("distance")=="10" })
+            assertTrue(posted.any { it.first.endsWith("/skip_objects") && it.second.s("objects")=="2,4" })
+            var missingControl: String? = null
+            Printer(printer.info.copy(ids=emptyMap(),ams=emptyList(),externalDevice=null),emptyMap())
+                .setTarget("bed",60,{ missingControl=it }).join()
+            assertEquals("Home Assistant can't set the bed temperature",missingControl)
+            demo.startPrint(printer,"cache/test.3mf",2,listOf(0),true,true,true,"textured_plate")
+            assertEquals("textured_plate", buildPlateCode("Textured PEI Plate"))
+            var error: String? = null
+            Repo.act({ error=it }) { throw ApiException("Refused action") }.join()
+            assertEquals("Refused action",error)
+            Repo.act { post("/api/services/light/turn_on","{}") }.join()
+            Repo.restart()
+            assertTrue(Repo.connected)
+        } finally { Repo.stop(); Dispatchers.resetMain() }
+    }
+
+    @Test fun authenticationAndConnectionFailuresKeepStateExplicit() = runTest {
+        for (failure in listOf(AuthException("Expired token"),ApiException("Printer unavailable"))) {
+            val demo = FakeHomeAssistant()
+            init(object : HaBackend by demo {
+                override suspend fun ws(commands: List<JsonObject>): List<JsonElement?> = throw failure
+            })
+            try {
+                Repo.start()
+                val state = withContext(Dispatchers.Default) { withTimeout(5000) { Repo.state.first { it.error != null } } }
+                assertFalse(state.live); assertEquals(failure.message,state.error)
+            } finally { Repo.stop() }
+        }
+    }
+}

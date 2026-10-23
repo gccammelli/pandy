@@ -164,7 +164,7 @@ private enum class PreviewScheme { Model, Printer }
  * goes to, Handy's print options; then Pandy Slicer slices it and puts it on the printer, and the print starts.
  */
 @Composable
-fun PrintModelSheet(d: WebDownload, close: () -> Unit, registerBack: (((() -> Unit)?) -> Unit) = {}) {
+fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.gccammelli.pandy.SlicerClient? = Repo.slicer, registerBack: (((() -> Unit)?) -> Unit) = {}) {
     val st by Repo.state.collectAsState()
     val p = st.printer() ?: return close()
     val err = errorToast()
@@ -230,7 +230,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, registerBack: (((() -> Un
     // Home Assistant mode doesn't know the printer's access code; it's asked once, here.
     val savedLan = Repo.lan?.takeIf { it.serial.equals(p.serial, ignoreCase = true) }
     val lan = savedLan ?: if (code.length >= 6) p.state("sensor.ip_address")?.let { LanConfig(it, p.serial, code, p.model) } else null
-    val slicer = Repo.slicer
+    val slicer = slicerClient
 
     fun beginPrint() {
         val bytes = data ?: return
