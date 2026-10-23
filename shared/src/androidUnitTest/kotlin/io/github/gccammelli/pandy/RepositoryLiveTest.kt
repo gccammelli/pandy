@@ -110,6 +110,9 @@ class RepositoryLiveTest {
             override fun close()=Unit
         } })
         try {
+            // A malformed address must fail through the production factory without saving setup.
+            assertFailsWith<ApiException> { Repo.connectPrinter(config.copy(ip="127.0.0.1:invalid")) }
+            assertNull(store.settings.getString("lan_serial"))
             assertFailsWith<ApiException> { Repo.connectPrinter(config) { printer(true) } }
             assertNull(store.settings.getString("lan_serial"))
             Repo.connectPrinter(config) { printer(false) }
