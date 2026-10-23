@@ -1,6 +1,7 @@
 package io.github.gccammelli.pandy
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -13,6 +14,8 @@ import kotlin.test.assertFailsWith
 class PreferPrimaryBackendTest {
     private class Backend(override val base: String) : HaBackend {
         var failPost = false
+        var postFailure: Exception? = null
+        var streamFailure: Exception? = null
         var failRead: Exception? = null
         var failWs = false
         var failStream = false
@@ -23,6 +26,7 @@ class PreferPrimaryBackendTest {
         override suspend fun get(path: String): String { failRead?.let { throw it }; return base }
         override suspend fun post(path: String, body: String): String {
             postCalls++
+            postFailure?.let { throw it }
             if(failPost) error("Connection dropped after sending")
             return base
         }
@@ -34,6 +38,7 @@ class PreferPrimaryBackendTest {
         }
         override suspend fun stream(subscribe: JsonObject, onEvent: (JsonObject) -> Unit) {
             streamCalls++
+            streamFailure?.let { throw it }
             if (failStream) error("offline")
             onEvent(buildJsonObject {})
         }
@@ -85,6 +90,50 @@ class PreferPrimaryBackendTest {
         assertEquals("https://ha.example",backend.get("/api/config"))
         assertFalse(backend.usingPrimary)
         kotlin.test.assertContentEquals("https://ha.example".encodeToByteArray(),backend.bytes("/image"))
+        assertEquals("https://ha.example", backend.get("/api/config"))
+    }
+
+    @Test fun cancellationNeverSwitchesBackendsOrRepeatsCommands() = runTest {
+        val local = Backend("lan://printer")
+        val remote = Backend("https://ha.example")
+        val backend = PreferPrimaryBackend(local, remote)
+        local.failRead = CancellationException("Read cancelled")
+        assertFailsWith<CancellationException> { backend.get("/api/config") }
+        local.postFailure = CancellationException("Write cancelled")
+        assertFailsWith<CancellationException> { backend.post("/api/services/test", "{}") }
+        local.streamFailure = CancellationException("Subscription cancelled")
+        assertFailsWith<CancellationException> { backend.stream(buildJsonObject {}) {} }
+        kotlin.test.assertTrue(backend.usingPrimary)
+        assertEquals(0, remote.postCalls); assertEquals(0, remote.streamCalls)
+    }
+
+    @Test fun unsupportedLocalCommandsUseHaWithoutMovingOtherControlsToHa() = runTest {
+        val local = Backend("lan://printer").apply { postFailure = ApiException(DirectPrinter.NEEDS_HA) }
+        val remote = Backend("https://ha.example")
+        val backend = PreferPrimaryBackend(local, remote)
+        assertEquals(remote.base, backend.post("/api/ha-only", "{}"))
+        kotlin.test.assertTrue(backend.usingPrimary)
+        assertEquals(local.base, backend.get("/api/config"))
+        assertEquals(1, remote.postCalls)
+        local.postFailure = ApiException("Printer refused command")
+        assertFailsWith<ApiException> { backend.post("/api/services/test", "{}") }
+        assertFalse(backend.usingPrimary)
+        assertEquals(1, remote.postCalls)
+    }
+
+    @Test fun availablePrimaryServesEverySupportedTransportWithoutFallback() = runTest {
+        val local = Backend("lan://printer")
+        val remote = Backend("https://ha.example")
+        val backend = PreferPrimaryBackend(local, remote)
+        assertEquals(local.base, backend.base)
+        assertEquals(local.base, backend.get("/api/config"))
+        kotlin.test.assertContentEquals(local.base.encodeToByteArray(), backend.bytes("/image"))
+        assertEquals(local.base, (backend.ws(emptyList()).single() as JsonPrimitive).content)
+        assertEquals(local.base, backend.post("/api/services/test", "{}"))
+        var events = 0
+        backend.stream(buildJsonObject {}) { events++ }
+        assertEquals(1, events); kotlin.test.assertTrue(backend.usingPrimary)
+        assertEquals(0, remote.postCalls); assertEquals(0, remote.streamCalls); assertEquals(0, remote.wsCalls)
     }
 
 }
