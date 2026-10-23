@@ -287,7 +287,7 @@ private fun plateObjectIds(xml: String): Map<Int, Set<Int>> = XML_PLATE.findAll(
     plate to objects
 }.toMap()
 
-private fun identityTransform() = floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f)
+private fun identityTransform() = floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f)
 
 private fun parseTransform(raw: String?): FloatArray {
     val values = raw?.trim()?.split(WHITESPACE)?.mapNotNull(String::toFloatOrNull)

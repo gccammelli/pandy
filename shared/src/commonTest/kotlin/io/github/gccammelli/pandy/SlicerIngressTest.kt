@@ -36,4 +36,25 @@ class SlicerIngressTest {
         assertEquals("Update the Pandy Slicer add-on in Home Assistant", assertFailsWith<ApiException> { Supervisor(entry = null).slicerIngress() }.message)
         assertEquals("Install the Pandy Slicer add-on in Home Assistant", assertFailsWith<ApiException> { Supervisor(slug = "other").slicerIngress() }.message)
     }
+
+    @Test fun missingSupervisorFieldsAndAccessErrorsFailClosed() = runTest {
+        suspend fun check(responses: List<JsonElement?>, expected: String, denied: Boolean = false) {
+            val backend = object : HaBackend by Supervisor() {
+                override suspend fun ws(commands: List<JsonObject>): List<JsonElement?> {
+                    if (denied) throw ApiException("Forbidden")
+                    return if (commands.singleOrNull()?.s("endpoint") == "/addons") responses.take(1)
+                    else responses.drop(1)
+                }
+            }
+            assertEquals(expected,assertFailsWith<ApiException> { backend.slicerIngress() }.message)
+        }
+        val addons=json.parseToJsonElement("""{"addons":[null,{}, {"slug":"pandy_slicer"}]}""")
+        val info=json.parseToJsonElement("""{"state":"started","ingress_entry":"/slicer"}""")
+        check(listOf(null),"Install the Pandy Slicer add-on in Home Assistant")
+        check(listOf(json.parseToJsonElement("{}")),"Install the Pandy Slicer add-on in Home Assistant")
+        check(listOf(addons,null,null),"Start the Pandy Slicer add-on in Home Assistant")
+        check(listOf(addons,info,null),"Home Assistant didn't open a session for the slicer")
+        check(listOf(addons,info,json.parseToJsonElement("{}")),"Home Assistant didn't open a session for the slicer")
+        check(emptyList(),"Pandy's Home Assistant user must be an administrator to use the slicer add-on (Forbidden)",denied=true)
+    }
 }

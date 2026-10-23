@@ -133,8 +133,9 @@ class ScreenTest {
         compose.onAllNodesWithText(title).onFirst().assertIsDisplayed()
         compose.mainClock.advanceTimeBy(500)
         compose.runOnIdle {
-            val view = compose.activity.window.decorView
-            view.draw(Canvas(Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)))
+            android.view.inspector.WindowInspector.getGlobalWindowViews().forEach { view ->
+                if (view.width > 0 && view.height > 0) view.draw(Canvas(Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)))
+            }
         }
     }
 
@@ -345,10 +346,13 @@ class ScreenTest {
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithText("Model colors").assertIsDisplayed()
         compose.runOnIdle {
-            val view = compose.activity.window.decorView
+            val view = android.view.inspector.WindowInspector.getGlobalWindowViews().last()
             val bitmap = Bitmap.createBitmap(view.width,view.height,Bitmap.Config.ARGB_8888)
             view.draw(Canvas(bitmap))
             org.junit.Assert.assertTrue(bitmap.getPixel(view.width/2,view.height/2) != 0)
+            System.getenv("PANDY_PREVIEW_EVIDENCE")?.let { path ->
+                java.io.File(path).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) }
+            }
         }
         compose.onNodeWithText("Printer colors").performClick()
         compose.mainClock.advanceTimeBy(500)

@@ -6,8 +6,15 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 
 class ProjectTest {
+    private fun archive(vararg entries: Pair<String,String>) = ByteArrayOutputStream().also { out ->
+        ZipOutputStream(out).use { z -> entries.forEach { (name, text) ->
+            z.putNextEntry(ZipEntry(name)); z.write(text.toByteArray()); z.closeEntry()
+        } }
+    }.toByteArray()
     private fun project(): ByteArray = ByteArrayOutputStream().also { out ->
         ZipOutputStream(out).use { z ->
             fun put(n: String, b: ByteArray) { z.putNextEntry(ZipEntry(n)); z.write(b); z.closeEntry() }
@@ -77,6 +84,65 @@ class ProjectTest {
         assertEquals(1, p.plates[0].parts)
         assertEquals("0.2 mm layer, 6 walls, 25% infill", p.profileSummary)
     }
+
+    @Test fun rejectsNonProjectsAndKeepsMissingOrMalformedMetadataUnknown() = runTest {
+        for (bytes in listOf(byteArrayOf(),byteArrayOf(1,2,3,4),byteArrayOf(80,1,2,3))) {
+            assertFailsWith<ApiException> { readProject(bytes) }
+        }
+        for (settings in listOf(null,"not json","[]","{}")) {
+            val entries = settings?.let { arrayOf("Metadata/project_settings.config" to it) } ?: emptyArray()
+            val p = readProject(archive(*entries))
+            assertEquals(listOf(ProjectPlate(1,"",null)),p.plates)
+            assertNull(p.printerModel); assertNull(p.profileName); assertNull(p.profileSummary)
+            assertNull(p.mesh); assertEquals(emptyMap(),p.meshes); assertEquals(emptyList(),p.filaments)
+            assertEquals(false,p.sliced)
+        }
+    }
+
+    @Test fun partialSettingsUseNeutralFilamentColoursAndOnlyValidProfileDetails() = runTest {
+        val p = readProject(archive("Metadata/project_settings.config" to """{
+            "printer_model":{},"profile_name":" ","layer_height":"?","wall_loops":"?","sparse_infill_density":"?",
+            "filament_type":[null,{},"PLA","PETG"],"filament_colour":["#FFFFFF"]}"""))
+        assertNull(p.printerModel); assertNull(p.profileName); assertNull(p.profileSummary)
+        assertEquals(listOf("PLA" to "#FFFFFF","PETG" to "#888888"),p.filaments)
+        for (density in listOf("25%","25")) {
+            val named = readProject(archive("Metadata/project_settings.config" to """{"profile_name":"Draft","sparse_infill_density":"$density"}"""))
+            assertEquals("Draft",named.profileName); assertEquals("25% infill",named.profileSummary)
+        }
+    }
+
+    @Test fun sliceInfoDistinguishesUnmatchedPlatesAndSkippedPartsFromMissingMetrics() = runTest {
+        val p=readProject(archive(
+            "Metadata/model_settings.config" to """<config><plate><metadata/><metadata key="plater_id" value="bad"/></plate><plate><metadata key="plater_id" value="1"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>""",
+            "Metadata/slice_info.config" to """<config><plate><metadata key="index" value="1"/><metadata key="prediction" value="?"/><metadata key="weight"/><object skipped="true"/></plate><plate><metadata key="index" value="bad"/></plate></config>"""))
+        assertEquals(listOf(1,2),p.plates.map { it.index })
+        assertEquals(true,p.sliced)
+        assertEquals(true,p.plates.all { it.seconds==null && it.grams==null && it.parts==null })
+        val md5=readProject(archive("Metadata/plate_1.gcode.md5" to "digest"))
+        assertEquals(true,md5.sliced)
+    }
+
+    @Test fun gcodeMetricsAcceptMinuteOnlyAndSecondOnlyTimesAndIgnoreInvalidNumbers() = runTest {
+        for ((text,seconds) in listOf("estimated time = 7m" to 420,"estimated time = 9s" to 9,
+            "estimated time = 1h" to 3600,"estimated time = unknown" to null)) {
+            val p=readProject(archive("Metadata/plate_1.gcode" to "$text\n; filament used [g] = ..\n; number of objects = 2\n"))
+            assertEquals(seconds,p.plates.single().seconds)
+            assertNull(p.plates.single().grams); assertEquals(2,p.plates.single().parts)
+        }
+    }
+
+    @Test fun componentPreviewUsesPlateSelectionAndIgnoresMissingComponentFiles() = runTest {
+        val vertices="""<mesh><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/><triangle v1="0" v2="1" v3="2"/></mesh>"""
+        val p=readProject(archive(
+            "Metadata/model_settings.config" to """<config><object id="bad"></object><object id="1"><metadata key="extruder" value="2"/></object><object id="2"></object>
+                <plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="1"/></model_instance><model_instance/></plate>
+                <plate><metadata key="plater_id" value="2"/><model_instance><metadata key="object_id" value="2"/></model_instance></plate></config>""",
+            "3D/3dmodel.model" to """<model><resources><object id="1">$vertices</object><object id="2"><components><component p:path="/3D/missing.model" objectid="1"/></components></object></resources>
+                <build><item objectid="1"/><item objectid="2"/></build></model>"""))
+        assertEquals(setOf(1),p.meshes.keys)
+        assertEquals(1,p.meshes.getValue(1).triangles.single().material)
+        assertEquals(PreviewVertex(1f,0f,0f),p.mesh!!.triangles.single().b)
+    }
 }
 
 class PresetTest {
@@ -91,5 +157,14 @@ class PresetTest {
         kotlin.test.assertEquals("hot_plate", buildPlateCode("Smooth PEI Plate / High Temp Plate"))
         kotlin.test.assertEquals("Cool Plate SuperTack", buildPlateLabel("Supertack Plate"))
         kotlin.test.assertEquals(filamentKey("PLA", "#ffffff"), filamentKey(" pla ", "FFFFFFFF"))
+    }
+
+    @Test fun namesPreserveNewPrinterModelsAndDefaultInvalidNozzleSizes() {
+        assertNull(shortModel(null))
+        for (model in listOf("X1","X1E","P1S","P1P","P2S","A1","A1 mini","H2D","H2S","Future")) {
+            assertEquals(model,shortModel("Bambu Lab $model"))
+        }
+        assertEquals("Bambu Lab P1S 1.0 nozzle",printerPreset("P1S","1"))
+        assertEquals("Bambu Lab P1S 0.4 nozzle",printerPreset("P1S","unknown"))
     }
 }
