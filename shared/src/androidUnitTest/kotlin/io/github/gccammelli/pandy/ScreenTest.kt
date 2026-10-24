@@ -1593,7 +1593,7 @@ class ScreenTest {
 
     private fun variant(info: PrinterInfo = printer.info, remove: List<String> = emptyList(), vararg set: Pair<String,Entity>): Printer {
         val states=snapshot.toMutableMap()
-        for(key in remove) printer.info.ids[key]?.let { states.remove(it) }
+        for(key in remove) states.remove(printer.info.ids[key] ?: key)
         for((key,entity) in set) { val id=printer.info.ids[key] ?: key; states[id]=Entity(id,entity.state,entity.attrs) }
         return Printer(info,states)
     }
@@ -1622,6 +1622,7 @@ class ScreenTest {
             variant(info=printer.info.copy(ams=printer.info.ams.map { it.copy(ids=it.ids-setOf("sensor.humidity","sensor.humidity_index","sensor.ams_temp")) }),remove=listOf("sensor.subtask_name"),
                 set=arrayOf("sensor.print_status" to entity("finish"),"binary_sensor.firmware_update" to entity("on"),
                     "sensor.printable_objects" to entity("on",mapOf("objects" to JsonObject(mapOf("1" to JsonPrimitive("Cube"),"2" to JsonPrimitive("Sphere"),"3" to JsonPrimitive("Cone")))))),),
+            variant(remove=printer.info.ams.single().trays.values.drop(1)+printer.info.external,set=arrayOf("sensor.print_status" to entity("idle"))), // slots whose tray sensors report nothing
             variant(remove=listOf("sensor.subtask_name"),set=arrayOf("sensor.print_status" to entity("failed"))),
             variant(set=arrayOf("sensor.print_status" to entity("pause"),"sensor.printable_objects" to entity("on",mapOf("objects" to JsonObject(mapOf("1" to JsonPrimitive("Only part")))))),),
             variant(info=printer.info.copy(ams=emptyList()),set=arrayOf("sensor.print_status" to entity("idle"))),
@@ -1707,7 +1708,7 @@ class ScreenTest {
         val two=listOf(printer,variant(set=arrayOf("sensor.printer_name" to entity("Second"))))
         val screens: List<@Composable (UiState,Printer) -> Unit> = listOf(
             { u,_ -> MeTab(u) }, { _,_ -> SettingsScreen() }, { _,_ -> AboutScreen() }, { _,p -> HistoryScreen(p) }, { _,p -> FilesScreen(p) },
-            { _,_ -> Connect() }, { _,_ -> AddHaScreen() }, { _,_ -> AddDirectScreen() }, { _,_ -> SlicerScreen() }, { _,_ -> LiveviewSettingsScreen() },
+            { _,_ -> Connect() }, { _,_ -> AddHaScreen() }, { _,_ -> AddDirectScreen() }, { _,_ -> SlicerScreen() }, { _,_ -> LiveviewSettingsScreen() }, { _,p -> SkipScreen(p) },
         )
         val selection=androidx.compose.runtime.mutableStateOf(Triple(0,st,printer)); val tick=androidx.compose.runtime.mutableStateOf(0)
         compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
@@ -2222,5 +2223,59 @@ class ScreenTest {
             compose.onNodeWithText("Setup guide",substring=true).performScrollTo().performClick()
             org.junit.Assert.assertTrue(openedUrls.any { it.contains("slicer") })
         } finally { server.stop(0) }
+    }
+
+    @Test fun theDevicesTabKeepsConnectingInTheDemoAndHandlesNoPrinterList() {
+        val store=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
+        val before=store.settings.getString("demo"); restorePrintSettings={ store.settings.putString("demo",before) }
+        val state=androidx.compose.runtime.mutableStateOf(st.copy(live=false))
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { DevicesTab(state.value,printer) } } }
+        for(demo in listOf("true","false")) {
+            store.settings.putString("demo",demo)
+            for(candidate in listOf(st.copy(live=false),st.copy(live=true,printers=null),st.copy(live=false,printers=emptyList()),st)) {
+                compose.runOnIdle { state.value=candidate }; compose.waitForIdle(); compose.mainClock.advanceTimeBy(200)
+            }
+        }
+        compose.onRoot().assertExists()
+    }
+
+    @Test fun settingsOnAPlatformWithoutBackgroundAlertsHidesTheAlertOption() {
+        val iosLike=object : PlatformUi by platform { override val canNotify = false }
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides iosLike) { AppTheme { SettingsScreen() } } }
+        compose.waitForIdle()
+        compose.onNodeWithText("Print notifications").assertDoesNotExist()
+    }
+
+    @Test fun reprintingShowsHowEachFilamentMapsAcrossPrinterSetupsAndMissingMatches() {
+        val demo=FakeHomeAssistant()
+        fun backendWith(xml: String?) = object : HaBackend by demo {
+            override suspend fun get(path: String): String = if(path.endsWith(".slice_info.config")) (xml ?: throw ApiException("No slice info")) else demo.get(path)
+        }
+        val matched="""<config><plate><metadata key="index" value="2"/><filament id="1" type="PLA" color="#FFFFFF"/><filament id="2" type="PLA" color="#000000"/></plate></config>"""
+        val unmatched="""<config><plate><metadata key="index" value="1"/><filament id="1" type="PLA" color="#FFFFFF"/><filament type="ABS" color="#FF00FF"/><filament/></plate></config>"""
+        val none="""<config><plate><metadata key="index" value="1"/></plate></config>"""
+        val ams=printer.info.ams.single(); val trays=ams.trays
+        val idle="sensor.print_status" to entity("idle")
+        val setups=listOf(
+            variant(set=arrayOf(idle)),
+            variant(set=arrayOf("sensor.print_status" to entity("running"))),
+            variant(info=printer.info.copy(ams=emptyList()),set=arrayOf(idle)),
+            variant(info=printer.info.copy(ams=listOf(ams.copy(model="AMS HT",protocolId=128,trays=mapOf(1 to trays.getValue(1))))),set=arrayOf(idle)),
+            variant(set=arrayOf(idle,trays.getValue(1) to entity("Spool",mapOf("type" to "PLA","color" to "#FFFFFFFF","name" to "PLA")),trays.getValue(2) to entity("Spool",mapOf("type" to "PLA","color" to "#000000FF","name" to "PLA")))),
+        )
+        val file=CachedFile("Test.3mf","SERIAL/prints/cache/Test.3mf",10,"2026-10-01T08:00:00",null)
+        val extrasField=Repo::class.java.getDeclaredField("extras").apply { isAccessible=true }
+        val originalExtras=extrasField.get(Repo); restorePrintSettings={ extrasField.set(Repo,originalExtras) }
+        val selection=androidx.compose.runtime.mutableStateOf(0)
+        val combos=listOf(matched,unmatched,none,null).flatMap { xml -> setups.map { xml to it } }
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            androidx.compose.runtime.key(selection.value) { ReprintSheet(combos[selection.value].second,file,{}) }
+        } } }
+        for((index,combo) in combos.withIndex()) {
+            extrasField.set(Repo,backendWith(combo.first))
+            compose.runOnIdle { selection.value=index }; compose.waitForIdle(); compose.mainClock.advanceTimeBy(500); compose.waitForIdle()
+            compose.onAllNodes(isToggleable()).fetchSemanticsNodes().indices.forEach { i -> compose.onAllNodes(isToggleable())[i].performClick(); compose.waitForIdle() }
+        }
+        org.junit.Assert.assertTrue(compose.onAllNodes(isRoot()).fetchSemanticsNodes().isNotEmpty())
     }
 }
