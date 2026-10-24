@@ -96,6 +96,76 @@ class HomeAssistantBoundaryTest {
         assertEquals("", states["sensor.absent"]!!.state); assertTrue(states["sensor.absent"]!!.attrs.isEmpty())
     }
 
+    @Test fun controlAvailabilityDoorAndOptionalFansReflectReportedHardware() {
+        for ((developer,hybrid,blocked) in listOf(Triple("off","off",true),Triple("on","on",true),Triple("on","off",false),Triple("unknown","unknown",false))) {
+            val p=printer(mapOf("binary_sensor.developer_lan_mode" to e("dev",developer),"binary_sensor.hybrid_mode_blocks_control" to e("hybrid",hybrid)))
+            assertEquals(blocked,p.controlBlocked)
+        }
+        for (door in listOf("on","off")) assertEquals(door=="on",printer(mapOf("binary_sensor.door_open" to e("door",door))).doorOpen)
+        val p=printer(mapOf("fan.aux_fan" to e("fan.aux"),"fan.chamber_fan" to e("fan.chamber"),
+            "sensor.aux_fan_speed" to e("aux.speed","75"),"sensor.chamber_fan_speed" to e("chamber.speed","unknown")))
+        assertEquals(listOf(Triple("Part",null,0),Triple("Aux","fan.aux",75),Triple("Chamber","fan.chamber",0)),p.fans)
+        assertEquals(1,p.fansOn)
+        assertEquals(0,printer(mapOf("fan.aux_fan" to e("fan.aux"))).fans.last().third)
+    }
+
+    @Test fun registryNamesAndAmsProtocolIdsSurviveMissingOptionalMetadata() {
+        val devices=arr("""[
+            {"id":"p","identifiers":[["other","ignore"],["bambu_lab","SERIAL"]]},
+            {"id":"ht","via_device_id":"p","model":"AMS HT","identifiers":[["bambu_lab","SERIAL_unknown"]]},
+            {"id":"ht2","via_device_id":"p","model":"N3S","identifiers":[["bambu_lab","SERIAL_ams130"]]},
+            {"id":"ht3","via_device_id":"p","model":"AMS HT","identifiers":[["bambu_lab","SERIAL_unknown3"]]},
+            {"id":"external","via_device_id":"p","identifiers":[["bambu_lab","SERIAL_ext"]]},
+            {"id":"other","identifiers":[["other","ignore"]]},{}
+        ]""")
+        val entities=arr("""[
+            {"platform":"other","entity_id":"sensor.ignore","device_id":"p"},
+            {"platform":"bambu_lab","disabled_by":"user","entity_id":"sensor.disabled","device_id":"p"},
+            {"platform":"bambu_lab","device_id":"p"},
+            {"platform":"bambu_lab","device_id":"p","entity_id":"sensor.no_key"},
+            {"platform":"bambu_lab","device_id":"p","entity_id":"sensor.fallback","unique_id":"SERIAL_temperature"},
+            {"platform":"bambu_lab","device_id":"ht","entity_id":"sensor.ht","translation_key":"tray","unique_id":"SERIAL_tray_1"},
+            {"platform":"bambu_lab","device_id":"ht2","entity_id":"sensor.ht2","translation_key":"tray","unique_id":"SERIAL_tray_1"},
+            {"platform":"bambu_lab","device_id":"ht3","entity_id":"sensor.bad_slot","translation_key":"tray","unique_id":"SERIAL_tray_bad"},
+            {"platform":"bambu_lab","device_id":"external","entity_id":"sensor.external","translation_key":"external_spool"}
+        ]""")
+        val p=printersFrom(devices,entities).single()
+        assertEquals("SERIAL",p.name); assertEquals("",p.model); assertNull(p.firmware)
+        assertEquals(mapOf("sensor.temperature" to "sensor.fallback"),p.ids)
+        assertEquals(listOf(128,130,131),p.ams.map { it.amsId() })
+        assertTrue(p.ams.last().trays.isEmpty()); assertEquals(listOf("sensor.external"),p.external)
+        assertEquals("external",p.externalDevice)
+        val missing=Printer(p,mapOf("sensor.external" to e("sensor.external","PLA","""{"type":"PLA"}""")))
+        assertEquals(1,missing.ams[0].second.size); assertNull(missing.ams[0].second[0])
+        assertEquals(setOf(254),missing.loadedTrayIds())
+    }
+
+    @Test fun bedPlateAliasesAndAmsSlotBoundsStayCompatibleWithPrinterCommands() {
+        for ((labels,code) in listOf(
+            listOf("Textured PEI Plate") to "textured_plate",
+            listOf("Smooth PEI Plate / High Temp Plate","Smooth PEI Plate","High Temp Plate") to "hot_plate",
+            listOf("Cool Plate SuperTack") to "supertack_plate",listOf("Engineering Plate") to "eng_plate",
+            listOf("Cool Plate") to "cool_plate",listOf("Unknown") to "auto"
+        )) for(label in labels) assertEquals(code,buildPlateCode(label))
+        for ((aliases,label) in listOf(
+            listOf("textured pei plate","textured_plate") to "Textured PEI Plate",
+            listOf("high temp plate","hot plate","hot_plate") to "Smooth PEI Plate / High Temp Plate",
+            listOf("supertack plate","supertack_plate") to "Cool Plate SuperTack",
+            listOf("engineering plate","eng_plate","engineering_plate") to "Engineering Plate",
+            listOf("cool plate","cool_plate") to "Cool Plate"
+        )) for(alias in aliases) assertEquals(label,buildPlateLabel(alias.uppercase()))
+        assertNull(buildPlateLabel(null)); assertNull(buildPlateLabel("unknown"))
+        val standard=AmsInfo("ams",2,"AMS",emptyMap(),emptyMap(),3)
+        val ht=AmsInfo("ht",2,"N3S",emptyMap(),emptyMap(),1)
+        assertEquals(12,standard.trayId(0)); assertEquals(128,ht.amsId())
+        for(a in listOf(standard,ht)) {
+            assertFailsWith<IllegalArgumentException> { a.trayId(-1) }
+            assertFailsWith<IllegalArgumentException> { a.trayId(if(a.isSingleSlot()) 1 else 4) }
+            assertNull(a.slotForTrayId(-1))
+        }
+        for(id in listOf(-1,0,103,104,127,128,135,136,254)) assertEquals(id in 0..103 || id in 128..135,isAmsTrayId(id))
+    }
+
     private class Backend : HaBackend {
         override val base = "https://home.example"
         var response = "{}"
@@ -107,6 +177,20 @@ class HomeAssistantBoundaryTest {
         override suspend fun bytes(path: String) = byteArrayOf()
         override suspend fun ws(commands: List<JsonObject>) = commands.map { result }
         override suspend fun stream(subscribe: JsonObject, onEvent: (JsonObject) -> Unit) = error("No subscription expected")
+    }
+
+    @Test fun buttonAndPrintRequestsRespectBackendCapabilities() = runTest {
+        val b=Backend(); val p=printer(mapOf("button.pause" to e("button.pause")))
+        b.press(p,"pause")
+        assertEquals("/api/services/button/press",b.posts.last().first)
+        assertEquals("button.pause",b.posts.last().second.s("entity_id"))
+        val preferred=PreferPrimaryBackend(b,Backend())
+        preferred.startPrint(p,"cache/model.3mf",2,listOf(128),false,false,false,"hot_plate")
+        assertEquals("hot_plate",b.posts.last().second.s("bed_type"))
+        assertEquals("true",b.posts.last().second.s("use_ams")); assertEquals("128",b.posts.last().second.s("ams_mapping"))
+        b.startPrint(p,"cache/model.3mf",1,listOf(254),true,true,true)
+        assertNull(b.posts.last().second.s("bed_type")); assertEquals("false",b.posts.last().second.s("use_ams"))
+        assertNull(b.posts.last().second.s("ams_mapping"))
     }
 
     @Test fun missingMediaAndCachedFileMetadataStayExplicit() = runTest {
