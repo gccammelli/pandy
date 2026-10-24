@@ -388,11 +388,6 @@ fun ModelsTab() = Column(Modifier.fillMaxSize().background(C.Card).statusBarsPad
     MakerWorld(Modifier.fillMaxSize())
 }
 
-@Composable
-fun WebScreen(url: String, title: String) = Page(title, { Nav.back() }) {
-    io.github.gccammelli.pandy.WebPage(url, Modifier.fillMaxSize(), onDownload = null)
-}
-
 
 fun needHa() = Repo.extras ?: throw io.github.gccammelli.pandy.ApiException(io.github.gccammelli.pandy.DirectPrinter.NEEDS_HA)
 

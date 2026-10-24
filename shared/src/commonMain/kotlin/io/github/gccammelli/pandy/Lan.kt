@@ -607,7 +607,6 @@ class DirectPrinter(
                 when (rowOf(target)?.key) {
                     "target_nozzle_temperature" -> gcode("M104 S$v\n")
                     "target_bed_temperature" -> gcode("M140 S$v\n")
-                    "target_chamber_temperature" -> gcode("M141 S$v\n")
                 }
             }
             "select/select_option" -> {

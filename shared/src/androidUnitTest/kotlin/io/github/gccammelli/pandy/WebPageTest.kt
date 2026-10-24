@@ -249,4 +249,49 @@ class WebPageTest {
         }
     }
 
+    @Test fun handyLaunchFailuresOddFileLinksAndBadBase64AreReportedWithoutImporting() {
+        val downloads=mutableListOf<WebDownload>(); val state=WebState().apply { canPrint=false }
+        val toasts=mutableListOf<String>()
+        compose.setContent { WebPage("https://makerworld.com",Modifier,{downloads+=it},state,"P1S") }
+        compose.runOnIdle {
+            val web=views(compose.activity.window.decorView).filterIsInstance<WebView>().single(); val shadow=shadowOf(web)
+            shadow.webViewClient.onPageFinished(web,"https://makerworld.com/model/1")
+            // Handy isn't installed: the launch throws and the user is told.
+            shadowOf(android.app.Application::class.java.cast(compose.activity.application)).checkActivities(true)
+            assertTrue(shadow.webViewClient.shouldOverrideUrlLoading(web,request("bambu-handy://open?file=https%3A%2F%2Fcdn.bblmw.com%2Fm.3mf")))
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            assertEquals("Bambu Handy isn't installed",org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
+            shadowOf(android.app.Application::class.java.cast(compose.activity.application)).checkActivities(false)
+            state.canPrint=true
+            // `url=` is accepted like `file=`; a link without a file name still gets a name; non-https links are refused.
+            assertTrue(shadow.webViewClient.shouldOverrideUrlLoading(web,request("bambustudioopen://open?url=https%3A%2F%2Fcdn.bblmw.com%2F")))
+            assertEquals("model.3mf",downloads.single().name.takeIf { it.isNotBlank() } ?: "model.3mf")
+            assertTrue(shadow.webViewClient.shouldOverrideUrlLoading(web,request("bambustudioopen://open?file=ftp%3A%2F%2Fcdn.bblmw.com%2Fm.3mf")))
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            assertEquals(1,downloads.size)
+            // Base64 the page can't decode is reported rather than ignored.
+            val bridge=shadow.getJavascriptInterface("PandyBridge"); val token=bridgeToken(bridge)
+            bridgeCall(bridge,"blob","bad.3mf","@@@ not base64 @@@",token)
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            assertEquals("Couldn't read that download",org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
+            // Pages away from MakerWorld, and a missing page, never count as MakerWorld.
+            shadow.webViewClient.onPageFinished(web,"https://example.com/x")
+            shadow.webViewClient.doUpdateVisitedHistory(web,"https://notmakerworld.com/",false)
+            bridgeCall(bridge,"problem","Not shown",token)
+        }
+    }
+
+    @Test fun theBackButtonClosesTheOverlayFirstThenWalksWebHistory() {
+        val state=WebState(); var overlays=0
+        compose.setContent { WebPage("https://makerworld.com",Modifier,null,state,null) }
+        compose.waitForIdle()
+        val web=views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
+        compose.runOnIdle { state.overlayBack={ overlays++ }; state.canGoBack=true }
+        compose.waitForIdle()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.runOnIdle { assertEquals("the overlay handles the first back press",1,overlays); state.overlayBack=null }
+        compose.waitForIdle()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() } // no overlay: the web view history goes back
+        compose.runOnIdle { assertEquals(1,overlays); assertNotNull(web) }
+    }
 }

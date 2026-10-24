@@ -1664,4 +1664,57 @@ class ScreenTest {
         compose.runOnIdle { selected.value=offline }
         compose.waitForIdle(); compose.onNodeWithText("Device Offline").assertExists()
     }
+
+    private class Memory(private val values: MutableMap<String,String>) : KeyValue, SecretStore {
+        override fun getString(key: String) = values[key]
+        override fun putString(key: String,value: String?) { if(value==null) values.remove(key) else values[key]=value }
+        override fun get(key: String) = getString(key)
+        override fun set(key: String,value: String?) = putString(key,value)
+        override fun clear() = values.clear()
+    }
+
+    @Test fun accountAndSettingsScreensRenderForEveryConnectionMode() {
+        val storeField=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }
+        val fields=listOf("ha","extras").map { name -> Repo::class.java.getDeclaredField(name).apply { isAccessible=true } }
+        val originalStore=storeField.get(Repo); val originalBackends=fields.map { it.get(Repo) }
+        restorePrintSettings={ storeField.set(Repo,originalStore); fields.zip(originalBackends).forEach { (f,v) -> f.set(Repo,v) } }
+        val demo=FakeHomeAssistant()
+        val unreachable=object : HaBackend by demo {
+            override suspend fun get(path: String): String = throw ApiException("Home Assistant is unreachable")
+            override suspend fun post(path: String,body: String): String = throw ApiException("Home Assistant is unreachable")
+            override suspend fun bytes(path: String): ByteArray = throw ApiException("Home Assistant is unreachable")
+            override suspend fun ws(commands: List<JsonObject>): List<JsonElement?> = throw ApiException("Home Assistant is unreachable")
+        }
+        val lan=mapOf("lan_serial" to "SWEEP-TEST","lan_ip" to "192.0.2.5","mode" to "lan")
+        val modes=listOf(
+            Triple(mapOf("demo" to "true"),emptyMap<String,String>(),demo to demo),
+            Triple(lan,mapOf("lan_code" to "test-code"),null to null),
+            Triple(lan+mapOf("ha_url" to "https://home.example"),mapOf("lan_code" to "test-code","ha_token" to "token"),unreachable to unreachable),
+            Triple(mapOf("ha_url" to "https://home.example","mode" to "ha","slicer_url" to "http://slicer.example:8737"),mapOf("ha_token" to "token"),demo to demo),
+            Triple(emptyMap(),emptyMap(),null to null),
+        )
+        val two=listOf(printer,variant(set=arrayOf("sensor.printer_name" to entity("Second"))))
+        val screens: List<@Composable (UiState,Printer) -> Unit> = listOf(
+            { u,_ -> MeTab(u) }, { _,_ -> SettingsScreen() }, { _,_ -> AboutScreen() }, { _,p -> HistoryScreen(p) }, { _,p -> FilesScreen(p) },
+            { _,_ -> Connect() }, { _,_ -> AddHaScreen() }, { _,_ -> AddDirectScreen() }, { _,_ -> SlicerScreen() }, { _,_ -> LiveviewSettingsScreen() },
+        )
+        val selection=androidx.compose.runtime.mutableStateOf(Triple(0,st,printer))
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            val (index,u,p)=selection.value
+            androidx.compose.runtime.key(index,u,p) { screens[index](u,p) }
+        } } }
+        for((settings,secrets,backends) in modes) {
+            storeField.set(Repo,PlatformStorage(Memory(settings.toMutableMap()),Memory(secrets.toMutableMap()),object : AppFiles {
+                override fun read(name: String): ByteArray? = null
+                override fun write(name: String,bytes: ByteArray) = Unit
+                override fun delete(name: String) = Unit
+            }))
+            fields[0].set(Repo,backends.first); fields[1].set(Repo,backends.second)
+            for(u in listOf(st,st.copy(printers=two),st.copy(printers=emptyList()),st.copy(printers=null))) for(index in screens.indices) {
+                compose.runOnIdle { selection.value=Triple(index,u,printer) }
+                compose.waitForIdle(); compose.mainClock.advanceTimeBy(200)
+            }
+        }
+        compose.onRoot().assertExists()
+    }
 }
