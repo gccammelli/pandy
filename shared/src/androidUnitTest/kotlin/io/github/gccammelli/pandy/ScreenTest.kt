@@ -136,11 +136,16 @@ class ScreenTest {
 
     private fun show(title: String, content: @Composable () -> Unit) {
         compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme(content) } }
-        compose.onAllNodesWithText(title).onFirst().assertIsDisplayed()
-        compose.mainClock.advanceTimeBy(500)
-        compose.runOnIdle {
-            android.view.inspector.WindowInspector.getGlobalWindowViews().forEach { view ->
-                if (view.width > 0 && view.height > 0) view.draw(Canvas(Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)))
+        val originalTheme=ThemeMode.mode
+        // Keep existing screens usable while their theme changes, including retained callbacks and state.
+        for(mode in listOf("light","dark",originalTheme)) {
+            compose.runOnIdle { Repo.setTheme(mode) }
+            compose.onAllNodesWithText(title).onFirst().assertIsDisplayed()
+            compose.mainClock.advanceTimeBy(500)
+            compose.runOnIdle {
+                android.view.inspector.WindowInspector.getGlobalWindowViews().forEach { view ->
+                    if (view.width > 0 && view.height > 0) view.draw(Canvas(Bitmap.createBitmap(view.width, view.height,Bitmap.Config.ARGB_8888)))
+                }
             }
         }
     }
@@ -1478,6 +1483,60 @@ class ScreenTest {
             compose.onNodeWithText("Next").assertDoesNotExist(); compose.onNodeWithText("Print current plate").assertDoesNotExist()
             org.junit.Assert.assertTrue(commands.isEmpty())
         } finally { server.stop(0) }
+    }
+
+    @Test fun discoveredPrintersCanBeSelectedAndTheirVerifiedDetailsReachConnectionSetup() {
+        val found=listOf(FoundPrinter("192.0.2.1","DISCOVERED-ONE","X1C","Workshop"),FoundPrinter("192.0.2.2","DISCOVERED-TWO","A1","Desk"))
+        val attempts=mutableListOf<LanConfig>(); var completed=0
+        show("Printers on this Wi-Fi") { androidx.compose.foundation.layout.Column {
+            PrinterForm(discover={ found },connect={ attempts+=it },done={ completed++ })
+        } }
+        compose.onNodeWithText("Desk",substring=false).performClick()
+        compose.onNodeWithText("Printer IP address").assertTextContains("192.0.2.2")
+        compose.onNodeWithText("Serial number").assertTextContains("DISCOVERED-TWO")
+        compose.onNodeWithText("Access code").performTextInput("test-code")
+        compose.onNodeWithText("Connect",substring=false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); completed==1 }
+        assertEquals(listOf(LanConfig("192.0.2.2","DISCOVERED-TWO","test-code","A1","Desk")),attempts)
+    }
+
+    @Test fun aLateDiscoveryDoesNotOverwriteAnAddressTheOwnerAlreadyEntered() {
+        val pending=kotlinx.coroutines.CompletableDeferred<List<FoundPrinter>>()
+        var searches=0
+        val found=FoundPrinter("192.0.2.1","DISCOVERED-ONE","X1C","Workshop")
+        show("Printers on this Wi-Fi") { androidx.compose.foundation.layout.Column {
+            PrinterForm(discover={ searches++; pending.await() },connect={ error("No connection requested") })
+        } }
+        compose.onNodeWithText("Printer IP address").performTextInput("192.0.2.9")
+        compose.runOnIdle { pending.complete(listOf(found)) }
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Workshop",substring=false).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Printer IP address").assertTextContains("192.0.2.9")
+        assertEquals("",compose.onNodeWithText("Serial number").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text)
+        compose.onNodeWithText("Workshop",substring=false).performClick()
+        compose.onNodeWithText("Printer IP address").assertTextContains("192.0.2.1")
+        compose.onNodeWithText("Search again").performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); searches==2 }
+        compose.onNodeWithText("Serial number").assertTextContains("DISCOVERED-ONE")
+    }
+
+    @Test fun aSingleDiscoveryFillsTheFormAndManualOverridesCanBeRetriedAfterRejection() {
+        val attempts=mutableListOf<LanConfig>(); var completed=0
+        val found=FoundPrinter("192.0.2.1","DISCOVERED-ONE","X1C","Workshop")
+        show("Printers on this Wi-Fi") { androidx.compose.foundation.layout.Column {
+            PrinterForm(discover={ listOf(found) },connect={
+                attempts+=it
+                if(attempts.size==1) throw ApiException("Access code rejected")
+            },done={ completed++ })
+        } }
+        compose.onNodeWithText("Serial number").assertTextContains("DISCOVERED-ONE")
+        compose.onNodeWithText("Printer IP address").performTextReplacement(" 192.0.2.9 ")
+        compose.onNodeWithText("Serial number").performTextReplacement(" 01p00000abc ")
+        compose.onNodeWithText("Access code").performTextInput(" test-code ")
+        compose.onNodeWithText("Connect",substring=false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Access code rejected").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(0,completed); compose.onNodeWithText("Connect",substring=false).assertIsEnabled().performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); completed==1 }
+        assertEquals(listOf(LanConfig("192.0.2.9","01P00000ABC","test-code","P1S",""),LanConfig("192.0.2.9","01P00000ABC","test-code","P1S","")),attempts)
     }
 
 }
