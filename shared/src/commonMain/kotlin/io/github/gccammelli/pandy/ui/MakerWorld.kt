@@ -79,6 +79,7 @@ import io.github.gccammelli.pandy.filamentKey
 import io.github.gccammelli.pandy.guide
 import io.github.gccammelli.pandy.hexColor
 import io.github.gccammelli.pandy.isSingleSlot
+import io.github.gccammelli.pandy.readPreviewMeshes
 import io.github.gccammelli.pandy.readProject
 import io.github.gccammelli.pandy.shortModel
 import io.github.gccammelli.pandy.startPrint
@@ -87,6 +88,8 @@ import io.github.gccammelli.pandy.slotForTrayId
 import io.github.gccammelli.pandy.trayId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.cos
@@ -173,6 +176,8 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     var data by remember { mutableStateOf<ByteArray?>(null) }
     var project by remember { mutableStateOf<Project?>(null) }
     var failed by remember { mutableStateOf<String?>(null) }
+    var reading by remember { mutableStateOf(false) }
+    var previewLoaded by remember { mutableStateOf(false) }
     var plate by remember { mutableStateOf(1) }
     var leveling by remember { mutableStateOf(true) }
     var flow by remember { mutableStateOf(true) } // on by default, as in Handy
@@ -206,6 +211,8 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
 
     LaunchedEffect(d) {
         failed = null
+        reading = false
+        previewLoaded = false
         data = null
         project = null
         step = Step.Download
@@ -216,7 +223,13 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         runCatching {
             val bytes = d.bytes ?: withContext(Dispatchers.Default) { download(d.url!!, d.cookies) }
             data = bytes
-            val loaded = withContext(Dispatchers.Default) { readProject(bytes) }
+            reading = true
+            val loaded = try {
+                // shortcut: the timeout is only checked between zip entries, not mid-scan; the scanners are linear, so upgrade only if one proves slow
+                withContext(Dispatchers.Default) { withTimeout(60_000) { readProject(bytes, preview = false) } }
+            } catch (e: TimeoutCancellationException) {
+                throw ApiException("Reading the model took too long. Try another model or file.")
+            }
             manualMapping = Repo.filamentPreset(p.serial)
             presets = false
             project = loaded.also {
@@ -225,6 +238,21 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             }
             step = Step.Ready
         }.onFailure { failed = it.message ?: it.toString() }
+    }
+
+    // The 3D meshes are slow to read on big models, so they load only once the preview is opened.
+    LaunchedEffect(view, project != null) {
+        val bytes = data
+        if (view != PrepareView.Preview || previewLoaded || project == null || bytes == null) return@LaunchedEffect
+        val meshes = try {
+            withContext(Dispatchers.Default) { withTimeout(120_000) { readPreviewMeshes(bytes) } }
+        } catch (e: CancellationException) {
+            if (e is TimeoutCancellationException) emptyMap() else throw e // leaving the preview must not publish a half result
+        } catch (e: Exception) {
+            emptyMap()
+        }
+        previewLoaded = true
+        if (data === bytes) project = project?.copy(meshes = meshes, mesh = meshes[plate] ?: meshes.values.firstOrNull())
     }
 
     // Home Assistant mode doesn't know the printer's access code; it's asked once, here.
@@ -282,7 +310,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         PreparePage("Prepare to Print", close) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(22.dp), color = C.Accent, strokeWidth = 2.dp)
-                Spacer(Modifier.width(12.dp)); T("Downloading the model…", 14.sp, C.Sub)
+                Spacer(Modifier.width(12.dp)); T(if (reading) "Reading the model…" else "Downloading the model…", 14.sp, C.Sub)
             }
         }
         return
