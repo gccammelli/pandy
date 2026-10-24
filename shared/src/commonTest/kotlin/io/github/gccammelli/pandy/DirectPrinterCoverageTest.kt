@@ -15,8 +15,9 @@ class DirectPrinterCoverageTest {
     }
 
     private class Link(val report: String) : LanLink {
+        val sent = mutableListOf<JsonObject>()
         override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) { onConnected(); onMessage(report); awaitCancellation() }
-        override fun publish(payload: String) = Unit
+        override fun publish(payload: String) { sent += json.parseToJsonElement(payload).jsonObject }
         override fun close() = Unit
     }
 
@@ -136,5 +137,71 @@ class DirectPrinterCoverageTest {
         assertTrue(closed >= 1)
         assertEquals(remote.base, both.base)
         both.printers() // later reads go straight to the fallback
+    }
+
+    private class Throwing(val onList: Boolean = false, val onRead: Boolean = false, val files: Map<String, ByteArray> = emptyMap(), val dirs: List<String> = emptyList()) : PrinterStorage {
+        override suspend fun list(dir: String): List<FileEntry> {
+            if (onList) throw PrinterStorageException(550, "Directory unavailable")
+            return files.filterKeys { it.substringBeforeLast('/').ifEmpty { "/" } == dir }.map { (p, b) -> FileEntry(p.substringAfterLast('/'), b.size.toLong(), "2026-10-01T08:00", false) } +
+                dirs.filter { it.substringBeforeLast('/').ifEmpty { "/" } == dir }.map { FileEntry(it.substringAfterLast('/'), 0, "2026-10-01T08:00", true) }
+        }
+        override suspend fun read(path: String, offset: Long, length: Int): ByteArray {
+            if (onRead) throw PrinterStorageException(550, "Cannot read")
+            val all = files.getValue(path); return all.copyOfRange(offset.toInt(), if (length < 0) all.size else (offset + length).toInt().coerceAtMost(all.size))
+        }
+        override suspend fun write(path: String, data: ByteArray, progress: (Float) -> Unit) = Unit
+    }
+
+    @Test fun jobFilesThatAreMissingUnreadableOrNamedLikeTheTaskStillLeaveAUsablePrinter() = runBlocking<Unit> {
+        val project = storedZip("Metadata/plate_1.png" to "cover")
+        // The gcode name equals the task name, a directory shares a file's name, and the lookups fail or find nothing.
+        assertTrue(jobObjects(mapOf("/cache/Panda.3mf" to project), "Panda", "Panda", expected = 0))
+        val unlistable = DirectPrinter(config, true, { Link(report("Panda", "plate_1.gcode")) }, { Throwing(onList = true) })
+        val unreadable = DirectPrinter(config, true, { Link(report("Panda", "plate_1.gcode")) }, { Throwing(onRead = true, files = mapOf("/cache/Panda.3mf" to project)) })
+        val none = DirectPrinter(config, true, { Link(report("", "plate_1.gcode")) }, { Throwing() })
+        for (printer in listOf(unlistable, unreadable, none)) try {
+            printer.ws(listOf(buildJsonObject { put("type", "config/entity_registry/list") }))
+            var seen = false
+            val stream = CoroutineScope(Dispatchers.Default).launch { printer.stream(buildJsonObject {}) { ev -> if (ev.o("a")?.keys?.any { it.endsWith("print_status") } == true) seen = true } }
+            withTimeout(5000) { while (!seen) delay(25) }
+            delay(300) // let the job lookup finish
+            stream.cancel()
+            assertEquals("No job picture", assertFailsWith<ApiException> { printer.bytes("/api/image_proxy/image.pandy_test123_cover_image?v=k") }.message)
+        } finally { printer.stop() }
+    }
+
+    @Test fun historyListsOnlyPrintFilesLargeFilesAreNotCachedAndFirmwareComesFromTheOtaModule() = runBlocking<Unit> {
+        val big = ByteArray(2_100_000) { 7 }
+        val storage = Throwing(files = mapOf("/a.3mf" to storedZip("Metadata/plate_1.png" to "x"), "/notes.txt" to byteArrayOf(1), "/cache/b.3mf" to big, "/cache/c.3mf" to storedZip("Metadata/plate_1.png" to "y")), dirs = listOf("/folder.3mf"))
+        val withModules = """{"print":{"command":"push_status","gcode_state":"IDLE"},"info":{"module":[{"name":"other","sw_ver":"9"},"junk",{"name":"ota","sw_ver":"1.2.3"}]}}"""
+        val printer = DirectPrinter(config, true, { Link(withModules) }, { storage })
+        try {
+            val history = printer.get("/api/bambu_lab/print_history")
+            assertTrue(history.contains("a.3mf") && history.contains("c.3mf") && !history.contains("notes.txt") && !history.contains("folder.3mf"))
+            assertEquals(2_100_000, printer.bytes("/api/bambu_lab/file_cache/TEST123/prints/cache/b.3mf").size) // larger than the picture cache keeps
+            assertEquals(2_100_000, printer.bytes("/api/bambu_lab/file_cache/TEST123/prints/cache/b.3mf").size)
+            val devices = printer.ws(listOf(buildJsonObject { put("type", "config/device_registry/list") })).single()!!.jsonArray
+            assertEquals("1.2.3", devices.first().jsonObject.s("sw_version"))
+        } finally { printer.stop() }
+        val noOta = DirectPrinter(config, true, { Link("""{"print":{"command":"push_status"},"info":{"module":[{"name":"other"}]}}""") }, { storage })
+        try { assertNull(noOta.ws(listOf(buildJsonObject { put("type", "config/device_registry/list") })).single()!!.jsonArray.first().jsonObject.s("sw_version")) } finally { noOta.stop() }
+    }
+
+    @Test fun controlCommandsFollowThePrintersSigningModeAndOptionNames() = runBlocking<Unit> {
+        val link = Link("""{"print":{"command":"push_status","fun":"20000000"}}""")
+        val printer = DirectPrinter(config, true, { link })
+        try {
+            printer.ws(listOf(buildJsonObject { put("type", "config/entity_registry/list") }))
+            assertEquals("""{"status":"present"}""", printer.post("/api/bambu_lab/ensure_cache_file", "{}")) // not a service call: allowed while blocked
+        } finally { printer.stop() }
+        val open = Link("""{"print":{"command":"push_status"}}""")
+        val free = DirectPrinter(config, true, { open })
+        try {
+            free.ws(listOf(buildJsonObject { put("type", "config/entity_registry/list") }))
+            free.post("/api/services/bambu_lab/print_option", """{"auto_recovery":"false"}""")
+            assertEquals(0, open.sent.last().o("print")!!["option"]!!.jsonPrimitive.int)
+            free.post("/api/services/bambu_lab/print_option", """{"auto_recovery":"true"}""")
+            assertEquals(1, open.sent.last().o("print")!!["option"]!!.jsonPrimitive.int)
+        } finally { free.stop() }
     }
 }

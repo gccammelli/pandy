@@ -112,4 +112,33 @@ class LanTransportTest {
             assertContentEquals(image, frames.single())
         }
     }
+
+    @Test fun otherMqttRefusalsAndUnreachablePrintersAreDescribedWithoutLeakingDetails() = runBlocking<Unit> {
+        Peer(connections = 2) { socket ->
+            DataInputStream(socket.inputStream).packet()
+            socket.outputStream.write(byteArrayOf(0x20, 2, 0, 4)); socket.outputStream.flush() // bad user name or password
+        }.use { peer ->
+            val link = PahoLink(config, { peer.context.socketFactory }, peer.port)
+            try {
+                assertEquals("The printer refused the access code", assertFailsWith<ApiException> { withTimeout(5000) { link.run({}, {}) } }.message)
+            } finally { link.close() }
+        }
+        val closed = java.net.ServerSocket(0).use { it.localPort } // nothing listens here
+        val factory = testTlsContext().socketFactory
+        val unreachable = PahoLink(config, { factory }, closed)
+        try {
+            val message = assertFailsWith<ApiException> { withTimeout(10_000) { unreachable.run({}, {}) } }.message!!
+            assertTrue(message.isNotBlank() && !message.contains("access code"))
+        } finally { unreachable.close() }
+        assertEquals("Not connected to the printer", assertFailsWith<ApiException> { unreachable.publish("{}") }.message)
+    }
+
+    @Test fun anEmptyCameraFrameIsRejectedLikeAnOversizedOne() = runBlocking<Unit> {
+        Peer { socket ->
+            DataInputStream(socket.inputStream).readFully(ByteArray(80))
+            socket.outputStream.write(ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).putInt(0).array()); socket.outputStream.flush()
+        }.use { peer ->
+            assertEquals("The camera sent something unexpected", assertFailsWith<ApiException> { readLanJpegStream(config, peer.context.socketFactory, peer.port) { } }.message)
+        }
+    }
 }

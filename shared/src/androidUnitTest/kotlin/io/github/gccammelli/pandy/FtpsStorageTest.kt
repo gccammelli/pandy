@@ -19,6 +19,8 @@ class FtpsStorageTest {
         val completion: Int = 226,
         val passwordAccepted: Boolean = true,
         val rejectTransfer: Boolean = false,
+        val hangUpAfterGreeting: Boolean = false,
+        val blankDenial: Boolean = false,
     ) : AutoCloseable {
         val commands = ConcurrentLinkedQueue<String>()
         val failures = ConcurrentLinkedQueue<Throwable>()
@@ -41,13 +43,14 @@ class FtpsStorageTest {
                     var data: SSLServerSocket? = null
                     var offset = 0
                     reply("220-Test file server"); reply("220 Ready")
+                    if (hangUpAfterGreeting) { input.readLine(); return@use } // takes the first command, then hangs up without answering
                     try {
                         while (true) {
                             val command = input.readLine() ?: break
                             commands.add(command)
                             when (command.substringBefore(' ')) {
                                 "USER" -> reply("331 Password required")
-                                "PASS" -> reply(if (passwordAccepted) "230 Welcome" else "530 Access denied")
+                                "PASS" -> reply(if (passwordAccepted) "230 Welcome" else if (blankDenial) "530 " else "530 Access denied")
                                 "PBSZ", "PROT", "TYPE" -> reply("200 OK")
                                 "PASV" -> {
                                     data = listen()
@@ -133,6 +136,15 @@ class FtpsStorageTest {
         }
         Peer(rejectTransfer = true).use { peer ->
             assertEquals(550, assertFailsWith<PrinterStorageException> { peer.storage().read("/missing", 0, -1) }.code)
+        }
+    }
+
+    @Test fun aServerThatHangsUpOrDeniesWithoutDetailGetsAClearError() = runBlocking {
+        Peer(hangUpAfterGreeting = true).use { peer ->
+            assertEquals("The printer closed the file connection", assertFailsWith<ApiException> { peer.storage().list("/") }.message)
+        }
+        Peer(passwordAccepted = false, blankDenial = true).use { peer ->
+            assertTrue(assertFailsWith<PrinterStorageException> { peer.storage().list("/") }.message!!.endsWith("PASS failed"))
         }
     }
 }

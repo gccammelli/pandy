@@ -346,7 +346,7 @@ class DirectPrinter(
 
     /** When the job changes, finds its 3MF on the printer (as the integration does) and reads its picture and parts. */
     private fun checkJob() {
-        val p = report.o("print") ?: return
+        val p = report.o("print")!! // checkJob runs on a print status report
         val task = p.str("subtask_name").orEmpty()
         val gcode = p.str("gcode_file").orEmpty()
         val key = "$task|$gcode"
@@ -639,7 +639,7 @@ class DirectPrinter(
             "bambu_lab/load_filament" -> {
                 val r = rowOf(target) ?: throw ApiException("Unknown tray")
                 val (ams, slot) = if (r.device == "ext") 254 to 0 else Regex("""AMS_(\d+)_tray_(\d+)""").find(r.uid)!!.destructured.let { (a, t) ->
-                    val unit = r.device.removePrefix("ams").toIntOrNull() ?: throw ApiException("Unknown AMS")
+                    val unit = r.device.removePrefix("ams").toInt() // tray rows belong to an "ams<N>" device
                     val physicalSlot = t.toInt() - 1
                     val amsId = if (r.deviceModel.contains("HT", ignoreCase = true)) unit.takeIf { it >= 128 } ?: 128 else unit
                     amsId to physicalSlot
