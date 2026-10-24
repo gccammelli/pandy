@@ -1391,5 +1391,94 @@ class ScreenTest {
         compose.onNodeWithText("Online").assertExists(); org.junit.Assert.assertTrue(ThemeMode.dark)
     }
 
+    @Test fun coldNozzlesCannotExtrudeAndUnknownNozzleDetailsStayExplicit() {
+        val p=changed("sensor.print_status" to "idle","sensor.nozzle_temp" to "unknown","sensor.target_nozzle_temp" to "0","sensor.nozzle_diameter" to "unknown","sensor.nozzle_type" to "unknown")
+        show("Device Control") { ControlScreen(p) }
+        compose.onNodeWithText("Nozzle & Extruder").performScrollTo().performClick()
+        compose.onNodeWithText("Heat the nozzle to 170°C or more before extruding.").assertExists()
+        compose.onNodeWithText("--°C").assertExists(); compose.onNodeWithText("?mm ").assertExists()
+        compose.onAllNodes(hasClickAction() and !isEnabled()).assertCountEquals(2)
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun anIdleHotNozzleCanExtrudeAndRetractThroughTheSimulatedBackend() {
+        val p=changed("sensor.print_status" to "idle","sensor.nozzle_temp" to "180","sensor.target_nozzle_temp" to "0")
+        show("Device Control") { ControlScreen(p) }
+        compose.onNodeWithText("Nozzle & Extruder").performScrollTo().performClick()
+        compose.onNodeWithText("Heat the nozzle to 170°C",substring=true).assertDoesNotExist()
+        val arrows=compose.onAllNodes(hasClickAction() and !hasText("",substring=true) and !hasContentDescription("Close") and !hasContentDescription("Back") and !hasContentDescription("Close sheet") and !isToggleable())
+        // The only enabled anonymous keys in this sheet are retract and extrude.
+        arrows.assertCountEquals(2)
+        repeat(2) { index ->
+            arrows[index].performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); commands.size>index }
+        }
+        assertEquals(listOf("Retract","Extrude"),commands.map { json.parseToJsonElement(it.second).jsonObject.s("type") })
+        org.junit.Assert.assertTrue(commands.all { it.first.endsWith("extrude_retract") })
+    }
+
+    @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {
+        show("Direct LAN connection") { AddDirectScreen() }
+        compose.onNodeWithText("Connect",substring=false).assertIsNotEnabled()
+        compose.onNodeWithText("Printer IP address").performTextInput("127.0.0.1:invalid")
+        compose.onNodeWithText("Serial number").performTextInput("12345678")
+        compose.onNodeWithText("Connect",substring=false).assertIsNotEnabled()
+        compose.onNodeWithText("Access code").performTextInput("test-code")
+        compose.onNodeWithText("Connect",substring=false).assertIsEnabled().performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Couldn't reach the printer",substring=true).fetchSemanticsNodes().isNotEmpty() }
+        org.junit.Assert.assertNull(Repo.lan)
+        compose.onNodeWithText("Connect",substring=false).assertIsEnabled()
+    }
+
+    @Test fun aDownloadedModelPreparesAndItsLazilyLoadedPreviewRespondsToGestures() {
+        val bytes=modelBytes(); val cookies=java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val server=com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1",0),0)
+        server.createContext("/model.3mf") { exchange ->
+            cookies+=exchange.requestHeaders.getFirst("Cookie").orEmpty()
+            exchange.sendResponseHeaders(200,bytes.size.toLong()); exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            val file=WebDownload("http://127.0.0.1:${server.address.port}/model.3mf","Downloaded model.3mf","session=test-cookie",printSheet=true)
+            compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { PrintModelSheet(file,{}) } } }
+            compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+            assertEquals(listOf("session=test-cookie"),cookies.toList())
+            compose.onNodeWithText("Next").performClick()
+            compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("3D preview unavailable").fetchSemanticsNodes().isEmpty() }
+            fun frame(): IntArray = compose.runOnIdle {
+                val view=compose.activity.window.decorView
+                val bitmap=Bitmap.createBitmap(view.width,view.height,Bitmap.Config.ARGB_8888)
+                view.draw(Canvas(bitmap))
+                IntArray(view.width*view.height).also { bitmap.getPixels(it,0,view.width,0,0,view.width,view.height) }
+            }
+            val before=frame()
+            val chartY=compose.onNodeWithText("Show the plate").fetchSemanticsNode().boundsInRoot.bottom+140f
+            compose.onRoot().performTouchInput {
+                pinch(androidx.compose.ui.geometry.Offset(width*.4f,chartY),androidx.compose.ui.geometry.Offset(width*.6f,chartY),
+                    androidx.compose.ui.geometry.Offset(width*.2f,chartY),androidx.compose.ui.geometry.Offset(width*.8f,chartY),300)
+                swipe(androidx.compose.ui.geometry.Offset(width*.4f,chartY),androidx.compose.ui.geometry.Offset(width*.7f,chartY+10),300)
+            }
+            compose.waitForIdle()
+            org.junit.Assert.assertFalse("The rendered model must change after rotating/zooming",before.contentEquals(frame()))
+            compose.onNodeWithText("Confirm",substring=false).performClick()
+            compose.onNodeWithText("3D Preview").assertExists()
+            org.junit.Assert.assertTrue(commands.isEmpty())
+        } finally { server.stop(0) }
+    }
+
+    @Test fun failedModelDownloadsShowTheServerErrorAndCannotOfferPrinting() {
+        val server=com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1",0),0)
+        server.createContext("/") { exchange -> exchange.sendResponseHeaders(503,-1); exchange.close() }
+        server.start()
+        try {
+            val file=WebDownload("http://127.0.0.1:${server.address.port}/model.3mf","Unavailable model.3mf",null,printSheet=true)
+            compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { PrintModelSheet(file,{}) } } }
+            compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("The download failed (HTTP 503)").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Next").assertDoesNotExist(); compose.onNodeWithText("Print current plate").assertDoesNotExist()
+            org.junit.Assert.assertTrue(commands.isEmpty())
+        } finally { server.stop(0) }
+    }
+
 }
 
