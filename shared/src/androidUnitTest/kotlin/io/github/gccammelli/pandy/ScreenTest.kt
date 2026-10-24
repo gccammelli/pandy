@@ -19,6 +19,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import io.github.gccammelli.pandy.ui.*
@@ -1339,6 +1340,55 @@ class ScreenTest {
         compose.onNodeWithText("MakerWorld").performScrollTo().performClick(); assertEquals(0,Nav.tab)
         for(label in listOf("Learning","Support Center","Buy me a coffee")) compose.onNodeWithText(label).performScrollTo().performClick()
         assertEquals(listOf("https://wiki.bambulab.com","$REPO_URL/issues",DONATE_URL),openedUrls)
+    }
+
+    @Test fun disabledButtonsAndChoicesNeverInvokeTheirCallbacks() {
+        val enabled=androidx.compose.runtime.mutableStateOf(false)
+        val clicks=mutableListOf<String>()
+        show("Confirm action") { androidx.compose.foundation.layout.Column {
+            AccentButton("Confirm action",enabled=enabled.value) { clicks+="accent" }
+            OutlineButton("Alternative",C.Blue,enabled=enabled.value) { clicks+="outline" }
+            Radio(true,"Selected choice",enabled=enabled.value) { clicks+="radio" }
+            ToggleRow("Setting",false,enabled=enabled.value) { clicks+="toggle" }
+            ToggleLine("Print setting",true,enabled=enabled.value) { clicks+="line" }
+        } }
+        for(label in listOf("Confirm action","Alternative","Selected choice")) compose.onNodeWithText(label).assertIsNotEnabled().performClick()
+        compose.onAllNodes(isToggleable()).assertCountEquals(2)
+        repeat(2) { compose.onAllNodes(isToggleable())[it].assertIsNotEnabled().performClick() }
+        assertEquals(emptyList(),clicks)
+        compose.runOnIdle { enabled.value=true }
+        for(label in listOf("Confirm action","Alternative","Selected choice")) compose.onNodeWithText(label).assertIsEnabled().performClick()
+        repeat(2) { compose.onAllNodes(isToggleable())[it].assertIsEnabled().performClick() }
+        assertEquals(listOf("accent","outline","radio","toggle","line"),clicks)
+    }
+
+    @Test fun bottomSheetRequiresAnEnabledConfirmationAndSupportsClosingWithoutSaving() {
+        val enabled=androidx.compose.runtime.mutableStateOf(false)
+        val open=androidx.compose.runtime.mutableStateOf(true)
+        var confirmations=0; var dismissed=0
+        show("Pending settings") {
+            if(open.value) Sheet({ open.value=false; dismissed++ },title="Review",confirmEnabled=enabled.value,onConfirm={ confirmations++ }) { T("Pending settings") }
+            else T("Closed settings")
+        }
+        compose.onNodeWithText("Confirm").assertIsNotEnabled().performClick(); assertEquals(0,confirmations)
+        compose.runOnIdle { enabled.value=true }
+        compose.onNodeWithText("Confirm").performClick(); assertEquals(1,confirmations)
+        compose.onNodeWithContentDescription("Close").performClick()
+        compose.onNodeWithText("Closed settings").assertExists(); assertEquals(1,dismissed)
+    }
+
+    @Test @Config(sdk=[35],qualifiers="w411dp-h891dp-night")
+    fun systemNightModeKeepsControlsReadableAndRespectsThePlatformTheme() {
+        Repo.setTheme("system")
+        val selected=androidx.compose.runtime.mutableStateOf(false)
+        show("Theme preference") { androidx.compose.foundation.layout.Column {
+            Card { T("Theme preference"); Radio(selected.value,"Follow platform") { selected.value=!selected.value } }
+            NavRow("Read-only status",value="Online",chevron=false,onClick=null)
+            Bar(-1f,C.Accent); Bar(2f,C.Ok,track=C.Fill,height=8.dp)
+        } }
+        compose.onNodeWithText("Follow platform").performClick(); org.junit.Assert.assertTrue(selected.value)
+        compose.onNodeWithText("Read-only status").assertHasNoClickAction()
+        compose.onNodeWithText("Online").assertExists(); org.junit.Assert.assertTrue(ThemeMode.dark)
     }
 
 }
