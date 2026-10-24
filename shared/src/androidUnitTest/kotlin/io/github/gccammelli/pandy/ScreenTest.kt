@@ -1,6 +1,7 @@
 package io.github.gccammelli.pandy
 
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -1602,7 +1603,8 @@ class ScreenTest {
         val store=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
         val keys=listOf("demo","mode","show_unavailable","lan_serial","lan_ip","lan_model")
         val before=keys.associateWith { store.settings.getString(it) }
-        restorePrintSettings={ before.forEach { (k,v) -> store.settings.putString(k,v) } }
+        val theme=ThemeMode.mode
+        restorePrintSettings={ before.forEach { (k,v) -> store.settings.putString(k,v) }; Repo.setTheme(theme) }
         val ht=printer.info.ams.map { it.copy(model="AMS HT",protocolId=128,trays=it.trays.filterKeys { slot -> slot==1 }) }
         val tray=printer.info.ams.single().trays.getValue(1)
         val variants=listOf(
@@ -1620,6 +1622,9 @@ class ScreenTest {
             variant(info=printer.info.copy(ams=printer.info.ams.map { it.copy(ids=it.ids-setOf("sensor.humidity","sensor.humidity_index","sensor.ams_temp")) }),remove=listOf("sensor.subtask_name"),
                 set=arrayOf("sensor.print_status" to entity("finish"),"binary_sensor.firmware_update" to entity("on"),
                     "sensor.printable_objects" to entity("on",mapOf("objects" to JsonObject(mapOf("1" to JsonPrimitive("Cube"),"2" to JsonPrimitive("Sphere"),"3" to JsonPrimitive("Cone")))))),),
+            variant(remove=listOf("sensor.subtask_name"),set=arrayOf("sensor.print_status" to entity("failed"))),
+            variant(set=arrayOf("sensor.print_status" to entity("pause"),"sensor.printable_objects" to entity("on",mapOf("objects" to JsonObject(mapOf("1" to JsonPrimitive("Only part")))))),),
+            variant(info=printer.info.copy(ams=emptyList()),set=arrayOf("sensor.print_status" to entity("idle"))),
             variant(info=printer.info.copy(model="H2D",firmware=null),remove=listOf("switch.first_layer_inspector","switch.buildplate_marker_detector","switch.auto_switch_filament"),set=arrayOf("sensor.print_status" to entity("idle"))),
             variant(info=printer.info.copy(ams=printer.info.ams.map { it.copy(ids=it.ids-setOf("switch.ams_read_on_startup","switch.ams_remaining_estimation")) }),set=arrayOf("sensor.print_status" to entity("idle"))),
             variant(info=printer.info.copy(model="P1S"),set=arrayOf("sensor.print_status" to entity("running"),
@@ -1640,7 +1645,8 @@ class ScreenTest {
             tick.value // recomposing with unchanged arguments exercises each screen's skip path
             androidx.compose.runtime.key(index,p) { screens[index](p) }
         } } }
-        for((demo,mode,unavailable) in listOf(Triple("true","lan","true"),Triple("false","lan","true"),Triple("false","lan","false"),Triple("false","ha","true"),Triple("false","ha","false"))) {
+        for(themeName in listOf("light","dark")) for((demo,mode,unavailable) in listOf(Triple("true","lan","true"),Triple("false","lan","true"),Triple("false","lan","false"),Triple("false","ha","true"),Triple("false","ha","false"))) {
+            compose.runOnIdle { Repo.setTheme(themeName) }
             store.settings.putString("demo",demo); store.settings.putString("mode",mode); store.settings.putString("show_unavailable",unavailable)
             for(v in variants) for(index in screens.indices) {
                 compose.runOnIdle { selection.value=index to v }
@@ -1995,5 +2001,33 @@ class ScreenTest {
             compose.onNodeWithContentDescription("Back").performClick(); compose.waitForIdle()
         }
         compose.onNodeWithText("Prepare to Print").assertExists()
+    }
+
+    @Test fun liveViewHonoursTheCameraSwitchTheAutoplayChoiceAndMissingOrFailingBackends() {
+        val haField=Repo::class.java.getDeclaredField("ha").apply { isAccessible=true }
+        val originalHa=haField.get(Repo)
+        val before=Repo.setting("liveview_autoplay")
+        restorePrintSettings={ haField.set(Repo,originalHa); Repo.setSetting("liveview_autoplay",before) }
+        val demo=FakeHomeAssistant()
+        val brokenStills=object : HaBackend by demo { override suspend fun bytes(path: String): ByteArray = throw ApiException("No picture") }
+        val withHls=object : HaBackend by demo {
+            override suspend fun ws(commands: List<JsonObject>): List<JsonElement?> =
+                if(commands.single().s("type")=="camera/stream") listOf(buildJsonObject { put("url","/api/hls/test/master.m3u8") }) else demo.ws(commands)
+        }
+        val on=printer; val off=variant(set=arrayOf("switch.camera" to entity("off")))
+        data class Step(val printer: Printer,val autoplay: String?,val backend: HaBackend?)
+        val steps=listOf(Step(on,null,demo),Step(on,"never",demo),Step(on,"always",demo),Step(on,"always",null),Step(on,"always",brokenStills),Step(on,"always",withHls),Step(off,null,demo))
+        val selection=androidx.compose.runtime.mutableStateOf(0)
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            androidx.compose.runtime.key(selection.value) { LiveView(steps[selection.value].printer,androidx.compose.ui.Modifier.size(300.dp,170.dp),onFull={},zoom=true) }
+        } } }
+        for((index,step) in steps.withIndex()) {
+            Repo.setSetting("liveview_autoplay",step.autoplay); haField.set(Repo,step.backend)
+            compose.runOnIdle { selection.value=index }; compose.waitForIdle()
+            compose.mainClock.advanceTimeBy(1_500); compose.waitForIdle()
+            if(step.autoplay=="never") { compose.onNodeWithText("Tap to view").performClick(); compose.waitForIdle(); compose.mainClock.advanceTimeBy(1_500) }
+            if(step.printer===off) { compose.onNodeWithText("Turn on").performClick(); compose.waitForIdle() }
+        }
+        compose.onRoot().assertExists()
     }
 }

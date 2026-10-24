@@ -30,10 +30,15 @@ class ZipCoverageTest {
             { it.set16(firstCentral(it) + 10, 12) },              // an unsupported compression method
             { it.set32(firstCentral(it) + 20, 7L) },              // stored size that disagrees with its content
             { it.set32(firstCentral(it) + 24, 0xFFFFFFF0L) },     // content larger than anything allowed
+            { it.set32(firstCentral(it) + 20, 0xFFFFFFF0L) },     // stored size beyond what one read can hold
+            { it.set32(firstCentral(it) + 20, it.size.toLong() - 10) }, // stored size longer than the bytes that follow it
         )) {
             val copy = zip(); corrupt(copy)
             assertNull(read(copy), "a damaged archive must not yield data")
         }
+        val laterDamage = zip(); val second = (firstCentral(laterDamage) + 1 until laterDamage.size - 4).first { i -> laterDamage[i] == 0x50.toByte() && laterDamage[i + 1] == 0x4b.toByte() && laterDamage[i + 2] == 1.toByte() && laterDamage[i + 3] == 2.toByte() }
+        laterDamage.set32(second, 0L) // a damaged later entry ends the listing; earlier entries still read
+        assertEquals("hello", read(laterDamage)!!.second.decodeToString())
         assertNull(read(zip(), max = 2)) // an entry over the caller's size limit
         assertNull(read(zip().also { it.set16(firstCentral(it) + 10, 8) })) // "deflated" data that is not
     }
