@@ -349,11 +349,10 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     if (printerPicker) PrinterPicker(p, buildPlate, close = { printerPicker = false }, plate = { printerPicker = false; platePicker = true })
     if (platePicker) PlatePicker(buildPlate, close = { platePicker = false }) { buildPlate = it; platePicker = false }
     if (filamentPicker) FilamentPicker(p, pr, filamentIndex, auto, presets, manualMapping, close = { filamentPicker = false }) { slot ->
-        pr.filaments.getOrNull(filamentIndex)?.let { (type, colour) ->
-            manualMapping = manualMapping + (filamentKey(type, colour) to slot)
-            presets = true
-            Repo.setFilamentPreset(p.serial, manualMapping)
-        }
+        val (type, colour) = pr.filaments[filamentIndex] // the picker opens from a filament chip
+        manualMapping = manualMapping + (filamentKey(type, colour) to slot)
+        presets = true
+        Repo.setFilamentPreset(p.serial, manualMapping)
     }
     help?.let { topic -> HelpSheet(topic) { help = null } }
     if (confirmPrint) AlertDialog(
@@ -679,12 +678,12 @@ private fun PreviewMeshCanvas(mesh: PreviewMesh, colors: List<Long>, showPlate: 
     var pitch by remember(mesh) { mutableFloatStateOf(0.65f) }
     var zoom by remember(mesh) { mutableFloatStateOf(1f) }
     val vertices = remember(mesh) { mesh.triangles.flatMap { listOf(it.a, it.b, it.c) } }
-    val minX = remember(mesh) { vertices.minOf { it.x } }
-    val maxX = remember(mesh) { vertices.maxOf { it.x } }
-    val minY = remember(mesh) { vertices.minOf { it.y } }
-    val maxY = remember(mesh) { vertices.maxOf { it.y } }
-    val minZ = remember(mesh) { vertices.minOf { it.z } }
-    val maxZ = remember(mesh) { vertices.maxOf { it.z } }
+    val minX = remember(mesh) { vertices.fold(Float.MAX_VALUE) { m, v -> minOf(m, v.x) } }
+    val maxX = remember(mesh) { vertices.fold(-Float.MAX_VALUE) { m, v -> maxOf(m, v.x) } }
+    val minY = remember(mesh) { vertices.fold(Float.MAX_VALUE) { m, v -> minOf(m, v.y) } }
+    val maxY = remember(mesh) { vertices.fold(-Float.MAX_VALUE) { m, v -> maxOf(m, v.y) } }
+    val minZ = remember(mesh) { vertices.fold(Float.MAX_VALUE) { m, v -> minOf(m, v.z) } }
+    val maxZ = remember(mesh) { vertices.fold(-Float.MAX_VALUE) { m, v -> maxOf(m, v.z) } }
     Box(Modifier.fillMaxSize().pointerInput(mesh) {
         detectTransformGestures { _, pan, gestureZoom, _ ->
             yaw += pan.x * 0.01f
@@ -741,9 +740,10 @@ private fun PlatePicker(current: String, close: () -> Unit, choose: (String) -> 
 
 @Composable
 private fun FilamentPicker(p: Printer, project: Project, index: Int, auto: List<Int>?, presets: Boolean, selected: Map<String, Int>, close: () -> Unit, choose: (Int) -> Unit) = Sheet(close, "Please select filament", centeredTitle = true, confirm = "Confirm", onConfirm = close) {
-    if (project.filaments.isNotEmpty()) {
-        val current = project.filaments.getOrNull(index)?.let { (type, colour) -> if (presets) selected[filamentKey(type, colour)] else null } ?: auto?.getOrNull(index) ?: -1
-        T("${project.filaments.getOrNull(index)?.first ?: "Filament"} · choose a loaded spool", 13.sp, C.Sub, modifier = Modifier.padding(bottom = 8.dp))
+    run {
+        val (type, colour) = project.filaments[index]
+        val current = (if (presets) selected[filamentKey(type, colour)] else null) ?: auto?.getOrNull(index) ?: -1
+        T("$type · choose a loaded spool", 13.sp, C.Sub, modifier = Modifier.padding(bottom = 8.dp))
         p.ams.flatMap { (ams, spools) -> spools.mapIndexedNotNull { slot, spool -> spool?.takeIf { it.known }?.let { ams to (ams.trayId(slot) to it) } } }.forEach { (ams, tray) ->
             val (slot, spool) = tray
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { choose(slot) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -756,7 +756,7 @@ private fun FilamentPicker(p: Printer, project: Project, index: Int, auto: List<
                 Box(Modifier.size(28.dp).clip(CircleShape).background(Color(spool.color))); Spacer(Modifier.width(10.dp)); T("External spool", 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (current == 254) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
             }
         }
-    } else T("This model did not include filament metadata.", 14.sp, C.Sub)
+    }
 }
 
 /** Me › Settings › Slicer: the Pandy Slicer add-on through Home Assistant, or a slicer's address and optional token, with a check. */
