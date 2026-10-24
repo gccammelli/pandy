@@ -91,6 +91,68 @@ class WebPageTest {
         compose.runOnIdle { assertTrue(downloads.isEmpty()) }
     }
 
+    @Test fun anOversizedDecodedPrintTransferIsDiscardedAndTheNextImportStillWorks() {
+        val downloads = mutableListOf<WebDownload>()
+        compose.setContent { WebPage("https://makerworld.com", Modifier, { downloads += it }, WebState(), "X1C") }
+        compose.runOnIdle {
+            val web = views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
+            val shadow = shadowOf(web)
+            val bridge = shadow.getJavascriptInterface("PandyBridge")
+            val token = bridgeToken(bridge)
+            shadow.webViewClient.onPageFinished(web, "https://makerworld.com/model/1")
+            bridgeCall(bridge, "file", "large.3mf", "https://cdn.bblmw.com/large.3mf", token)
+            val id = pending(bridge).single()
+            // Valid individual chunks must still respect the aggregate 64 MiB limit.
+            val chunk = "A".repeat(65_536) // 49,152 decoded bytes
+            repeat(1_366) { index -> bridgeCall(bridge, "blobChunk", id, "large.3mf", index, 1_366, chunk, token) }
+            assertTrue(pending(bridge).isEmpty())
+        }
+        compose.runOnIdle {
+            assertTrue(downloads.isEmpty())
+            assertEquals("The model is too large to import", org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
+            val bridge = shadowOf(views(compose.activity.window.decorView).filterIsInstance<WebView>().single()).getJavascriptInterface("PandyBridge")
+            val token = bridgeToken(bridge)
+            bridgeCall(bridge, "file", "small.3mf", "https://cdn.bblmw.com/small.3mf", token)
+            bridgeCall(bridge, "blobChunk", pending(bridge).single(), "small.3mf", 0, 1, "AQI=", token)
+        }
+        compose.runOnIdle { assertArrayEquals(byteArrayOf(1, 2), downloads.single().bytes) }
+    }
+
+    @Test fun restartingAChunkTransferCannotMixItsPreviousPayloadOrExpireTheCompletedImport() {
+        val downloads = mutableListOf<WebDownload>()
+        compose.setContent { WebPage("https://makerworld.com", Modifier, { downloads += it }, WebState(), "X1C") }
+        compose.runOnIdle {
+            val web = views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
+            val shadow = shadowOf(web)
+            val bridge = shadow.getJavascriptInterface("PandyBridge")
+            val token = bridgeToken(bridge)
+            shadow.webViewClient.onPageFinished(web, "https://makerworld.com/model/1")
+            bridgeCall(bridge, "file", "model.3mf", "https://cdn.bblmw.com/model.3mf", token)
+            val id = pending(bridge).single()
+            bridgeCall(bridge, "blobChunk", id, "model.3mf", 0, 2, "CQ==", token)
+            bridgeCall(bridge, "blobChunk", id, "model.3mf", 0, 1, "AQI=", token)
+        }
+        compose.runOnIdle {
+            assertArrayEquals(byteArrayOf(1, 2), downloads.single().bytes)
+            shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMinutes(5))
+            assertEquals(1, downloads.size)
+        }
+    }
+
+    @Test fun debugBuildConsoleDiagnosticsAreLoggedAndReleaseBuildFlagsAreRestored() {
+        val info = compose.activity.applicationInfo
+        val original = info.flags
+        info.flags = original or android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE
+        try {
+            compose.setContent { WebPage("https://makerworld.com", Modifier, null, null, null) }
+            compose.runOnIdle {
+                val web = views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
+                shadowOf(web).webChromeClient.onConsoleMessage(android.webkit.ConsoleMessage("pandy diagnostic fixture", "test", 1, android.webkit.ConsoleMessage.MessageLevel.LOG))
+                assertTrue(org.robolectric.shadows.ShadowLog.getLogsForTag("PandyWeb").any { it.msg == "pandy diagnostic fixture" })
+            }
+        } finally { info.flags = original }
+    }
+
     @Test fun watchOnlyModeHandsSlicerLinksToTheCompanionAppWithoutImporting() {
         val downloads=mutableListOf<WebDownload>(); val state=WebState().apply { canPrint=false }
         compose.setContent { WebPage("https://makerworld.com",Modifier,{downloads+=it},state,"P1S") }

@@ -78,6 +78,32 @@ class LanTransportTest {
         }
     }
 
+    @Test fun closingAnActiveMqttConnectionDisconnectsAndStopsFurtherPublishing() = runBlocking<Unit> {
+        val disconnected = CompletableDeferred<Unit>()
+        Peer { socket ->
+            val input = DataInputStream(socket.inputStream)
+            val output = socket.outputStream
+            assertEquals(0x10, input.packet().first)
+            output.write(byteArrayOf(0x20, 2, 0, 0)); output.flush()
+            val subscription = input.packet()
+            output.write(byteArrayOf(0x90.toByte(), 3, subscription.second[0], subscription.second[1], 0)); output.flush()
+            val goodbye = input.packet()
+            assertEquals(0xe0, goodbye.first)
+            assertTrue(goodbye.second.isEmpty())
+            disconnected.complete(Unit)
+        }.use { peer ->
+            val link = PahoLink(config, { peer.context.socketFactory }, peer.port)
+            val connected = CompletableDeferred<Unit>()
+            val job = launch(Dispatchers.Default) { link.run({ connected.complete(Unit) }, {}) }
+            try {
+                withTimeout(5000) { connected.await() }
+                withContext(Dispatchers.IO) { link.close() }
+                withTimeout(5000) { disconnected.await() }
+                assertFailsWith<ApiException> { link.publish("after closing") }
+            } finally { job.cancelAndJoin(); link.close() }
+        }
+    }
+
     @Test fun mqttRejectedAccessCodeHasAnActionableError() = runBlocking<Unit> {
         Peer(connections = 2) { socket ->
             DataInputStream(socket.inputStream).packet()

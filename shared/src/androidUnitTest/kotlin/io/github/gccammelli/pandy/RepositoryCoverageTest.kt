@@ -123,6 +123,39 @@ class RepositoryCoverageTest {
         Repo.logout(); Dispatchers.resetMain()
     }
 
+    @Test fun unloadingWithoutAnAmsAddressesTheExternalSpoolHolder() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            boot(emptyMap())
+            val demo = FakeHomeAssistant()
+            val sent = java.util.concurrent.ConcurrentLinkedQueue<JsonObject>()
+            backend(object : HaBackend by demo {
+                override suspend fun post(path: String, body: String): String {
+                    assertEquals("/api/services/bambu_lab/unload_filament", path)
+                    sent += json.parseToJsonElement(body).jsonObject
+                    return "[]"
+                }
+            })
+            val info = demo.printers().single()
+            val errors = mutableListOf<String>()
+            Printer(info.copy(ams = emptyList()), emptyMap()).unload { errors += it }.join()
+            assertTrue(errors.isEmpty())
+            assertEquals(info.externalDevice, sent.single().s("device_id"))
+        } finally { Repo.logout(); Dispatchers.resetMain() }
+    }
+
+    @Test fun removingAlreadyAbsentConnectionsKeepsTheSlicerAndAnEmptyState() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            boot(mapOf("slicer_url" to "https://slicer.example"))
+            repeat(2) { Repo.removeDirectPrinter(); Repo.removeHa() }
+            assertNull(Repo.ha)
+            assertNull(Repo.extras)
+            assertFalse(Repo.state.value.on)
+            assertEquals("https://slicer.example", Repo.setting("slicer_url"))
+        } finally { Repo.logout(); Dispatchers.resetMain() }
+    }
+
     @Test fun directSetupKeepsHomeAssistantAndReplacesAPreviousPrinter() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         try {

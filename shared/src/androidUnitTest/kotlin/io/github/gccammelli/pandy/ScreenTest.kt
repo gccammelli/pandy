@@ -82,12 +82,15 @@ class ScreenTest {
     }
 
     @org.junit.After fun stop() {
+        modelDispatcher = kotlinx.coroutines.Dispatchers.Default
         Repo.stop(); debugDownload.value=null
         testHttpClients.forEach { it.close() }
         restorePrintSettings?.invoke()
     }
 
     @Before fun home() {
+        // Robolectric's unconfined frame clock can otherwise apply background parse completions off the UI thread.
+        modelDispatcher = kotlinx.coroutines.Dispatchers.Main
         Repo.stop()
         val values = mutableMapOf("demo" to "true")
         Repo.init(PlatformStorage(object : KeyValue {
@@ -214,6 +217,18 @@ class ScreenTest {
     @Test fun devicesShowPrinter() = show(printer.name) { DevicesTab(st, printer) }
     @Test fun controlsShowTemperatures() = show("Device Control") { ControlScreen(printer) }
     @Test fun motionShowsAxes() = show("XYZ") { MotionScreen(printer) }
+    @Test fun motionControlsStillWorkWhenThePrinterHasNoCamera() {
+        val cameraLess = variant(remove = listOf("camera.camera"), set = arrayOf("sensor.print_status" to entity("idle")))
+        show("XYZ") { MotionScreen(cameraLess) }
+        compose.onNodeWithText("Toolhead").assertExists()
+        compose.onNodeWithText("Heatbed").assertExists()
+        compose.onNodeWithText("↑1", substring = false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("/move_axis") } }
+        val sent = json.parseToJsonElement(commands.last { it.first.endsWith("/move_axis") }.second).jsonObject
+        assertEquals("Z", sent.s("axis"))
+        assertEquals("-1", sent.s("distance"))
+    }
+
     @Test fun skipShowsObjects() = show("Skip Parts") { SkipScreen(printer) }
     @Test fun filamentShowsSpools() = show("Filament") { FilamentScreen(printer) }
     @Test fun settingsShowPrinter() = show("Settings") { PrinterSettingsScreen(printer) }
@@ -2291,6 +2306,30 @@ class ScreenTest {
             }
         }
         compose.onRoot().assertExists()
+    }
+
+    @Test fun leavingFilesCancelsThePendingListingInsteadOfPublishingAFailure() {
+        val started = java.util.concurrent.atomic.AtomicBoolean()
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean()
+        val demo = FakeHomeAssistant()
+        val backend = object : HaBackend by demo {
+            override suspend fun get(path: String): String {
+                started.set(true)
+                try { kotlinx.coroutines.awaitCancellation() } finally { cancelled.set(true) }
+            }
+        }
+        val extras = Repo::class.java.getDeclaredField("extras").apply { isAccessible = true }
+        val original = extras.get(Repo)
+        restorePrintSettings = { extras.set(Repo, original) }
+        extras.set(Repo, backend)
+        val visible = androidx.compose.runtime.mutableStateOf(true)
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            if (visible.value) FilesScreen(printer)
+        } } }
+        compose.waitUntil(5000) { compose.waitForIdle(); started.get() }
+        compose.runOnIdle { visible.value = false }
+        compose.waitUntil(5000) { compose.waitForIdle(); cancelled.get() }
+        compose.onNodeWithText("Couldn't load timelapses").assertDoesNotExist()
     }
 
     @Test fun settingsOnAPlatformWithoutBackgroundAlertsHidesTheAlertOption() {

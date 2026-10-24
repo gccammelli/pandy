@@ -102,6 +102,8 @@ internal var downloadModel: suspend (String, String?) -> ByteArray = ::download
 /** Reads a model's 3D preview meshes; a variable only so tests can slow or fail it. */
 internal var loadPreviewMeshes: suspend (ByteArray) -> Map<Int, io.github.gccammelli.pandy.PreviewMesh> = { readPreviewMeshes(it) }
 
+internal var modelDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default
+
 const val MAKERWORLD = "https://makerworld.com/en"
 
 /**
@@ -232,7 +234,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             reading = true
             val loaded = try {
                 // shortcut: timeout checks happen between zip entries; revisit if a scanner proves slow
-                withContext(Dispatchers.Default) { withTimeout(60_000) { readProject(bytes, preview = false) } }
+                withContext(modelDispatcher) { withTimeout(60_000) { readProject(bytes, preview = false) } }
             } catch (e: TimeoutCancellationException) {
                 throw ApiException("Reading the model took too long. Try another model or file.")
             }
@@ -251,7 +253,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         val bytes = data
         if (view != PrepareView.Preview || previewLoaded || project == null || bytes == null) return@LaunchedEffect
         val meshes = try {
-            withContext(Dispatchers.Default) { withTimeout(120_000) { loadPreviewMeshes(bytes) } }
+            withContext(modelDispatcher) { withTimeout(120_000) { loadPreviewMeshes(bytes) } }
         } catch (e: CancellationException) {
             if (e is TimeoutCancellationException) emptyMap() else throw e // leaving the preview must not publish a half result
         } catch (e: Exception) {

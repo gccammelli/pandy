@@ -35,6 +35,23 @@ class LanCoverageTest {
         assertEquals("0", flat.value("current_layer"))
     }
 
+    @Test fun aLegacyZeroLayerRemainsZeroWhenItsNestedReplacementIsAbsentOrInvalid() {
+        for (nested in listOf("", "null", "{}", "{\"layer_num\":\"unknown\"}", "{\"layer_num\":-1}")) {
+            val block = if (nested.isEmpty()) "" else ",\"3D\":$nested"
+            val report = rows("""{"gcode_state":"RUNNING","mc_percent":10,"layer_num":0$block}""")
+            assertEquals("0", report.value("current_layer"), nested)
+        }
+    }
+
+    @Test fun highTemperatureAmsTypeAliasesWorkWithoutAModelField() {
+        for (kind in listOf("N3S", "N3S Lite", "AMS HT")) {
+            val found = rows("""{"ams":{"tray_now":"128","ams":[{"id":0,"type":"$kind","tray":[{"id":0,"tray_type":"PLA"}]}]}}""")
+            val tray = found.first { it.first.key == "tray" }
+            assertEquals("AMS HT", tray.first.deviceModel)
+            assertEquals("true", tray.second.attrs.s("active"))
+        }
+    }
+
     @Test fun printOptionsComeFromEveryFirmwareGenerationAndAreOmittedWhenUnreported() {
         val nested = rows("""{"print_option":{"auto_recovery":"enable","auto_switch_filament":false}}""")
         assertEquals("on", nested.value("auto_recovery")); assertEquals("off", nested.value("auto_switch_filament"))
