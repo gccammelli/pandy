@@ -52,12 +52,13 @@ class ScreenTest {
         override fun requestNotifications() { notificationRequests++ }
         override fun watchInBackground(on: Boolean) { backgroundWatching += on }
         override fun pickImage(done: (ByteArray?) -> Unit) = done(null)
-        override fun saveImage(jpeg: ByteArray, name: String, done: (Throwable?) -> Unit) { savedImages += jpeg; done(null) }
+        override fun saveImage(jpeg: ByteArray, name: String, done: (Throwable?) -> Unit) { savedImages += jpeg; done(saveImageError) }
     }
 
     private val commands = java.util.concurrent.ConcurrentLinkedQueue<Pair<String,String>>()
     private val savedImages = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
     private val savedFiles = mutableListOf<Triple<String,String,ByteArray>>()
+    private var saveImageError: Throwable?=null
     private val messages = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private val testHttpClients = mutableListOf<io.ktor.client.HttpClient>()
     private var restorePrintSettings: (() -> Unit)? = null
@@ -1187,6 +1188,31 @@ class ScreenTest {
         compose.waitUntil(5000) { compose.waitForIdle(); commands.size>before }
         val request=json.parseToJsonElement(commands.last().second).jsonObject
         assertEquals(info.ids.getValue("button.stop"),request.s("entity_id"))
+    }
+
+    @Test fun fullscreenStillsRecoverFromMalformedFramesAndPhotoSaveErrorsStayVisible() {
+        val original=Repo.ha!!
+        val frames=java.util.concurrent.atomic.AtomicInteger()
+        val jpeg=java.io.File("src/commonMain/composeResources/files/demo_camera.jpg").readBytes()
+        Repo::class.java.getDeclaredField("ha").apply { isAccessible=true }.set(Repo,object : HaBackend by original {
+            override suspend fun bytes(path: String)=if(frames.incrementAndGet()==1) byteArrayOf(1,2,3) else jpeg
+        })
+        Repo.setSetting("liveview_autoplay","always")
+        saveImageError=java.io.IOException("Photos permission denied")
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { LiveFullScreen(printer) } } }
+        compose.mainClock.advanceTimeBy(1500)
+        compose.waitUntil(5000) { compose.waitForIdle(); frames.get()>=2 }
+        compose.onRoot().performTouchInput {
+            pinch(androidx.compose.ui.geometry.Offset(width*.4f,height*.5f),androidx.compose.ui.geometry.Offset(width*.6f,height*.5f),
+                androidx.compose.ui.geometry.Offset(width*.2f,height*.5f),androidx.compose.ui.geometry.Offset(width*.8f,height*.5f),300)
+            swipe(androidx.compose.ui.geometry.Offset(width*.4f,height*.5f),androidx.compose.ui.geometry.Offset(width*.6f,height*.55f),200)
+            pinch(androidx.compose.ui.geometry.Offset(width*.2f,height*.5f),androidx.compose.ui.geometry.Offset(width*.8f,height*.5f),
+                androidx.compose.ui.geometry.Offset(width*.45f,height*.5f),androidx.compose.ui.geometry.Offset(width*.55f,height*.5f),300)
+        }
+        compose.onAllNodes(hasClickAction()).onFirst().performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); messages.contains("Couldn't save: Photos permission denied") }
+        org.junit.Assert.assertArrayEquals(jpeg,savedImages.single())
+        compose.onNodeWithContentDescription("Back").assertExists()
     }
 
 }
