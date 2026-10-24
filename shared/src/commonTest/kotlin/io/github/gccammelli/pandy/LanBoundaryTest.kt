@@ -98,4 +98,30 @@ class LanBoundaryTest {
         val withPick = entities("{}", job = LanJob("job-key", byteArrayOf(1), byteArrayOf(2), emptyMap()))
         assertEquals("job-key", withPick.getValue("pick_image").state)
     }
+
+    @Test fun advertisedCameraAndNozzleVariantsRemainReadableAcrossPrinterFamilies() {
+        for((model,rtsp) in listOf("X1C" to true,"H2D" to true,"P2S" to true,"P1S" to false,"A1" to false))
+            assertEquals(rtsp,rtspCamera(model))
+        for((raw,expected) in listOf("HS00" to "stainless_steel","HH01" to "high_flow_hardened_steel",
+            "HH05" to "high_flow_tungsten_carbide","HS99" to "unknown","1234" to "1234","HHxx" to "HHxx","brass" to "brass"))
+            assertEquals(expected,nozzleTypeName(raw))
+        for((raw,expected) in listOf(null to "idle","" to "idle","running" to "running","PAUSE" to "pause","FINISH" to "finish",
+            "FAILED" to "failed","PREPARE" to "prepare","SLICING" to "slicing","FUTURE_STATE" to "future_state"))
+            assertEquals(expected,printStatus(raw))
+        for((level,label) in listOf(1 to "silent",2 to "standard",3 to "sport",4 to "ludicrous",99 to "standard"))
+            assertEquals(label,entities("""{"print":{"spd_lvl":$level,"subtask_name":" "}}""").getValue("speed_profile").state)
+    }
+
+    @Test fun globalAmsSettingsTakePrecedenceAndUnknownTraysNeverInventFilament() {
+        val report=obj("""{"print":{"ams":{"calibrate_remain_flag":true,"ams":[
+            {"id":0,"calibrate_remain_flag":false,"tray":[42,{"id":0,"tray_type":"PLA","tray_sub_brands":""}]},
+            {"id":1,"tray":null}]},"vt_tray":{"tray_type":null}}}""")
+        val rows=lanEntities(config,report,true)
+        assertTrue(rows.filter { it.first.key=="ams_remaining_estimation" }.all { it.second.state=="on" })
+        val first=rows.first { it.first.device=="ams0" && it.first.key=="tray" }.second
+        assertEquals("PLA",first.state); assertEquals("PLA",first.attrs.s("type"))
+        val absent=rows.first { it.first.device=="ams1" && it.first.key=="tray" }.second
+        assertEquals("Empty",absent.state); assertEquals("true",absent.attrs.s("empty"))
+        assertEquals("",rows.single { it.first.key=="external_spool" }.second.attrs.s("type"))
+    }
 }

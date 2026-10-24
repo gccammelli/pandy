@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import io.github.gccammelli.pandy.ui.*
@@ -1141,6 +1142,51 @@ class ScreenTest {
         compose.onNodeWithText("Remove Home Assistant").performScrollTo().assertExists()
         compose.onNodeWithText("Slicer for MakerWorld prints").performScrollTo().performClick()
         kotlin.test.assertIs<Screen.Slicer>(Nav.stack.last())
+    }
+
+    @Test fun heaterIndicatorsRespectTheTwoDegreeDeadBandAndMissingTargets() {
+        val value=androidx.compose.runtime.mutableStateOf<Pair<Double?,Double?>>(25.0 to 100.0)
+        var color: androidx.compose.ui.graphics.Color?=null
+        show("Temperature") {
+            androidx.compose.foundation.layout.Column {
+                T("Temperature")
+                TempText(value.value.first,value.value.second,24.sp,12.sp)
+                val next=tempColor(value.value.first,value.value.second)
+                androidx.compose.runtime.SideEffect { color=next }
+            }
+        }
+        for((now,target,arrow) in listOf(
+            Triple(25.0,100.0,"↑"),Triple(150.0,100.0,"↓"),Triple(98.0,100.0,null),
+            Triple(102.0,100.0,null),Triple(50.0,0.0,null),Triple(50.0,null,null),Triple(null,100.0,null)
+        )) {
+            compose.runOnIdle { value.value=now to target }
+            for(mark in listOf("↑","↓")) if(mark==arrow) compose.onNodeWithText(mark,substring=false).assertExists()
+                else compose.onNodeWithText(mark,substring=false).assertDoesNotExist()
+            if(now==null) compose.onNodeWithText("--",substring=false).assertExists()
+            assertEquals(when(arrow) { "↑" -> C.Orange; "↓" -> C.Blue; else -> C.Text },color)
+        }
+    }
+
+    @Test fun incompleteRunningAndPausedJobsKeepUnknownMetricsVisibleAndConfirmBeforeStopping() {
+        val info=printer.info.copy(ids=printer.info.ids-setOf("sensor.subtask_name","sensor.total_layers","sensor.remaining_time","sensor.stage"))
+        val selected=androidx.compose.runtime.mutableStateOf(Printer(info,snapshot))
+        show(printer.name) { DevicesTab(st,selected.value) }
+        compose.onNodeWithText("Printing",substring=false).assertExists()
+        compose.onNodeWithText("Layer ${printer.layer}/?",substring=false).assertExists()
+        val statusId=info.ids.getValue("sensor.print_status")
+        compose.runOnIdle { selected.value=Printer(info,snapshot+(statusId to Entity(statusId,"pause",JsonObject(emptyMap())))) }
+        compose.onNodeWithText("Paused",substring=false).assertExists()
+        compose.onNodeWithText("Resume",substring=false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("/press") } }
+        compose.onNodeWithText("Stop",substring=false).performClick()
+        compose.onNodeWithText("Stop printing?").assertExists()
+        compose.onNodeWithText("Cancel").performClick()
+        val before=commands.size
+        compose.onNodeWithText("Stop",substring=false).performClick()
+        compose.onAllNodesWithText("Stop",substring=false).filter(hasAnyAncestor(isDialog())).onFirst().performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.size>before }
+        val request=json.parseToJsonElement(commands.last().second).jsonObject
+        assertEquals(info.ids.getValue("button.stop"),request.s("entity_id"))
     }
 
 }
