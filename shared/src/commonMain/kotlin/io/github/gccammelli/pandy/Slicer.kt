@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import kotlinx.coroutines.CancellationException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
@@ -141,7 +142,7 @@ private fun JsonArray?.orEmpty() = this ?: JsonArray(emptyList())
 suspend fun download(url: String, cookies: String?): ByteArray = try {
     // The client's 20-minute limits suit slicing; a stalled model download must fail in seconds, not look like a hang.
     slicerHttp.prepareGet(url) {
-        timeout { connectTimeoutMillis = 15_000; socketTimeoutMillis = 30_000; requestTimeoutMillis = 5 * 60_000 }
+        timeout { connectTimeoutMillis = 15_000; socketTimeoutMillis = downloadStallMillis; requestTimeoutMillis = 5 * 60_000 }
         if (!cookies.isNullOrBlank()) header("Cookie", cookies)
     }.execute { r ->
         if (r.status.value !in 200..299) throw ApiException("The download failed (HTTP ${r.status.value})")
@@ -155,20 +156,24 @@ suspend fun download(url: String, cookies: String?): ByteArray = try {
         while (true) {
             val n = channel.readAvailable(buffer, 0, buffer.size)
             if (n == -1) break
-            if (n == 0) continue
             if (total > MAX_DOWNLOAD_BYTES - n) throw ApiException("The download is too large (64 MiB maximum)")
             result.append(buffer, n)
             total += n
         }
         result.toByteArray()
     }
-} catch (e: HttpRequestTimeoutException) {
-    throw ApiException("The download timed out. Check your connection and try again.")
-} catch (e: ConnectTimeoutException) {
-    throw ApiException("Couldn't reach MakerWorld's download server. Try again.")
-} catch (e: SocketTimeoutException) {
-    throw ApiException("The download stalled. Try again.")
+} catch (e: Exception) {
+    // Transport errors name the (signed) URL; show a plain message instead.
+    if (e is CancellationException || e is ApiException) throw e
+    throw ApiException(if (e.timedOut()) "The download stalled or timed out. Check your connection and try again." else "The download failed. Check your connection and try again.")
 }
+
+private fun Throwable.timedOut() = generateSequence(this) { it.cause }.any {
+    it is HttpRequestTimeoutException || it is ConnectTimeoutException || it is SocketTimeoutException || it.message?.startsWith("Socket timeout has expired") == true
+}
+
+/** How long a model download may go without data before it fails (a variable only so tests needn't wait). */
+internal var downloadStallMillis = 30_000L
 
 private class GrowingBytes {
     private var bytes = ByteArray(64 * 1024)
@@ -242,7 +247,7 @@ suspend fun readPreviewMeshes(data: ByteArray, modelSettings: String? = null): M
     componentPaths(model3d).forEach { path ->
         data.boundedEntry(MAX_PREVIEW_ENTRY_BYTES, Regex.escape(path))?.decodeToString()?.let { modelSources[path] = xmlObjects(it) }
     }
-    return runCatching { previewMeshes(model3d, modelSources, plateObjectIds(model), objectExtruders(model)) }.getOrDefault(emptyMap())
+    return previewMeshes(model3d, modelSources, plateObjectIds(model), objectExtruders(model))
 }
 
 private const val MAX_PREVIEW_TRIANGLES = 20_000
@@ -361,7 +366,7 @@ private fun applyTransform(v: PreviewVertex, t: FloatArray) = PreviewVertex(
     t[6] * v.x + t[7] * v.y + t[8] * v.z + t[11],
 )
 
-private fun appendMesh(body: String, transform: FloatArray, out: MutableList<PreviewTriangle>, defaultMaterial: Int? = null) {
+private fun appendMesh(body: String, transform: FloatArray, out: MutableList<PreviewTriangle>, defaultMaterial: Int?) {
     val vertices = ArrayList<PreviewVertex?>()
     eachTag(body, "vertex") { attrs ->
         val x = xmlAttr(attrs, "x")?.toFloatOrNull(); val y = xmlAttr(attrs, "y")?.toFloatOrNull(); val z = xmlAttr(attrs, "z")?.toFloatOrNull()

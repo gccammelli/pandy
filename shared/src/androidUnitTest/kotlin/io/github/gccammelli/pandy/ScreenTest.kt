@@ -1539,5 +1539,129 @@ class ScreenTest {
         assertEquals(listOf(LanConfig("192.0.2.9","01P00000ABC","test-code","P1S",""),LanConfig("192.0.2.9","01P00000ABC","test-code","P1S","")),attempts)
     }
 
-}
+    @Test fun theSheetClosesAtOnceWhenThereIsNoPrinterToPrintOn() {
+        Repo.state.value=UiState(on=true,printers=emptyList())
+        var closed=false
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            PrintModelSheet(WebDownload(null,"Test model.3mf",null,modelBytes(),true),{closed=true})
+        } } }
+        compose.waitForIdle()
+        org.junit.Assert.assertTrue(closed)
+    }
 
+    @Test fun backFromThe3DPreviewReturnsToPreparationAndAnUnknownBedFallsBackToTexturedPei() {
+        val bedless=snapshot.filterKeys { it != printer.info.ids["sensor.print_bed_type"] }
+        Repo.state.value=st.copy(printers=listOf(Printer(printer.info,bedless)))
+        var back: (() -> Unit)? = null
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            PrintModelSheet(WebDownload(null,"Test model.3mf",null,modelBytes(mapOf("Metadata/model_settings.config" to "<config><plate><metadata key=\"plater_id\" value=\"1\"/></plate></config>".toByteArray())),true),{}) { back=it }
+        } } }
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Textured PEI Plate").assertExists()
+        compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+        compose.onNodeWithText("Show the plate").assertExists()
+        compose.runOnIdle { back!!.invoke() }
+        compose.onNodeWithText("3D Preview").assertExists()
+        compose.onNodeWithText("Show the plate").assertDoesNotExist()
+    }
+
+    private fun afterConfirming(change: (MutableMap<String,Entity>) -> Unit): Pair<java.util.concurrent.ConcurrentLinkedQueue<String>,java.util.concurrent.atomic.AtomicBoolean> {
+        val (uploads,closed)=prepareRealPrint("""[{"id":"1","type":"PLA","color":"#FFFFFF"}]""")
+        val values=snapshot.toMutableMap()
+        for((role,state) in listOf("binary_sensor.online" to "on","sensor.ip_address" to "127.0.0.1")) { val id=printer.info.ids.getValue(role); values[id]=Entity(id,state,JsonObject(emptyMap())) }
+        change(values)
+        Repo.state.value=Repo.state.value.copy(printers=listOf(Printer(Repo.state.value.printers!!.single().info,values)))
+        compose.waitForIdle()
+        compose.onNodeWithText("Start",substring=false).performClick()
+        return uploads to closed
+    }
+
+    @Test fun aBusyPrinterStopsAConfirmedPrintBeforeSlicing() {
+        val (uploads,closed)=afterConfirming { values -> val id=printer.info.ids.getValue("sensor.print_status"); values[id]=Entity(id,"running",JsonObject(emptyMap())) }
+        compose.waitUntil(5000) { compose.waitForIdle(); messages.contains("The printer is busy") }
+        org.junit.Assert.assertTrue(uploads.isEmpty()); org.junit.Assert.assertFalse(closed.get())
+    }
+
+    @Test fun aPrinterWithoutAKnownAddressAsksForTheAccessCodeInsteadOfSlicing() {
+        val (uploads,_)=afterConfirming { values -> values.remove(printer.info.ids.getValue("sensor.ip_address")) }
+        compose.waitUntil(5000) { compose.waitForIdle(); messages.contains("Enter the printer's access code") }
+        org.junit.Assert.assertTrue(uploads.isEmpty())
+    }
+
+    private fun variant(info: PrinterInfo = printer.info, remove: List<String> = emptyList(), vararg set: Pair<String,Entity>): Printer {
+        val states=snapshot.toMutableMap()
+        for(key in remove) printer.info.ids[key]?.let { states.remove(it) }
+        for((key,entity) in set) { val id=printer.info.ids[key] ?: key; states[id]=Entity(id,entity.state,entity.attrs) }
+        return Printer(info,states)
+    }
+    private fun entity(state: String, attrs: Map<String,Any> = emptyMap()) = Entity("",state,JsonObject(attrs.mapValues { (_,v) -> v as? JsonElement ?: JsonPrimitive(v.toString()) }))
+
+    @Test fun everyDeviceScreenRendersForEachConnectionModeAndPrinterVariant() {
+        val store=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
+        val keys=listOf("demo","mode","show_unavailable","lan_serial","lan_ip","lan_model")
+        val before=keys.associateWith { store.settings.getString(it) }
+        restorePrintSettings={ before.forEach { (k,v) -> store.settings.putString(k,v) } }
+        val ht=printer.info.ams.map { it.copy(model="AMS HT",protocolId=128,trays=it.trays.filterKeys { slot -> slot==1 }) }
+        val tray=printer.info.ams.single().trays.getValue(1)
+        val variants=listOf(
+            variant(),
+            variant(set=arrayOf("sensor.print_status" to entity("idle"))),
+            variant(set=arrayOf("sensor.print_status" to entity("pause"),"binary_sensor.print_error" to entity("on",mapOf("error" to "Filament ran out"))),remove=listOf("sensor.chamber_temp","sensor.stage","sensor.current_layer","sensor.total_layers")),
+            variant(set=arrayOf("sensor.print_status" to entity("finish"))),
+            variant(set=arrayOf("sensor.print_status" to entity("failed"),"binary_sensor.hms_errors" to entity("on",mapOf("Count" to "2","1-Error" to "Nozzle clogged","1-Code" to "HMS_0300_0100_0001_0001","1-Wiki" to "https://example.invalid/1","2-Error" to "Door open")))),
+            variant(set=arrayOf("binary_sensor.online" to entity("off"))),
+            variant(set=arrayOf("binary_sensor.developer_lan_mode" to entity("off"),"sensor.print_status" to entity("idle"),"sensor.printable_objects" to entity("on",mapOf("objects" to "x")))),
+            variant(info=printer.info.copy(ams=emptyList(),external=emptyList(),externalDevice=null),remove=listOf("camera.camera","light.chamber_light","sensor.nozzle_type","image.cover_image","image.pick_image")),
+            variant(info=printer.info.copy(ams=ht,ids=printer.info.ids+("number.target_chamber_temperature" to "number.chamber_target")),set=arrayOf("number.target_chamber_temperature" to entity("40"),"sensor.print_status" to entity("idle"))),
+            variant(info=printer.info.copy(ams=printer.info.ams+printer.info.ams.map { it.copy(index=2,haId="second",protocolId=1) }),set=arrayOf(tray to entity("Empty",mapOf("empty" to "true")))),
+            variant(set=arrayOf("sensor.print_status" to entity("unavailable"),"sensor.ip_address" to entity("unknown"))),
+            variant(info=printer.info.copy(ams=printer.info.ams.map { it.copy(ids=it.ids-setOf("sensor.humidity","sensor.humidity_index","sensor.ams_temp")) }),remove=listOf("sensor.subtask_name"),
+                set=arrayOf("sensor.print_status" to entity("finish"),"binary_sensor.firmware_update" to entity("on"),
+                    "sensor.printable_objects" to entity("on",mapOf("objects" to JsonObject(mapOf("1" to JsonPrimitive("Cube"),"2" to JsonPrimitive("Sphere"),"3" to JsonPrimitive("Cone")))))),),
+            variant(info=printer.info.copy(model="P1S"),set=arrayOf("sensor.print_status" to entity("running"),
+                "sensor.printable_objects" to entity("on",mapOf("objects" to JsonObject(mapOf("1" to JsonPrimitive("Cube"),"2" to JsonPrimitive("Sphere"),"x" to JsonPrimitive("Bad"))))),
+                "sensor.skipped_objects" to entity("on",mapOf("objects" to JsonArray(listOf(JsonPrimitive("2"),JsonPrimitive("x"))))),
+                printer.info.ams.single().trays.getValue(1) to entity("PLA",mapOf("name" to "PLA Basic","type" to "PLA","color" to "#FF0000FF","remain" to "40","active" to "true","nozzle_temp_min" to "190","nozzle_temp_max" to "230")),
+                printer.info.ams.single().trays.getValue(2) to entity("Unknown",mapOf("type" to "","color" to "#00000000","remain" to "-1")),
+                printer.info.ams.single().trays.getValue(3) to entity("Other",mapOf("name" to "Mystery","type" to "ABS","color" to "#0000FFFF","remain" to "100","cols" to JsonArray(listOf(JsonPrimitive("#FFFFFFFF"),JsonPrimitive("#000000FF"))))))),
+        )
+        val screens: List<@Composable (Printer) -> Unit> = listOf(
+            { p -> DevicesTab(st.copy(printers=listOf(p)),p) }, { p -> ControlScreen(p) }, { p -> FilamentScreen(p) },
+            { p -> PrinterSettingsScreen(p) }, { p -> CalibrationScreen(p) }, { p -> PrintOptionsScreen(p) }, { p -> AmsSettingsScreen(p) },
+            { p -> AssistantScreen(p) }, { p -> SkipScreen(p) }, { p -> MotionScreen(p) },
+        )
+        val selection=androidx.compose.runtime.mutableStateOf(0 to variants.first())
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            val (index,p)=selection.value
+            androidx.compose.runtime.key(index,p) { screens[index](p) }
+        } } }
+        for((demo,mode,unavailable) in listOf(Triple("true","lan","true"),Triple("false","lan","true"),Triple("false","lan","false"),Triple("false","ha","true"),Triple("false","ha","false"))) {
+            store.settings.putString("demo",demo); store.settings.putString("mode",mode); store.settings.putString("show_unavailable",unavailable)
+            for(v in variants) for(index in screens.indices) {
+                compose.runOnIdle { selection.value=index to v }
+                compose.waitForIdle(); compose.mainClock.advanceTimeBy(200)
+            }
+        }
+        compose.onRoot().assertExists()
+    }
+
+    @Test fun theDevicesTabCoversConnectingStatesAndSeveralPrinters() {
+        val store=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
+        val before=store.settings.getString("demo"); restorePrintSettings={ store.settings.putString("demo",before) }
+        store.settings.putString("demo","false")
+        val offline=variant(remove=listOf("sensor.print_status"),set=arrayOf("binary_sensor.online" to entity("off")))
+        val running=variant(set=arrayOf("sensor.print_status" to entity("running")))
+        val selected=androidx.compose.runtime.mutableStateOf(running)
+        val state=androidx.compose.runtime.mutableStateOf(st.copy(live=false,printers=listOf(running,offline)))
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { DevicesTab(state.value,selected.value) } } }
+        compose.waitForIdle(); compose.onNodeWithText("Connecting…",substring=false).assertExists()
+        compose.runOnIdle { state.value=st.copy(live=true,printers=listOf(running,offline)) }
+        compose.onAllNodesWithText(running.name).onFirst().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Offline",substring=false).assertExists()
+        compose.onNodeWithText("Offline",substring=false).performClick()
+        compose.runOnIdle { selected.value=offline }
+        compose.waitForIdle(); compose.onNodeWithText("Device Offline").assertExists()
+    }
+}

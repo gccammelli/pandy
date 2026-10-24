@@ -88,8 +88,6 @@ import io.github.gccammelli.pandy.slotForTrayId
 import io.github.gccammelli.pandy.trayId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.cos
@@ -224,12 +222,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             val bytes = d.bytes ?: withContext(Dispatchers.Default) { download(d.url!!, d.cookies) }
             data = bytes
             reading = true
-            val loaded = try {
-                // shortcut: the timeout is only checked between zip entries, not mid-scan; the scanners are linear, so upgrade only if one proves slow
-                withContext(Dispatchers.Default) { withTimeout(60_000) { readProject(bytes, preview = false) } }
-            } catch (e: TimeoutCancellationException) {
-                throw ApiException("Reading the model took too long. Try another model or file.")
-            }
+            val loaded = withContext(Dispatchers.Default) { readProject(bytes, preview = false) }
             manualMapping = Repo.filamentPreset(p.serial)
             presets = false
             project = loaded.also {
@@ -245,9 +238,9 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         val bytes = data
         if (view != PrepareView.Preview || previewLoaded || project == null || bytes == null) return@LaunchedEffect
         val meshes = try {
-            withContext(Dispatchers.Default) { withTimeout(120_000) { readPreviewMeshes(bytes) } }
+            withContext(Dispatchers.Default) { readPreviewMeshes(bytes) }
         } catch (e: CancellationException) {
-            if (e is TimeoutCancellationException) emptyMap() else throw e // leaving the preview must not publish a half result
+            throw e // leaving the preview must not publish a half result
         } catch (e: Exception) {
             emptyMap()
         }
