@@ -2030,4 +2030,50 @@ class ScreenTest {
         }
         compose.onRoot().assertExists()
     }
+
+    @Test fun filesAndHistoryShowEmptyOddAndFailedListsAndTimelapsesPlayOrExplainWhyNot() {
+        val store=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
+        val extrasField=Repo::class.java.getDeclaredField("extras").apply { isAccessible=true }
+        val originalExtras=extrasField.get(Repo); val demoBefore=store.settings.getString("demo")
+        restorePrintSettings={ extrasField.set(Repo,originalExtras); store.settings.putString("demo",demoBefore) }
+        val demo=FakeHomeAssistant()
+        fun entry(name: String,dir: String) = """{"filename":"$name","path":"SERIAL/$dir/$name","size":${name.length*1000},"modified":"2026-10-01T08:00:00","thumbnail_path":"SERIAL/$dir/$name.png"}"""
+        fun backend(videos: List<String>,files: List<String>,failure: Throwable? = null) = object : HaBackend by demo {
+            override suspend fun get(path: String): String = when {
+                failure!=null -> throw failure
+                "/videos" in path -> """{"videos":[${videos.joinToString(",")}]}"""
+                "print_history" in path -> """{"files":[${files.joinToString(",")}]}"""
+                else -> demo.get(path)
+            }
+        }
+        val silent=object : Exception() { override val message: String? = null }
+        val backends=listOf(
+            backend(emptyList(),emptyList()),
+            backend(listOf(entry("a.mp4","timelapse"),entry("bb.mp4","timelapse"),entry("ccc.mp4","timelapse")),listOf(entry("m.3mf","prints"))),
+            backend(emptyList(),emptyList(),java.io.IOException("Home Assistant said no")),
+            backend(emptyList(),emptyList(),silent),
+        )
+        val screen=androidx.compose.runtime.mutableStateOf(0 to 0)
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            androidx.compose.runtime.key(screen.value) { if(screen.value.first==0) FilesScreen(printer) else HistoryScreen(printer) }
+        } } }
+        for(demoMode in listOf("false","true")) {
+            store.settings.putString("demo",demoMode)
+            for((index,b) in backends.withIndex()) {
+                extrasField.set(Repo,b)
+                for(which in 0..1) {
+                    compose.runOnIdle { screen.value=which to index*10+which }; compose.waitForIdle(); compose.mainClock.advanceTimeBy(500); compose.waitForIdle()
+                    if(which==0) {
+                        if(compose.onAllNodesWithText("a.mp4",substring=true).fetchSemanticsNodes().isNotEmpty()) {
+                            compose.onAllNodesWithText("a.mp4",substring=true).onFirst().performClick(); compose.waitForIdle(); compose.mainClock.advanceTimeBy(500)
+                            compose.onNodeWithContentDescription("Close").performClick(); compose.waitForIdle()
+                        }
+                        if(compose.onAllNodesWithText("Try again").fetchSemanticsNodes().isNotEmpty()) { compose.onNodeWithText("Try again").performClick(); compose.waitForIdle() }
+                        compose.onNodeWithText("Model").performClick(); compose.waitForIdle(); compose.mainClock.advanceTimeBy(500); compose.waitForIdle()
+                    }
+                }
+            }
+        }
+        compose.onRoot().assertExists()
+    }
 }

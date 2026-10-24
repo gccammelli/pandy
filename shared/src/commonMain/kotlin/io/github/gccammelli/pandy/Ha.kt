@@ -255,15 +255,15 @@ fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
         val children = all.filter { it.s("via_device_id") == p.s("id") }
         var nextHtId = 128
         val ams = children.filter { c -> byDevice[c.s("id")].orEmpty().any { it.s("translation_key") == "tray" } }.mapIndexed { i, c ->
-            val rows = byDevice[c.s("id")].orEmpty()
+            val rows = byDevice.getValue(c.s("id")) // this device has tray entities (see the filter above)
             val trays = rows.filter { it.s("translation_key") == "tray" }.mapNotNull { r ->
                 val n = Regex("""tray_(\d+)$""").find(r.s("unique_id").orEmpty())?.groupValues?.get(1)?.toIntOrNull() ?: return@mapNotNull null
                 n to r.s("entity_id")!!
             }.toMap()
-            val protocolId = c.a("identifiers")?.mapNotNull { id ->
+            val protocolId = c.a("identifiers")!!.mapNotNull { id -> // every device here was chosen for having identifiers
                 val value = id.jsonArray.getOrNull(1) as? JsonPrimitive
                 Regex("""(?i)(?:^|_)ams_?(\d+)$""").find(value?.contentOrNull.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
-            }?.firstOrNull()
+            }.firstOrNull()
             val model = c.s("model") ?: "AMS"
             val singleSlot = model.contains("HT", true) || model.contains("N3S", true) || protocolId?.let { it >= 128 } == true
             if (protocolId != null && protocolId >= 128) nextHtId = maxOf(nextHtId, protocolId + 1)

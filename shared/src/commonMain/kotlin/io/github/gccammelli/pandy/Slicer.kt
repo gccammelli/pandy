@@ -168,7 +168,7 @@ suspend fun download(url: String, cookies: String?): ByteArray = try {
     throw ApiException(if (e.timedOut()) "The download stalled or timed out. Check your connection and try again." else "The download failed. Check your connection and try again.")
 }
 
-private fun Throwable.timedOut() = generateSequence(this) { it.cause }.any {
+internal fun Throwable.timedOut() = generateSequence(this) { it.cause }.any {
     it is HttpRequestTimeoutException || it is ConnectTimeoutException || it is SocketTimeoutException || it.message?.startsWith("Socket timeout has expired") == true
 }
 
@@ -233,7 +233,7 @@ suspend fun readProject(data: ByteArray, preview: Boolean = true): Project {
         settings?.s("sparse_infill_density")?.let { density(it) }
     ).takeIf { it.isNotEmpty() }?.joinToString(", ")
     val meshes = if (preview) readPreviewMeshes(data, model) else emptyMap()
-    val mesh = meshes[plateIds.firstOrNull()?.first] ?: meshes.values.firstOrNull()
+    val mesh = meshes[plateIds.first().first] ?: meshes.values.firstOrNull()
     return Project(plates, (settings?.get("printer_model") as? JsonPrimitive)?.contentOrNull, types.mapIndexed { i, t -> t to (colours.getOrNull(i) ?: "#888888") },
         sliceInfo != null || data.entry("Metadata/plate_\\d+\\.gcode\\.md5") != null,
         settings?.s("profile_name")?.takeIf { it.isNotBlank() }, profileSummary, mesh, meshes)
@@ -260,7 +260,7 @@ private val XML_METADATA = Regex("""<metadata\b([^>]*)/?>""")
 private val XML_PLATE = Regex("""(?s)<plate\b[^>]*>(.*?)</plate>""")
 private val WHITESPACE = Regex("""\s+""")
 
-private fun xmlAttr(text: String, name: String): String? {
+internal fun xmlAttr(text: String, name: String): String? {
     var from = 0
     while (true) {
         val at = text.indexOf(name, from)
@@ -294,7 +294,7 @@ private fun xmlObjects(xml: String): Map<Int, String> {
         val close = if (tagEnd < 0) -1 else xml.indexOf("</object>", tagEnd)
         if (close < 0) break
         if (xml[tagEnd - 1] == '/') { at = xml.indexOf("<object", tagEnd); continue } // self-closing: no body, don't pair it with the next </object>
-        if (xml.getOrNull(at + 7)?.isWhitespace() == true) xmlAttr(xml.substring(at + 7, tagEnd), "id")?.toIntOrNull()?.let { out[it] = xml.substring(tagEnd + 1, close) }
+        if (xml[at + 7].isWhitespace()) xmlAttr(xml.substring(at + 7, tagEnd), "id")?.toIntOrNull()?.let { out[it] = xml.substring(tagEnd + 1, close) }
         at = xml.indexOf("<object", close)
     }
     return out
@@ -411,7 +411,7 @@ private fun previewMeshes(root: String, sources: Map<String, Map<Int, String>>, 
         val triangles = mutableListOf<PreviewTriangle>()
         val candidates = buildItems.filter { wanted.isEmpty() || it.first in wanted }.ifEmpty { buildItems }
         if (candidates.isNotEmpty()) candidates.forEach { (id, transform) -> appendObject(id, ROOT_MODEL_PATH, transform, sources, triangles, objectMaterials) }
-        else sources[ROOT_MODEL_PATH].orEmpty().keys.forEach { id -> appendObject(id, ROOT_MODEL_PATH, identityTransform(), sources, triangles, objectMaterials) }
+        else sources.getValue(ROOT_MODEL_PATH).keys.forEach { id -> appendObject(id, ROOT_MODEL_PATH, identityTransform(), sources, triangles, objectMaterials) }
         triangles.takeIf { it.isNotEmpty() }?.let { plate to PreviewMesh(it) }
     }.toMap()
 }
@@ -425,7 +425,7 @@ fun previewMesh(xml: String): PreviewMesh? {
 private data class PlateMetrics(val seconds: Int?, val grams: Double?, val parts: Int?)
 
 private fun sliceInfoMetrics(xml: String, plate: Int): PlateMetrics? {
-    val block = XML_PLATE.findAll(xml).firstOrNull { xmlMetadata(it.groupValues[1])["index"]?.toIntOrNull() == plate }?.groupValues?.get(1) ?: return null
+    val block = (XML_PLATE.findAll(xml).firstOrNull { xmlMetadata(it.groupValues[1])["index"]?.toIntOrNull() == plate } ?: return null).groupValues[1]
     val metadata = xmlMetadata(block)
     val parts = Regex("""<object\b([^>]*)/?>""").findAll(block).count { xmlAttr(it.groupValues[1], "skipped") != "true" }
     return PlateMetrics(metadata["prediction"]?.toIntOrNull(), metadata["weight"]?.toDoubleOrNull(), parts.takeIf { it > 0 })

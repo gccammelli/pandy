@@ -163,4 +163,31 @@ class RepositoryCoverageTest {
             assertFalse(Repo.state.value.on)
         } finally { Repo.logout(); Dispatchers.resetMain() }
     }
+
+    @Test fun printOptionsAndPrintStartsTellEachBackendOnlyWhatItUnderstands() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        boot(emptyMap())
+        val demo = FakeHomeAssistant()
+        val bodies = mutableListOf<JsonObject>()
+        val recording = object : HaBackend by demo {
+            override suspend fun post(path: String, body: String): String { bodies += json.parseToJsonElement(body).jsonObject; return "[]" }
+        }
+        val info = demo.printers().single()
+        val p = Printer(info, emptyMap())
+        try {
+            backend(recording)
+            p.setPrintOption("auto_recovery", true) {}.join(); assertEquals("1", bodies.last().s("option"))
+            p.setPrintOption("auto_recovery", false) {}.join(); assertEquals("0", bodies.last().s("option"))
+            p.setPrintOption("auto_switch_filament", true) {}.join(); assertNull(bodies.last()["option"])
+            // The bed type goes only to a printer that is controlled directly, never to Home Assistant's service.
+            recording.startPrint(p, "cache/a.3mf", 1, null, false, true, true, "hot_plate"); assertNull(bodies.last()["bed_type"])
+            val usable = PreferPrimaryBackend(recording, demo)
+            usable.startPrint(p, "cache/a.3mf", 1, listOf(0), false, true, true, "hot_plate"); assertEquals("hot_plate", bodies.last().s("bed_type"))
+            assertEquals("true", bodies.last().s("use_ams")); assertEquals("0", bodies.last().s("ams_mapping"))
+            val failing = object : HaBackend by demo { override suspend fun post(path: String, body: String): String = throw ApiException("down") }
+            val fallenBack = PreferPrimaryBackend(failing, recording)
+            runCatching { fallenBack.startPrint(p, "cache/a.3mf", 1, null, false, true, true, "hot_plate") }
+            fallenBack.startPrint(p, "cache/a.3mf", 1, null, false, true, true, "hot_plate"); assertNull(bodies.last()["bed_type"])
+        } finally { Repo.logout(); Dispatchers.resetMain() }
+    }
 }

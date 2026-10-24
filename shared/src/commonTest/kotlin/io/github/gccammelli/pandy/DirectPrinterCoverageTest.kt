@@ -120,4 +120,21 @@ class DirectPrinterCoverageTest {
             assertEquals("cover", printer.bytes("/api/image_proxy/image.pandy_test123_cover_image?v=k").decodeToString())
         } finally { printer.stop() }
     }
+
+    @Test fun aDirectPrinterThatCannotBeReachedIsStoppedAndHomeAssistantTakesOver() = runBlocking<Unit> {
+        var closed = 0
+        val unreachable = DirectPrinter(config, true, { object : LanLink {
+            override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) { throw ApiException("Bad access code") }
+            override fun publish(payload: String) = Unit
+            override fun close() { closed++ }
+        } })
+        val remote = FakeHomeAssistant()
+        val both = PreferPrimaryBackend(unreachable, remote)
+        assertTrue(both.usingPrimary)
+        assertEquals(1, both.printers().size) // the direct attempt fails; the remote registry answers
+        assertFalse(both.usingPrimary)
+        assertTrue(closed >= 1)
+        assertEquals(remote.base, both.base)
+        both.printers() // later reads go straight to the fallback
+    }
 }

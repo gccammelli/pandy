@@ -5,7 +5,7 @@ import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
@@ -92,5 +92,27 @@ class SlicerCoverageTest {
         assertEquals(listOf(null, null, null), p.plates.map { it.seconds })
         assertEquals(listOf(1, null, null), p.plates.map { it.parts })
         assertEquals(listOf(null, null, null), p.plates.map { it.grams })
+    }
+
+    @Test fun cancellingADownloadMidwayCancelsTheCallerInsteadOfReportingAFailure() = runBlocking<Unit> {
+        val (server, base) = serve { exchange -> exchange.sendResponseHeaders(200, 0); exchange.responseBody.use { it.write(1); it.flush(); Thread.sleep(1500) } }
+        try {
+            val job = launch(Dispatchers.Default) { download("$base/slow", null) }
+            delay(300); job.cancelAndJoin()
+            assertTrue(job.isCancelled)
+        } finally { server.stop(0) }
+    }
+
+    @Test fun onlyTimeoutsAreDescribedAsTimeoutsAndAttributeLookupSkipsLookalikes() {
+        assertTrue(io.ktor.client.plugins.HttpRequestTimeoutException("https://x", 1).timedOut())
+        assertTrue(io.ktor.client.network.sockets.ConnectTimeoutException("connect", null).timedOut())
+        assertTrue(io.ktor.client.network.sockets.SocketTimeoutException("socket", null).timedOut())
+        assertTrue(IllegalStateException("outer", RuntimeException("Socket timeout has expired [url=x]")).timedOut())
+        assertFalse(IllegalStateException("other", RuntimeException("Connection refused")).timedOut())
+        assertEquals("1", xmlAttr("id=\"1\" x=\"2\"", "id")) // at the very start of the text
+        assertEquals("1", xmlAttr("id='1'", "id"))
+        assertEquals("2", xmlAttr("xid=\"1\" id=\"2\"", "id"))
+        assertNull(xmlAttr("id=1", "id")); assertNull(xmlAttr("id", "id")); assertNull(xmlAttr("id=\"unterminated", "id"))
+        assertEquals("model.gcode.3mf", slicedFileName("attachment")) // no filename at all
     }
 }
