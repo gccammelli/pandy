@@ -44,9 +44,10 @@ class KitTest {
     }
 
     @Test fun everySharedComponentAcceptsEachOptionalParameterOnAndOff() {
-        val step = mutableStateOf(0)
+        val step = mutableStateOf(0); val tick = mutableStateOf(0)
         var dismissed = 0; var confirmed = 0; var navClicks = 0
         compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            tick.value // a recomposition with unchanged arguments lets the components skip
             when (step.value) {
                 0 -> Column {
                     T("plain"); T("size", size = 14.sp); T("colour", color = Color.Red); T("weight", weight = FontWeight.Bold)
@@ -78,6 +79,7 @@ class KitTest {
         for (s in 0..7) {
             compose.runOnIdle { step.value = s }
             compose.waitForIdle(); compose.mainClock.advanceTimeBy(300)
+            compose.runOnIdle { tick.value++ }; compose.waitForIdle()
         }
         compose.onNodeWithText("Needs a thing").performClick()
         assertEquals(1, opened.size)

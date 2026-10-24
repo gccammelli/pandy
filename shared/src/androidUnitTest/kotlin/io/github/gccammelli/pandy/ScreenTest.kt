@@ -1620,6 +1620,8 @@ class ScreenTest {
             variant(info=printer.info.copy(ams=printer.info.ams.map { it.copy(ids=it.ids-setOf("sensor.humidity","sensor.humidity_index","sensor.ams_temp")) }),remove=listOf("sensor.subtask_name"),
                 set=arrayOf("sensor.print_status" to entity("finish"),"binary_sensor.firmware_update" to entity("on"),
                     "sensor.printable_objects" to entity("on",mapOf("objects" to JsonObject(mapOf("1" to JsonPrimitive("Cube"),"2" to JsonPrimitive("Sphere"),"3" to JsonPrimitive("Cone")))))),),
+            variant(info=printer.info.copy(model="H2D",firmware=null),remove=listOf("switch.first_layer_inspector","switch.buildplate_marker_detector","switch.auto_switch_filament"),set=arrayOf("sensor.print_status" to entity("idle"))),
+            variant(info=printer.info.copy(ams=printer.info.ams.map { it.copy(ids=it.ids-setOf("switch.ams_read_on_startup","switch.ams_remaining_estimation")) }),set=arrayOf("sensor.print_status" to entity("idle"))),
             variant(info=printer.info.copy(model="P1S"),set=arrayOf("sensor.print_status" to entity("running"),
                 "sensor.printable_objects" to entity("on",mapOf("objects" to JsonObject(mapOf("1" to JsonPrimitive("Cube"),"2" to JsonPrimitive("Sphere"),"x" to JsonPrimitive("Bad"))))),
                 "sensor.skipped_objects" to entity("on",mapOf("objects" to JsonArray(listOf(JsonPrimitive("2"),JsonPrimitive("x"))))),
@@ -1632,9 +1634,10 @@ class ScreenTest {
             { p -> PrinterSettingsScreen(p) }, { p -> CalibrationScreen(p) }, { p -> PrintOptionsScreen(p) }, { p -> AmsSettingsScreen(p) },
             { p -> AssistantScreen(p) }, { p -> SkipScreen(p) }, { p -> MotionScreen(p) },
         )
-        val selection=androidx.compose.runtime.mutableStateOf(0 to variants.first())
+        val selection=androidx.compose.runtime.mutableStateOf(0 to variants.first()); val tick=androidx.compose.runtime.mutableStateOf(0)
         compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
             val (index,p)=selection.value
+            tick.value // recomposing with unchanged arguments exercises each screen's skip path
             androidx.compose.runtime.key(index,p) { screens[index](p) }
         } } }
         for((demo,mode,unavailable) in listOf(Triple("true","lan","true"),Triple("false","lan","true"),Triple("false","lan","false"),Triple("false","ha","true"),Triple("false","ha","false"))) {
@@ -1642,6 +1645,7 @@ class ScreenTest {
             for(v in variants) for(index in screens.indices) {
                 compose.runOnIdle { selection.value=index to v }
                 compose.waitForIdle(); compose.mainClock.advanceTimeBy(200)
+                compose.runOnIdle { tick.value++ }; compose.waitForIdle()
             }
         }
         compose.onRoot().assertExists()
@@ -1699,9 +1703,10 @@ class ScreenTest {
             { u,_ -> MeTab(u) }, { _,_ -> SettingsScreen() }, { _,_ -> AboutScreen() }, { _,p -> HistoryScreen(p) }, { _,p -> FilesScreen(p) },
             { _,_ -> Connect() }, { _,_ -> AddHaScreen() }, { _,_ -> AddDirectScreen() }, { _,_ -> SlicerScreen() }, { _,_ -> LiveviewSettingsScreen() },
         )
-        val selection=androidx.compose.runtime.mutableStateOf(Triple(0,st,printer))
+        val selection=androidx.compose.runtime.mutableStateOf(Triple(0,st,printer)); val tick=androidx.compose.runtime.mutableStateOf(0)
         compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
             val (index,u,p)=selection.value
+            tick.value
             androidx.compose.runtime.key(index,u,p) { screens[index](u,p) }
         } } }
         for((settings,secrets,backends) in modes) {
@@ -1714,6 +1719,7 @@ class ScreenTest {
             for(u in listOf(st,st.copy(printers=two),st.copy(printers=emptyList()),st.copy(printers=null))) for(index in screens.indices) {
                 compose.runOnIdle { selection.value=Triple(index,u,printer) }
                 compose.waitForIdle(); compose.mainClock.advanceTimeBy(200)
+                compose.runOnIdle { tick.value++ }; compose.waitForIdle()
             }
         }
         compose.onRoot().assertExists()
@@ -1846,5 +1852,148 @@ class ScreenTest {
         compose.waitUntil(5000) { compose.waitForIdle(); closed.get() }
         org.junit.Assert.assertTrue(commands.any { it.first.endsWith("/print_project_file") })
         assertEquals("127.0.0.1",settings["lan_ip"]) // the saved details were not replaced
+    }
+
+    @Test fun everyFilamentSlotOpensItsDetailsAndLoadAndUnloadFollowThePrintState() {
+        val trays=printer.info.ams.single().trays
+        fun spool(vararg attrs: Pair<String,String>) = entity("Spool",attrs.toMap())
+        val idle=variant(set=arrayOf("sensor.print_status" to entity("idle"),
+            trays.getValue(1) to spool("name" to "PLA Basic","type" to "PLA","color" to "#FF0000FF","remain" to "40","active" to "true","nozzle_temp_min" to "190","nozzle_temp_max" to "230"),
+            trays.getValue(2) to spool("name" to "Mystery","type" to "","color" to "#00000000","remain" to "-1"),
+            trays.getValue(3) to entity("Empty",mapOf("empty" to "true")),
+            trays.getValue(4) to spool("name" to "ABS","type" to "ABS","color" to "#0000FFFF","remain" to "75")))
+        val running=variant(set=arrayOf("sensor.print_status" to entity("running")))
+        val selected=androidx.compose.runtime.mutableStateOf(idle)
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { FilamentScreen(selected.value) } } }
+        for(p in listOf(idle,running)) {
+            compose.runOnIdle { selected.value=p }; compose.waitForIdle()
+            for(slot in listOf("A1","A2","A3","A4")) {
+                compose.onNodeWithText(slot).performScrollTo().performClick()
+                compose.waitForIdle(); compose.mainClock.advanceTimeBy(300)
+                if(p===idle && slot=="A1") { compose.onNodeWithText("This filament is loaded in the nozzle.").assertExists(); compose.onNodeWithText("190–230°C").assertExists() }
+                if(slot=="A4" && p===idle) compose.onNodeWithText("Load").performClick() else compose.onNodeWithContentDescription("Close").performClick()
+                compose.waitForIdle()
+            }
+            compose.onNodeWithText("Unload").performScrollTo().performClick()
+            compose.waitForIdle()
+        }
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("load_filament") } && messages.contains("Can't unload while printing") }
+        org.junit.Assert.assertTrue(commands.any { it.first.endsWith("unload_filament") })
+    }
+
+    @Test fun everyPrintOptionToggleSendsItsCommandAndRevertsWhenTheCommandFails() {
+        show("Print Options") { PrintOptionsScreen(printer) }
+        val toggles=compose.onAllNodes(isToggleable()).fetchSemanticsNodes().size
+        org.junit.Assert.assertTrue(toggles>=4)
+        for(round in 1..2) {
+            commandFailure=if(round==2) "The printer rejected the option" else null
+            for(i in 0 until toggles) { compose.onAllNodes(isToggleable())[i].performScrollTo().performClick(); compose.waitForIdle() }
+            compose.waitUntil(5000) { compose.waitForIdle(); if(round==1) commands.size>=toggles else messages.contains("The printer rejected the option") }
+        }
+        commandFailure=null
+    }
+
+    @Test fun deviceControlSheetsCoverTheNozzleFansChamberAndIdleSpeedTaps() {
+        val idle=variant(set=arrayOf("sensor.print_status" to entity("idle")))
+        val noFanId=variant(info=printer.info.copy(ids=printer.info.ids-"fan.chamber_fan"),set=arrayOf("sensor.print_status" to entity("idle")))
+        val chamberless=variant(remove=listOf("sensor.chamber_temp"),set=arrayOf("sensor.print_status" to entity("idle")))
+        val selected=androidx.compose.runtime.mutableStateOf(idle)
+        fun until(what: String,condition: () -> Boolean) { try { compose.waitUntil(5000) { compose.waitForIdle(); condition() } } catch(e: androidx.compose.ui.test.ComposeTimeoutException) { throw AssertionError("$what; toasts=${messages.toList()} commands=${commands.toList()}") } }
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { ControlScreen(selected.value) } } }
+        compose.waitForIdle()
+        compose.onNodeWithText("Speed").performClick()
+        until("speed toast") { messages.contains("Speed can only be changed while printing") }
+        // The nozzle sheet: temperature entry sends the target.
+        compose.onNodeWithText("Nozzle & Extruder").performClick()
+        compose.waitForIdle(); compose.mainClock.advanceTimeBy(300)
+        compose.onAllNodes(hasText("°C",substring=true) and hasClickAction()).onLast().performClick()
+        compose.waitForIdle(); compose.mainClock.advanceTimeBy(300)
+        compose.onNode(hasSetTextAction()).performTextReplacement("215")
+        compose.onNodeWithText("Done").performClick()
+        until("nozzle target") { commands.any { it.second.contains("215") } }
+        compose.onNodeWithContentDescription("Close").performClick()
+        // The fan sheet skips a fan without an entity and every step button works.
+        compose.runOnIdle { selected.value=noFanId }; compose.waitForIdle()
+        compose.onNodeWithText("fan on",substring=true).performClick()
+        compose.waitForIdle(); compose.mainClock.advanceTimeBy(300)
+        for(i in 0..2) { compose.onAllNodes(isToggleable()).onFirst().performClick(); compose.waitForIdle() }
+        compose.onNodeWithContentDescription("Close").performClick()
+        // A printer with no chamber sensor shows a dash and the chamber tile is inert.
+        compose.runOnIdle { selected.value=chamberless }; compose.waitForIdle()
+        compose.onNodeWithText("Chamber",substring=false).performClick()
+        compose.onNodeWithText("Chamber temperature").assertDoesNotExist()
+    }
+
+    @Test fun theMotionPadIgnoresDisabledAndOutOfRangeTapsAndMapsBothLeftDiagonals() {
+        val idle=variant(set=arrayOf("sensor.print_status" to entity("idle")))
+        val printing=variant(set=arrayOf("sensor.print_status" to entity("running")))
+        val selected=androidx.compose.runtime.mutableStateOf(printing)
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { MotionScreen(selected.value) } } }
+        compose.waitForIdle()
+        val label=compose.onNodeWithText("Toolhead").fetchSemanticsNode().boundsInRoot
+        val density=compose.activity.resources.displayMetrics.density
+        val center=androidx.compose.ui.geometry.Offset(label.center.x,label.bottom+115*density)
+        fun tap(dx: Int,dy: Int) { compose.onRoot().performTouchInput { click(center+androidx.compose.ui.geometry.Offset(dx*density,dy*density)) }; compose.waitForIdle() }
+        tap(80,0) // printing: the pad is disabled
+        compose.runOnIdle { selected.value=idle }; compose.waitForIdle()
+        tap(150,0) // far outside the pad
+        for((dx,dy) in listOf(-80 to -30,-80 to 30,-60 to -60,-60 to 60)) tap(dx,dy)
+        compose.waitUntil(5000) { commands.count { it.first.endsWith("/move_axis") }>=2 }
+    }
+
+    @Test fun filamentMatchingAndPreviewColoursWorkAcrossPrinterSetups() {
+        val before=Repo.filamentPreset(printer.serial)
+        restorePrintSettings={ Repo.setFilamentPreset(printer.serial,before) } // the test saves presets; other tests must not inherit them
+        val model=modelBytes(mapOf("Metadata/project_settings.config" to """{"printer_model":"Bambu Lab P1S","filament_type":["PLA","PETG","ABS"],"filament_colour":["#FFFFFF","#00AE42","#123456"]}""".toByteArray()))
+        val ams=printer.info.ams.single(); val trays=ams.trays
+        fun spool(vararg attrs: Pair<String,String>) = entity("Spool",attrs.toMap())
+        val idle=arrayOf("sensor.print_status" to entity("idle"))
+        val setups=listOf(
+            variant(set=idle),
+            variant(info=printer.info.copy(ams=listOf(ams.copy(model="AMS HT",protocolId=128,trays=mapOf(1 to trays.getValue(1))))),set=idle),
+            variant(info=printer.info.copy(ams=emptyList()),set=idle),
+            variant(set=arrayOf(*idle,trays.getValue(1) to spool("type" to "PLA","color" to "#FFFFFFFF","name" to "PLA"),trays.getValue(2) to spool("type" to "","color" to "#00000000"),
+                trays.getValue(3) to spool("type" to "ABS","color" to "#123456FF","name" to "ABS"),trays.getValue(4) to entity("Empty",mapOf("empty" to "true")))),
+            variant(info=printer.info.copy(ams=emptyList(),external=emptyList()),set=idle),
+        )
+        Repo.state.value=st.copy(printers=listOf(setups.first()))
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            PrintModelSheet(WebDownload(null,"Test model.3mf",null,model,true),{})
+        } } }
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Next").performClick()
+        fun exists(text: String) = compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+        for(setup in setups) {
+            compose.runOnIdle { Repo.state.value=st.copy(printers=listOf(setup)) }; compose.waitForIdle()
+            for(type in listOf("PLA","PETG","ABS")) {
+                if(!exists(type)) continue
+                compose.onAllNodesWithText(type).onFirst().performScrollTo().performClick()
+                compose.waitForIdle(); compose.mainClock.advanceTimeBy(300)
+                if(exists("Please select filament")) {
+                    val row=compose.onAllNodes(hasText("AMS",substring=true) or hasText("External spool")).fetchSemanticsNodes()
+                    if(row.isNotEmpty()) compose.onAllNodes(hasText("AMS",substring=true) or hasText("External spool")).onFirst().performClick()
+                    compose.waitForIdle(); compose.onNodeWithText("Confirm").performClick(); compose.waitForIdle()
+                }
+            }
+            compose.onAllNodes(isToggleable()).onFirst().performScrollTo().performClick(); compose.waitForIdle() // use my filament presets
+            for(type in listOf("PLA","PETG")) if(exists(type)) {
+                compose.onAllNodesWithText(type).onFirst().performScrollTo().performClick(); compose.waitForIdle(); compose.mainClock.advanceTimeBy(300)
+                if(exists("Please select filament")) {
+                    if(compose.onAllNodes(hasText("AMS",substring=true)).fetchSemanticsNodes().isNotEmpty()) compose.onAllNodes(hasText("AMS",substring=true)).onLast().performClick()
+                    compose.onNodeWithText("Confirm").performClick(); compose.waitForIdle()
+                }
+            }
+            compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+            compose.waitForIdle(); compose.mainClock.advanceTimeBy(300)
+            compose.onNodeWithText("Printer colors").performClick(); compose.waitForIdle()
+            compose.onNodeWithText("Customize colors").performClick(); compose.waitForIdle(); compose.mainClock.advanceTimeBy(300)
+            compose.onAllNodes(hasClickAction() and !hasText("Done") and !hasText("Reset")).fetchSemanticsNodes().size // colour swatches
+            compose.onNodeWithText("Done").performClick(); compose.waitForIdle()
+            compose.onNodeWithText("Model colors").performClick(); compose.waitForIdle()
+            compose.onNodeWithText("Reset").performClick(); compose.waitForIdle()
+            compose.onAllNodes(isToggleable()).onFirst().performClick() // show the plate
+            compose.onNodeWithContentDescription("Back").performClick(); compose.waitForIdle()
+        }
+        compose.onNodeWithText("Prepare to Print").assertExists()
     }
 }

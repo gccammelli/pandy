@@ -7,25 +7,6 @@ import kotlin.test.*
 class DirectPrinterCoverageTest {
     private val config = LanConfig("192.0.2.1", "TEST123", "test-code", "X1C")
 
-    /** A zip with stored (uncompressed) entries, enough for the printer's partial-read zip reader. */
-    private fun storedZip(vararg entries: Pair<String, String>): ByteArray {
-        fun le(v: Int, n: Int) = ByteArray(n) { ((v shr (8 * it)) and 0xFF).toByte() }
-        val out = mutableListOf<Byte>(); val central = mutableListOf<Byte>()
-        for ((name, text) in entries) {
-            val nameBytes = name.encodeToByteArray(); val data = text.encodeToByteArray(); val offset = out.size
-            out += le(0x04034b50, 4).toList() + le(20, 2).toList() + le(0, 2).toList() + le(0, 2).toList() + le(0, 4).toList() + le(0, 4).toList() +
-                le(data.size, 4).toList() + le(data.size, 4).toList() + le(nameBytes.size, 2).toList() + le(0, 2).toList() + nameBytes.toList() + data.toList()
-            central += le(0x02014b50, 4).toList() + le(20, 2).toList() + le(20, 2).toList() + le(0, 2).toList() + le(0, 2).toList() + le(0, 4).toList() + le(0, 4).toList() +
-                le(data.size, 4).toList() + le(data.size, 4).toList() + le(nameBytes.size, 2).toList() + le(0, 2).toList() + le(0, 2).toList() + le(0, 2).toList() + le(0, 2).toList() +
-                le(0, 4).toList() + le(offset, 4).toList() + nameBytes.toList()
-        }
-        val directoryOffset = out.size
-        out += central
-        out += le(0x06054b50, 4).toList() + le(0, 2).toList() + le(0, 2).toList() + le(entries.size, 2).toList() + le(entries.size, 2).toList() +
-            le(central.size, 4).toList() + le(directoryOffset, 4).toList() + le(0, 2).toList()
-        return out.toByteArray()
-    }
-
     private class Files(val files: MutableMap<String, ByteArray>, val modified: Map<String, String> = emptyMap()) : PrinterStorage {
         override suspend fun list(dir: String) = files.filterKeys { it.substringBeforeLast('/').ifEmpty { "/" } == dir }
             .map { (p, b) -> FileEntry(p.substringAfterLast('/'), b.size.toLong(), modified[p] ?: "2026-10-01T08:00", false) }
@@ -91,6 +72,52 @@ class DirectPrinterCoverageTest {
             assertTrue(printer.bytes("$base/prints/cache/a.slice_info.config").decodeToString().contains("Cone"))
             assertEquals("No slice info", assertFailsWith<ApiException> { printer.bytes("$base/prints/cache/b.3mf.slice_info.config") }.message)
             assertEquals("Not on the printer any more", assertFailsWith<ApiException> { printer.bytes("$base/prints/cache/gone.3mf.png") }.message)
+        } finally { printer.stop() }
+    }
+
+    @Test fun aDroppedConnectionIsRetriedStrayMessagesAreIgnoredAndCommandsNeedALink() = runBlocking<Unit> {
+        var attempts = 0
+        val delivered = CompletableDeferred<Unit>()
+        val factory: (LanConfig) -> LanLink = {
+            attempts++
+            val attempt = attempts
+            object : LanLink {
+                override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) {
+                    if (attempt == 1) throw ApiException("Printer unreachable")
+                    onConnected()
+                    onMessage("""{"system":{"command":"unrelated"}}""")             // neither print nor info: ignored
+                    onMessage("""{"print":{"command":"gcode_line","gcode_state":"IDLE"}}""") // a print message that is not a status push
+                    onMessage(report("Panda", "plate_1.gcode"))
+                    delivered.complete(Unit)
+                    awaitCancellation()
+                }
+                override fun publish(payload: String) = Unit
+                override fun close() = Unit
+            }
+        }
+        val printer = DirectPrinter(config, false, factory, { Files(mutableMapOf()) })
+        try {
+            assertEquals("Not connected to the printer", assertFailsWith<ApiException> { printer.post("/api/services/light/turn_on", "{}") }.message)
+            printer.ws(listOf(buildJsonObject { put("type", "config/device_registry/list") }))
+            printer.ws(listOf(buildJsonObject { put("type", "unknown/type") })) // already running: not started a second time
+            withTimeout(10_000) { delivered.await() }
+            assertTrue(attempts >= 2)
+        } finally { printer.stop() }
+    }
+
+    @Test fun aJobWithoutAPickMapHasNoObjectPicture() = runBlocking<Unit> {
+        val files = mutableMapOf("/cache/Panda.3mf" to storedZip("Metadata/plate_1.png" to "cover"))
+        val printer = DirectPrinter(config, true, { Link(report("Panda", "plate_1.gcode")) }, { Files(files) })
+        try {
+            printer.ws(listOf(buildJsonObject { put("type", "config/entity_registry/list") }))
+            var covered = false
+            val stream = CoroutineScope(Dispatchers.Default).launch {
+                printer.stream(buildJsonObject {}) { ev -> if (ev.o("a")?.keys?.any { it.endsWith("cover_image") } == true) covered = true }
+            }
+            withTimeout(5000) { while (!covered) delay(25) }
+            stream.cancel()
+            assertEquals("No job picture", assertFailsWith<ApiException> { printer.bytes("/api/image_proxy/image.pandy_test123_pick_image?v=k") }.message)
+            assertEquals("cover", printer.bytes("/api/image_proxy/image.pandy_test123_cover_image?v=k").decodeToString())
         } finally { printer.stop() }
     }
 }

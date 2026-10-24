@@ -343,7 +343,7 @@ private fun PrinterFlagToggle(p: Printer, label: String, key: String, enabled: B
     val remote = p.flag(key)
     if (remote == null) {
         if (Repo.showUnavailable) NavRow(label, value = "Not available", labelColor = C.Sub, chevron = false)
-    } else if (enabled || Repo.showUnavailable) {
+    } else {
         var value by remember(remote) { mutableStateOf(remote) }
         ToggleRow(label, value, enabled = enabled) { next ->
             val old = value
@@ -365,7 +365,7 @@ fun AmsSettingsScreen(p: Printer) {
                 val autoRefill = p.flag("auto_switch_filament")
                 if (Repo.showUnavailable || canSend && autoRefill != null) Group {
                     if (autoRefill == null) {
-                        if (Repo.showUnavailable) NavRow("AMS Auto-Refill", value = "Not available", labelColor = C.Sub, chevron = false)
+                        NavRow("AMS Auto-Refill", value = "Not available", labelColor = C.Sub, chevron = false)
                     } else PrinterFlagToggle(p, "AMS Auto-Refill", "auto_switch_filament", canSend) { next, revert -> p.setPrintOption("auto_switch_filament", next) { message -> revert(); err(message) } }
                 }
                 Gap(12.dp)
@@ -395,13 +395,13 @@ private fun AmsSettingsCard(p: Printer, ams: io.github.gccammelli.pandy.AmsInfo,
     Gap(8.dp)
     if (Repo.showUnavailable || canSend) Group {
             if (insertionRemote == null) {
-                if (Repo.showUnavailable) NavRow("Read Filament on Insertion", value = "Not available", labelColor = C.Sub, chevron = false)
+                NavRow("Read Filament on Insertion", value = "Not available", labelColor = C.Sub, chevron = false)
             } else ToggleRow("Read Filament on Insertion", insertion, enabled = canSend) { next -> val old = insertion; insertion = next; update(insert = next) { insertion = old } }
             if (startupRemote == null) {
-                if (Repo.showUnavailable) NavRow("Read Filament on Startup", value = "Not available", labelColor = C.Sub, chevron = false)
+                NavRow("Read Filament on Startup", value = "Not available", labelColor = C.Sub, chevron = false)
             } else ToggleRow("Read Filament on Startup", startup, enabled = canSend) { next -> val old = startup; startup = next; update(start = next) { startup = old } }
             if (remainingRemote == null) {
-                if (Repo.showUnavailable) NavRow("Remaining Filament Estimation", value = "Not available", labelColor = C.Sub, chevron = false)
+                NavRow("Remaining Filament Estimation", value = "Not available", labelColor = C.Sub, chevron = false)
             } else ToggleRow("Remaining Filament Estimation", remaining, enabled = canSend) { next -> val old = remaining; remaining = next; update(remain = next) { remaining = old } }
         }
 }
