@@ -54,4 +54,50 @@ class DirectPrinterStorageTest {
             assertTrue(printer.get("/api/bambu_lab/print_history").contains("test.3mf"))
         } finally { printer.stop() }
     }
+
+    @Test fun jobPicturesFindRootCacheAndNewestArchivesAcrossFirmwareFileNames() = runBlocking<Unit> {
+        val bytes=archive()
+        val cases=listOf(
+            Triple("test.3mf","","/test.3mf"),
+            Triple("test","Metadata/plate_1.gcode","/cache/test.gcode.3mf"),
+            Triple("","/sdcard/custom.3mf","/cache/custom.3mf"),
+            Triple("","Metadata/plate_1.gcode","/cache/newest.3mf")
+        )
+        for((task,gcode,expected) in cases) {
+            val reads=java.util.concurrent.ConcurrentLinkedQueue<String>()
+            val paths=listOf(expected,"/old.3mf")
+            val storage=object : PrinterStorage {
+                override suspend fun list(dir: String)=paths.filter { it.substringBeforeLast('/').ifEmpty { "/" }==dir }.map { path ->
+                    FileEntry(path.substringAfterLast('/'),bytes.size.toLong(),if(path==expected) "2026-10-23T08:00" else "2025-10-23T08:00",false)
+                }
+                override suspend fun read(path: String,offset: Long,length: Int): ByteArray {
+                    reads+=path
+                    check(path in paths)
+                    return bytes.copyOfRange(offset.toInt(),if(length<0) bytes.size else (offset+length).toInt())
+                }
+                override suspend fun write(path: String,data: ByteArray,progress: (Float)->Unit)=Unit
+            }
+            val link=object : LanLink {
+                override suspend fun run(onConnected: ()->Unit,onMessage: (String)->Unit) {
+                    onConnected()
+                    onMessage(buildJsonObject { putJsonObject("print") {
+                        put("command","push_status"); put("subtask_name",task); put("gcode_file",gcode)
+                    } }.toString())
+                    awaitCancellation()
+                }
+                override fun publish(payload: String)=Unit
+                override fun close()=Unit
+            }
+            val printer=DirectPrinter(LanConfig("192.0.2.1","TEST","code","X1C"),true,{link},{storage})
+            try {
+                printer.printers()
+                withTimeout(3000) {
+                    while(runCatching { printer.bytes("/api/image_proxy/job") }.getOrNull()==null) delay(10)
+                }
+                assertTrue(reads.isNotEmpty()); assertTrue(reads.all { it==expected },"$task / $gcode: $reads")
+                val cachePath="/api/bambu_lab/file_cache/TEST/prints"+expected
+                assertTrue(printer.get("$cachePath.slice_info.config").contains("Test part"))
+            } finally { printer.stop() }
+        }
+    }
 }

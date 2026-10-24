@@ -115,6 +115,63 @@ class DirectPrinterTest {
         } finally { printer.stop() }
     }
 
+    @Test fun optionalServiceFieldsAndAdditionalFansUseSafeProtocolDefaults() = runBlocking<Unit> {
+        val link=Link(report(",\"chamber_target_temper\":35")); val printer=DirectPrinter(config,true,{link})
+        try {
+            val entities=registry(printer)
+            fun id(key: String)=entities.first { it.jsonObject.s("translation_key")==key }.jsonObject.s("entity_id")!!
+            printer.command("number/set_value","entity_id" to id("target_nozzle_temperature"),"value" to "bad")
+            assertEquals("M104 S0\n",link.sent.last().o("print")!!.s("param"))
+            val count=link.sent.size
+            printer.command("number/set_value","entity_id" to "missing")
+            printer.command("button/press","entity_id" to "missing")
+            assertEquals(count,link.sent.size)
+            for ((key,n) in listOf("aux_fan" to 2,"chamber_fan" to 3)) {
+                printer.command("fan/turn_on","entity_id" to id(key))
+                assertEquals("M106 P$n S255\n",link.sent.last().o("print")!!.s("param"))
+            }
+            printer.command("bambu_lab/move_axis")
+            assertTrue(link.sent.last().o("print")!!.s("param")!!.contains("G1 X0.0 F3000"))
+            printer.command("bambu_lab/extrude_retract","type" to "Extrude")
+            assertTrue(link.sent.last().o("print")!!.s("param")!!.contains("E10.0"))
+            printer.command("bambu_lab/skip_objects")
+            assertEquals("[]",link.sent.last().o("print")!!["obj_list"].toString())
+            printer.command("bambu_lab/print_project_file","filepath" to "https://files.example/test.3mf")
+            val sent=link.sent.last().o("print")!!
+            assertEquals("https://files.example/test.3mf",sent.s("url")); assertEquals("Metadata/plate_1.gcode",sent.s("param"))
+            assertEquals("1",sent.s("auto_bed_leveling")); assertEquals("0",sent.s("extrude_cali_flag"))
+            assertNull(sent["ams_mapping"])
+            printer.command("bambu_lab/print_project_file","filepath" to "test.3mf","use_ams" to "true","ams_mapping" to "bad, 1, ,3")
+            assertEquals("[1,3]",link.sent.last().o("print")!!["ams_mapping"].toString())
+            printer.command("bambu_lab/calibration")
+            printer.command("bambu_lab/ams_user_setting")
+            assertFailsWith<ApiException> { printer.command("bambu_lab/print_option","auto_recovery" to "unknown") }
+            assertEquals(JsonNull,printer.ws(listOf(buildJsonObject { put("type","unknown") })).single())
+        } finally { printer.stop() }
+    }
+
+    @Test fun aChangedAmsRegistryForcesTheLiveSubscriptionToReconnect() = runBlocking<Unit> {
+        val messages=kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val initial=CompletableDeferred<Unit>()
+        val link=object : LanLink {
+            override suspend fun run(onConnected: ()->Unit,onMessage: (String)->Unit) {
+                onConnected(); onMessage(report())
+                for(message in messages) onMessage(message)
+            }
+            override fun publish(payload: String)=Unit
+            override fun close()=Unit
+        }
+        val printer=DirectPrinter(config,true,{link})
+        try {
+            registry(printer)
+            val stream=async { runCatching { printer.stream(buildJsonObject {}) { initial.complete(Unit) } } }
+            withTimeout(3000) { initial.await() }
+            messages.send(report(",\"ams\":{\"ams\":[{\"id\":0,\"tray\":[{}]}]}"))
+            val error=withTimeout(3000) { stream.await() }.exceptionOrNull()
+            assertIs<ApiException>(error); assertEquals("The printer's parts changed",error.message)
+        } finally { printer.stop(); messages.close() }
+    }
+
     @Test fun storageListsUploadsAndCachesOnlyPrinterFiles() = runBlocking<Unit> {
         val storage = Storage(); val printer = DirectPrinter(config, storageFactory = { storage })
         try {
