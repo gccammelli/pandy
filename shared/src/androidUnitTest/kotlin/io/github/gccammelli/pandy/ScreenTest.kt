@@ -1769,13 +1769,34 @@ class ScreenTest {
         } finally { downloadModel=realDownload }
         // A sheet is open: another print request is refused, and Back closes the sheet.
         Repo.state.value=st
-        debugDownload.value=WebDownload(null,"Sheet.3mf",null,modelBytes(),true)
+        val realFetch=downloadModel
+        downloadModel={ _,_ -> modelBytes() }
+        compose.runOnIdle { val (_,_,b)=bridge(); call(b,"nativeFile","first.3mf","https://cdn.bblmw.com/first.3mf",token(b)) } // the page opens the sheet
         until("step 7") { compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
         compose.runOnIdle { val (_,_,b)=bridge(); call(b,"nativeFile","other.3mf","https://cdn.bblmw.com/other.3mf",token(b)) }
         until("step 8") { messages.contains("Finish or close the current print first") }
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         until("step 9") { compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isEmpty() }
         org.junit.Assert.assertNull(debugDownload.value)
+        downloadModel=realFetch
+    }
+
+    @Test fun leavingTheModelsTabCancelsAnUnfinishedDownloadQuietly() {
+        val real=downloadModel
+        val started=java.util.concurrent.atomic.AtomicBoolean(false)
+        downloadModel={ _,_ -> started.set(true); kotlinx.coroutines.awaitCancellation() }
+        val visible=androidx.compose.runtime.mutableStateOf(true)
+        try {
+            compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { if(visible.value) ModelsTab() } } }
+            compose.runOnIdle {
+                val web=descendants(compose.activity.window.decorView).filterIsInstance<android.webkit.WebView>().single()
+                org.robolectric.Shadows.shadowOf(web).downloadListener.onDownloadStart("https://cdn.bblmw.com/slow.3mf","","","application/octet-stream",1)
+            }
+            compose.waitUntil(5000) { compose.waitForIdle(); started.get() }
+            compose.runOnIdle { visible.value=false }; compose.waitForIdle()
+            compose.onAllNodesWithText("Models").assertCountEquals(0)
+            org.junit.Assert.assertTrue(messages.none { it.contains("Couldn't download") })
+        } finally { downloadModel=real }
     }
 
     @Test fun makerWorldNamesTheCarbonPrinterAndPassesOtherModelsThrough() {
@@ -2142,17 +2163,64 @@ class ScreenTest {
                 compose.runOnIdle { Repo.state.value=st.copy(printers=listOf(printer)); selection.value=round to client }
                 compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithText("Next").performClick(); compose.waitForIdle()
+                if(compose.onAllNodesWithText(printer.name).fetchSemanticsNodes().isNotEmpty()) {
+                    compose.onAllNodesWithText(printer.name).onFirst().performScrollTo().performClick(); compose.waitForIdle()
+                    if(compose.onAllNodesWithText("Select printer").fetchSemanticsNodes().isNotEmpty()) { compose.onNodeWithText("Confirm").performClick(); compose.waitForIdle() }
+                }
                 val code=compose.onAllNodesWithText("Printer access code").fetchSemanticsNodes()
                 if(code.isNotEmpty()) { compose.onNodeWithText("Printer access code").performScrollTo().performTextInput("123456"); compose.waitForIdle() }
                 val button=compose.onAllNodes(hasClickAction() and (hasText("Print (demo)") or hasText("Print current plate")))
                 if(button.fetchSemanticsNodes().isNotEmpty()) {
                     runCatching { button.onFirst().performScrollTo() }
                     button.onFirst().performClick(); compose.waitForIdle()
-                    if(compose.onAllNodesWithText("Cancel").fetchSemanticsNodes().isNotEmpty()) { compose.onNodeWithText("Cancel").performClick(); compose.waitForIdle() }
+                    if(compose.onAllNodesWithText("Start",substring=false).fetchSemanticsNodes().isNotEmpty() && client==null && demo=="false") { compose.onNodeWithText("Start",substring=false).performClick(); compose.waitForIdle() }
+                    else if(compose.onAllNodesWithText("Cancel").fetchSemanticsNodes().isNotEmpty()) { compose.onNodeWithText("Cancel").performClick(); compose.waitForIdle() }
                 }
                 compose.onAllNodes(hasText("Setup guide",substring=true)).fetchSemanticsNodes().firstOrNull()
             }
         }
         compose.onRoot().assertExists()
+    }
+
+    @Test fun platesWithOneMetricUnknownBedTypesAndABlankNameStillPrepareAndPreview() {
+        val sliceInfo="""<config><plate><metadata key="index" value="1"/><metadata key="prediction" value="600"/></plate><plate><metadata key="index" value="2"/><metadata key="weight" value="3.5"/></plate></config>"""
+        val settings="""<config><plate><metadata key="plater_id" value="1"/><metadata key="bed_type" value="Mystery Plate"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>"""
+        val mesh="""<model><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2" p1="7"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>"""
+        val bytes=modelBytes(mapOf("Metadata/slice_info.config" to sliceInfo.toByteArray(),"Metadata/model_settings.config" to settings.toByteArray(),
+            "Metadata/project_settings.config" to "{}".toByteArray(),"3D/3dmodel.model" to mesh.toByteArray()))
+        Repo.state.value=st.copy(printers=listOf(variant(set=arrayOf("sensor.print_status" to entity("idle")))))
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { PrintModelSheet(WebDownload(null,".3mf",null,bytes,true),{}) } } }
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("◷ 10 min").performScrollTo().assertExists()
+        compose.onNodeWithText("Plate 2").performScrollTo().performClick()
+        compose.onNodeWithText("◎ 3.5g").assertExists()
+        compose.onNodeWithText("Print (demo)").performClick()
+        compose.onNodeWithText("Start this model",substring=true).assertExists()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+        compose.waitForIdle(); compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithText("Show the plate").assertExists()
+    }
+
+    @Test fun theSlicerScreenSavesAWorkingAddressAndRemovesItAgain() {
+        val server=com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1",0),0)
+        server.createContext("/health") { exchange -> val body="""{"version":"2.5.1"}""".toByteArray(); exchange.sendResponseHeaders(200,body.size.toLong()); exchange.responseBody.use { it.write(body) } }
+        server.start()
+        val before=Repo.slicerUrl
+        restorePrintSettings={ Repo.setSlicer(before,null) }
+        try {
+            Repo.setSlicer(null,null)
+            show("Slicer") { SlicerScreen() }
+            compose.onNodeWithText("Slicer address",substring=true).performTextInput("127.0.0.1:${server.address.port}")
+            compose.onNodeWithText("Token",substring=true).performTextInput("secret")
+            compose.onNodeWithText("Save").performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Connected: Bambu Studio 2.5.1").fetchSemanticsNodes().isNotEmpty() }
+            org.junit.Assert.assertNotNull(Repo.slicerUrl)
+            compose.onNodeWithText("Remove").performScrollTo().performClick()
+            org.junit.Assert.assertNull(Repo.slicerUrl)
+            compose.onNodeWithText("Setup guide",substring=true).performScrollTo().performClick()
+            org.junit.Assert.assertTrue(openedUrls.any { it.contains("slicer") })
+        } finally { server.stop(0) }
     }
 }
