@@ -39,7 +39,7 @@ class ScreenTest {
 
     private val platform = object : PlatformUi {
         override val appVersion = "test"
-        override fun openUrl(url: String) = Unit
+        override fun openUrl(url: String) { openedUrls+=url }
         override fun toast(message: String) { messages += message }
         override fun setDarkBars(dark: Boolean) = Unit
         override fun saveFile(name: String, mime: String, bytes: ByteArray, done: (Throwable?) -> Unit) {
@@ -59,6 +59,8 @@ class ScreenTest {
     private val savedImages = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
     private val savedFiles = mutableListOf<Triple<String,String,ByteArray>>()
     private var saveImageError: Throwable?=null
+    private var commandFailure: String?=null
+    private val openedUrls=mutableListOf<String>()
     private val messages = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private val testHttpClients = mutableListOf<io.ktor.client.HttpClient>()
     private var restorePrintSettings: (() -> Unit)? = null
@@ -102,6 +104,7 @@ class ScreenTest {
             val backend = object : HaBackend by demo {
                 override suspend fun post(path: String,body: String): String {
                     commands += path to body
+                    commandFailure?.let { throw ApiException(it) }
                     return demo.post(path,body)
                 }
                 override suspend fun bytes(path: String): ByteArray {
@@ -1248,6 +1251,94 @@ class ScreenTest {
         compose.waitUntil(5000) { compose.waitForIdle(); messages.contains("Couldn't save: Photos permission denied") }
         org.junit.Assert.assertArrayEquals(jpeg,savedImages.single())
         compose.onNodeWithContentDescription("Back").assertExists()
+    }
+
+    @Test fun everyReportedPrintOptionSendsItsOwnModuleAndBothBooleanValues() {
+        val keys=listOf("printing_monitor","buildplate_marker_detector","first_layer_inspector","auto_recovery")
+        val states=snapshot.toMutableMap()
+        keys.take(3).forEachIndexed { i,key ->
+            val id=printer.info.ids.getValue("switch.$key")
+            val old=states.getValue(id)
+            states[id]=Entity(old.id,old.state,JsonObject(old.attrs+if(i==0) mapOf("print_halt" to JsonPrimitive(true)) else emptyMap()))
+        }
+        val p=Printer(printer.info,states)
+        show("Print Options") { PrintOptionsScreen(p) }
+        keys.forEachIndexed { index,key ->
+            val initial=p.flag(key)!!
+            repeat(2) { pass ->
+                val before=commands.size
+                compose.onAllNodes(isToggleable())[index].performScrollTo().performClick()
+                compose.waitUntil(5000) { compose.waitForIdle(); commands.size>before }
+                val (path,text)=commands.last(); val body=json.parseToJsonElement(text).jsonObject
+                val next=if(pass==0) !initial else initial
+                if(key=="auto_recovery") {
+                    org.junit.Assert.assertTrue(path.endsWith("print_option")); assertEquals(next.toString(),body.s(key))
+                    assertEquals(if(next) "1" else "0",body.s("option"))
+                } else {
+                    org.junit.Assert.assertTrue(path.endsWith("xcam_control_set")); assertEquals(key,body.s("module_name"))
+                    assertEquals(next.toString(),body.s("enable")); assertEquals((index==0).toString(),body.s("print_halt"))
+                }
+            }
+        }
+    }
+
+    @Test fun rejectedPrintOptionChangesRestoreEverySwitchToTheReportedValue() {
+        commandFailure="Printer refused setting"
+        val keys=listOf("printing_monitor","buildplate_marker_detector","first_layer_inspector","auto_recovery")
+        show("Print Options") { PrintOptionsScreen(printer) }
+        keys.forEachIndexed { index,key ->
+            val initial=printer.flag(key)!!
+            compose.onAllNodes(isToggleable())[index].performScrollTo().performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); messages.size>index }
+            assertEquals("Printer refused setting",messages.last())
+            if(initial) compose.onAllNodes(isToggleable())[index].assertIsOn() else compose.onAllNodes(isToggleable())[index].assertIsOff()
+        }
+    }
+
+    @Test fun amsReadPreferencesSendAllThreeFlagsAndRestoreRejectedChanges() {
+        val ams=printer.info.ams.first()
+        val keys=listOf("ams_read_on_insertion","ams_read_on_startup","ams_remaining_estimation")
+        show("AMS Settings") { AmsSettingsScreen(printer) }
+        keys.forEachIndexed { index,key ->
+            val before=commands.size
+            compose.onAllNodes(isToggleable())[index].performScrollTo().performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); commands.size>before }
+            val body=json.parseToJsonElement(commands.last().second).jsonObject
+            org.junit.Assert.assertTrue(commands.last().first.endsWith("ams_user_setting"))
+            assertEquals(ams.amsId().toString(),body.s("ams_id"))
+            assertEquals((!printer.amsFlag(ams,key)!!).toString(),body.s(listOf("tray_read_option","startup_read_option","calibrate_remain_flag")[index]))
+        }
+        commandFailure="AMS refused setting"
+        keys.forEachIndexed { index,key ->
+            compose.onAllNodes(isToggleable())[index].performScrollTo().performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); messages.size>index }
+            val retained=!printer.amsFlag(ams,key)!!
+            if(retained) compose.onAllNodes(isToggleable())[index].assertIsOn() else compose.onAllNodes(isToggleable())[index].assertIsOff()
+        }
+    }
+
+    @Test fun homeAssistantPrinterSettingsKeepUnsupportedActionsReadOnly() {
+        homeAssistantMode()
+        val firmwareId=printer.info.ids.getValue("binary_sensor.firmware_update")
+        val p=Printer(printer.info.copy(firmware=null),snapshot+(firmwareId to Entity(firmwareId,"on",JsonObject(emptyMap()))))
+        show("Settings") { PrinterSettingsScreen(p) }
+        compose.onAllNodesWithText("Not available").assertCountEquals(3)
+        compose.onNodeWithText("--  •  Update available").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Connection: Home Assistant").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Disconnect printer").assertDoesNotExist()
+        compose.onNodeWithText("Calibration").performScrollTo().assertHasNoClickAction()
+    }
+
+    @Test fun accountShortcutsAndSupportLinksReachTheirIntendedDestinations() {
+        show("Support Center") { MeTab(st) }
+        for((label,destination) in listOf("Printing\nHistory" to Screen.History,"Timelapse" to Screen.Files,"Filament" to Screen.Filament,"About Pandy" to Screen.About,"Settings" to Screen.Settings)) {
+            compose.onNodeWithText(label).performScrollTo().performClick()
+            assertEquals(destination,Nav.stack.last()); compose.runOnIdle { Nav.stack.clear() }
+        }
+        compose.runOnIdle { Nav.tab=2 }
+        compose.onNodeWithText("MakerWorld").performScrollTo().performClick(); assertEquals(0,Nav.tab)
+        for(label in listOf("Learning","Support Center","Buy me a coffee")) compose.onNodeWithText(label).performScrollTo().performClick()
+        assertEquals(listOf("https://wiki.bambulab.com","$REPO_URL/issues",DONATE_URL),openedUrls)
     }
 
 }
