@@ -204,4 +204,44 @@ class DirectPrinterCoverageTest {
             assertEquals(1, open.sent.last().o("print")!!["option"]!!.jsonPrimitive.int)
         } finally { free.stop() }
     }
+
+    @Test fun connectionFailuresAreExplainedWhateverTheyCarryAndAnEndedLinkIsReported() = runBlocking<Unit> {
+        val silent = object : Exception() { override val message: String? = null }
+        val failing = DirectPrinter(config, true, { object : LanLink {
+            override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) { throw silent }
+            override fun publish(payload: String) = Unit
+            override fun close() = Unit
+        } })
+        try {
+            assertTrue(assertFailsWith<ApiException> { failing.ws(listOf(buildJsonObject { put("type", "config/device_registry/list") })) }.message!!.contains("no answer"))
+        } finally { failing.stop() }
+        val denied = DirectPrinter(config, false, { object : LanLink {
+            override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) { throw ApiException("Bad access code") }
+            override fun publish(payload: String) = Unit
+            override fun close() = Unit
+        } })
+        try {
+            assertTrue(assertFailsWith<ApiException> { denied.ws(listOf(buildJsonObject { put("type", "config/device_registry/list") })) }.message!!.contains("Check its IP address and access code"))
+        } finally { denied.stop() }
+        val brief = DirectPrinter(config, true, { object : LanLink {
+            override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) { onConnected(); onMessage(report("", "")) } // the link ends after one report
+            override fun publish(payload: String) = Unit
+            override fun close() = Unit
+        } })
+        try {
+            brief.ws(listOf(buildJsonObject { put("type", "unknown/type") })) // starts the connection
+            delay(400)
+            assertEquals("The direct printer connection is unavailable", assertFailsWith<ApiException> { brief.ws(listOf(buildJsonObject { put("type", "config/device_registry/list") })) }.message)
+        } finally { brief.stop() }
+    }
+
+    @Test fun aHighTemperatureUnitWithoutAnIdLoadsFromTheFirstHighTemperatureSlot() = runBlocking<Unit> {
+        val link = Link("""{"print":{"command":"push_status","gcode_state":"IDLE","ams":{"ams":[{"id":"0","model":"AMS HT","tray":[{"id":"0","tray_type":"PLA"}]}]}}}"""); val printer = DirectPrinter(config, true, { link })
+        try {
+            val entities = printer.ws(listOf(buildJsonObject { put("type", "config/entity_registry/list") })).single()!!.jsonArray.map { it.jsonObject }
+            val tray = entities.first { it.s("translation_key") == "tray" }.s("entity_id")!!
+            printer.post("/api/services/bambu_lab/load_filament", buildJsonObject { put("entity_id", tray) }.toString())
+            assertEquals("128", link.sent.last().o("print")!!["ams_id"]!!.jsonPrimitive.content)
+        } finally { printer.stop() }
+    }
 }

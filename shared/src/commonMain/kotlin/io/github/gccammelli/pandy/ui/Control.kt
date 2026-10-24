@@ -115,7 +115,7 @@ fun ControlScreen(p: Printer) {
 
 @Composable
 private fun ChamberInfoSheet(p: Printer, close: () -> Unit) = Sheet(close, "Chamber temperature", centeredTitle = true, confirm = null) {
-    T("${p.chamber?.toInt() ?: "--"}°C", 28.sp, weight = FontWeight.Bold, modifier = Modifier.fillMaxWidth(), align = TextAlign.Center)
+    T("${p.chamber!!.toInt()}°C", 28.sp, weight = FontWeight.Bold, modifier = Modifier.fillMaxWidth(), align = TextAlign.Center)
     Gap(16.dp)
     T("The chamber temperature is shown by the printer. This model does not have a chamber heater, so Pandy cannot set it.", 14.sp, C.Sub, lh = 20.sp)
     Gap(20.dp)

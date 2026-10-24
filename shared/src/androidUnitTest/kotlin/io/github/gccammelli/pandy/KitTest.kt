@@ -90,4 +90,27 @@ class KitTest {
         compose.onNodeWithContentDescription("Back").performClick()
         assertEquals(2, dismissed)
     }
+
+    @Test fun cardsPlaceholdersImagesAndTemperatureEntryCoverTheirOptionalParts() {
+        val step = mutableStateOf(0)
+        var set = mutableListOf<Int>()
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            when (step.value) {
+                0 -> Column {
+                    MiniCard("tap", "value", Modifier, null) { }
+                    MiniCard("plain", "value", Modifier, null, null)
+                    MiniCard("trailing", "value", Modifier, { T("trailing") }, null)
+                    MiniCard("both", "value", Modifier, { T("both") }) { }
+                    Empty("nothing here"); Empty("custom icon", Icons.Default.Close)
+                    HaImage(null, Modifier.size(10.dp)); HaImage("/api/bambu_lab/file_cache/x.png", Modifier.size(10.dp)); HaImage("/api/camera_proxy/x", Modifier.size(10.dp))
+                }
+                1 -> TempSheet("Empty target", "hint", listOf(0, 50), null, 0..100, {}) { set += it }
+                2 -> TempSheet("Zero target", "hint", listOf(0, 50), 0.0, 0..100, {}) { set += it }
+                else -> TempSheet("Set target", "hint", listOf(0, 50), 42.0, 0..100, {}) { set += it }
+            }
+        } } }
+        for (i in 0..3) { compose.runOnIdle { step.value = i }; compose.waitForIdle(); compose.mainClock.advanceTimeBy(300) }
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(listOf(42), set)
+    }
 }
