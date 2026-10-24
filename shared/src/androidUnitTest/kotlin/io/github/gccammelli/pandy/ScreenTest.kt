@@ -337,6 +337,15 @@ class ScreenTest {
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithText("Chamber temperature").assertExists()
     }
+    @Test fun anOpenChamberSheetKeepsUnknownTemperatureExplicitWhenTelemetryDisappears() {
+        val live = androidx.compose.runtime.mutableStateOf(changed("sensor.chamber_temp" to "35"))
+        show("Device Control") { ControlScreen(live.value) }
+        compose.onNodeWithText("Chamber").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
+        compose.onNodeWithText("35°C").assertExists()
+        compose.runOnIdle { live.value = changed("sensor.chamber_temp" to "unavailable") }
+        compose.onNodeWithText("--°C").assertExists()
+        compose.onNodeWithText("Chamber temperature").assertExists()
+    }
     @Test fun fanShowsSpeedControls() {
         show("Device Control") { ControlScreen(printer) }
         compose.onNodeWithText("Fan").performScrollTo().performClick()
@@ -640,6 +649,35 @@ class ScreenTest {
         val paths=commands.map { it.first }
         org.junit.Assert.assertTrue(paths.indexOf("/api/bambu_lab/ensure_cache_file") < paths.indexOf("/api/services/bambu_lab/print_project_file"))
         org.junit.Assert.assertTrue(commands.first { it.first.endsWith("/print_project_file") }.second.contains("cache/restored.3mf"))
+    }
+
+    @Test fun rapidReprintTapsRestoreAndStartTheFileOnlyOnce() {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val demo = FakeHomeAssistant()
+        val restores = java.util.concurrent.atomic.AtomicInteger()
+        val backend = object : HaBackend by demo {
+            override suspend fun get(path: String): String = if (path.endsWith(".slice_info.config")) "<config/>" else demo.get(path)
+            override suspend fun post(path: String, body: String): String {
+                if (path.endsWith("ensure_cache_file")) { restores.incrementAndGet(); gate.await(); return "{}" }
+                commands += path to body
+                return demo.post(path, body)
+            }
+        }
+        for (field in listOf("ha", "extras")) Repo::class.java.getDeclaredField(field).apply { isAccessible = true }.set(Repo, backend)
+        var closed = 0
+        show("Print") { ReprintSheet(changed("sensor.print_status" to "idle"), CachedFile("Test.3mf", "TEST/prints/cache/Test.3mf", 10, "", null), { closed++ }) }
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Send").fetchSemanticsNodes().any { !it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) } }
+        val tap = compose.onNodeWithText("Send").fetchSemanticsNode().config[SemanticsActions.OnClick].action!!
+        try {
+            // Both input events can arrive before Compose redraws the disabled button.
+            compose.runOnIdle { tap(); tap() }
+            compose.waitUntil(5000) { compose.waitForIdle(); restores.get() > 0 }
+            gate.complete(Unit)
+            compose.waitUntil(5000) { compose.waitForIdle(); closed > 0 }
+            assertEquals(1, restores.get())
+            assertEquals(1, commands.count { it.first.endsWith("/print_project_file") })
+            assertEquals(1, closed)
+        } finally { gate.complete(Unit) }
     }
 
     private fun cachedPrintWithLoadedFilament(ht: Boolean) {
@@ -1844,6 +1882,22 @@ class ScreenTest {
             compose.waitForIdle()
             assertEquals(2,calls.get()) // a finished attempt is never repeated
         } finally { loadPreviewMeshes=real }
+    }
+
+    @Test fun aTimedOutPreviewFallsBackWithoutBlockingThePrintPreparation() {
+        val original = loadPreviewMeshes
+        loadPreviewMeshes = { kotlinx.coroutines.withTimeout(1) { kotlinx.coroutines.awaitCancellation() } }
+        try {
+            compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+                PrintModelSheet(WebDownload(null, "Timed preview.3mf", null, modelBytes(), true), {})
+            } } }
+            compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Next").performClick()
+            compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("3D preview unavailable").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Back").performClick()
+            compose.onNodeWithText("Print options").assertExists()
+        } finally { loadPreviewMeshes = original }
     }
 
     @Test fun savedPrinterDetailsSkipTheAccessCodeAndAreNotOverwrittenWhenThePrintStarts() {

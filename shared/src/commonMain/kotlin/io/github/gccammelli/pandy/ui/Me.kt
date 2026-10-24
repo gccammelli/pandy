@@ -167,7 +167,8 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
     val missingMapping = filaments.isNotEmpty() && mapping == null
     val canSend = infoLoaded && info != null && !busy && !p.printing && !missingMapping
     Sheet(close, "Print", centeredTitle = true, confirm = if (busy) "Sending…" else "Send", confirmEnabled = canSend, onConfirm = {
-        busy = true // the button is enabled only when canSend: loaded settings, a matching filament, an idle printer and no send under way
+        if (busy) return@Sheet // a second tap can arrive before the button redraws as disabled
+        busy = true
         Repo.act({ err(it); busy = false }) {
             val path = needHa().ensureOnPrinter(p.serial, f)
             startPrint(p, path, info!!.plate, mapping, timelapse, leveling, flow)
