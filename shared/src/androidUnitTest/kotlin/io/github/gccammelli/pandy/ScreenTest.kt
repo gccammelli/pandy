@@ -631,6 +631,41 @@ class ScreenTest {
         org.junit.Assert.assertTrue(commands.first { it.first.endsWith("/print_project_file") }.second.contains("cache/restored.3mf"))
     }
 
+    private fun cachedPrintWithLoadedFilament(ht: Boolean) {
+        val ready=changed("sensor.print_status" to "idle")
+        val ams=ready.info.ams.first()
+        val unit=if(ht) ams.copy(model="AMS HT",protocolId=128,trays=ams.trays.filterKeys { it==1 }) else ams.copy(protocolId=0)
+        val p=Printer(ready.info.copy(ams=listOf(unit)),snapshot.mapValues { (id,e) ->
+            if(id==ready.info.ids["sensor.print_status"]) Entity(id,"idle",e.attrs) else e
+        })
+        val demo=FakeHomeAssistant()
+        val backend=object : HaBackend by demo {
+            override suspend fun get(path: String)=if(path.endsWith(".slice_info.config"))
+                """<config><plate><metadata key="index" value="2"/><filament type="PLA" color="#FFFFFF"/></plate></config>""" else demo.get(path)
+            override suspend fun post(path: String,body: String): String {
+                commands+=path to body
+                return if(path.endsWith("ensure_cache_file")) """{"status":"present"}""" else demo.post(path,body)
+            }
+        }
+        for(field in listOf("ha","extras")) Repo::class.java.getDeclaredField(field).apply { isAccessible=true }.set(Repo,backend)
+        var closed=false
+        show("Print") { ReprintSheet(p,CachedFile("Test.3mf","TEST/prints/cache/Test.3mf",10,"",null),{closed=true}) }
+        compose.onNodeWithText(if(ht) "HT PLA" else "A1 PLA").assertExists()
+        compose.onNodeWithText("Send").assertIsEnabled()
+        compose.onAllNodes(isToggleable()).onFirst().performClick()
+        compose.onAllNodes(isToggleable())[1].performClick()
+        compose.onAllNodes(isToggleable()).onLast().performClick()
+        compose.onNodeWithText("Send").performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); closed }
+        val sent=json.parseToJsonElement(commands.first { it.first.endsWith("/print_project_file") }.second).jsonObject
+        assertEquals("2",sent.s("plate")); assertEquals("true",sent.s("use_ams"))
+        assertEquals(if(ht) "128" else "0",sent.s("ams_mapping"))
+        assertEquals("true",sent.s("timelapse")); assertEquals("false",sent.s("bed_leveling")); assertEquals("false",sent.s("flow_cali"))
+    }
+
+    @Test fun cachedAmsPrintUsesTheMatchedPhysicalSlotAndSelectedOptions() = cachedPrintWithLoadedFilament(false)
+    @Test fun cachedAmsHtPrintUsesTheProtocolIdInsteadOfAStandardSlot() = cachedPrintWithLoadedFilament(true)
+
     @Test fun blockedControlsExplainHowToUsePandy() {
         show("Watching only") { ControlBlockedNote() }
         compose.onNodeWithText("Open Bambu Handy").performClick()

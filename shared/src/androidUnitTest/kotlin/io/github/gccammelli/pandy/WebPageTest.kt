@@ -218,4 +218,35 @@ class WebPageTest {
         }
     }
 
+    @Test fun systemBackClosesThePrintOverlayBeforeNavigatingWebHistory() {
+        val state=WebState(); var overlays=0; var history=0
+        compose.setContent { WebPage("https://makerworld.com",Modifier,null,state,null) }
+        compose.runOnIdle {
+            state.canGoBack=true; state.goBack={history++}; state.overlayBack={overlays++}
+        }
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        assertEquals(1,overlays); assertEquals(0,history)
+        compose.runOnIdle { state.overlayBack=null }
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        assertEquals(1,overlays); assertEquals(1,history)
+    }
+
+    @Test fun duplicatePageImportsAreBlockedButNativeFilesCanComeFromMakerWorldSubdomains() {
+        val downloads=mutableListOf<WebDownload>()
+        compose.setContent { WebPage("https://makerworld.com",Modifier,{downloads+=it},WebState(),"H2D") }
+        compose.runOnIdle {
+            val web=views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
+            val shadow=shadowOf(web); val bridge=shadow.getJavascriptInterface("PandyBridge"); val token=bridgeToken(bridge)
+            shadow.webViewClient.onPageFinished(web,"https://sub.makerworld.com/model/1")
+            bridgeCall(bridge,"file","first.3mf","https://cdn.makerworld.com/first.3mf",token)
+            bridgeCall(bridge,"file","second.3mf","https://makerworld.com/second.3mf",token)
+            assertEquals(1,pending(bridge).size)
+            bridgeCall(bridge,"nativeFile","native.3mf","https://makerworld.com/native.3mf",token)
+            bridgeCall(bridge,"problem","Cancel preparation",token)
+        }
+        compose.runOnIdle {
+            assertEquals(1,downloads.size); assertEquals("https://makerworld.com/native.3mf",downloads.single().url)
+        }
+    }
+
 }
