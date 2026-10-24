@@ -58,4 +58,20 @@ class PreviewMeshTest {
             assertEquals(1,previewMesh("""<object $attrs>$mesh</object>""")?.triangles?.size)
         }
     }
+    @Test fun truncatedObjectsMeshesAndTagsNeverProducePartialGeometry() {
+        val samples=listOf("<object id='1'", "<object id='1'>$mesh", "<object id='1'><mesh</object>",
+            "<object id='1'><mesh><vertex x='0' y='0' z='0'/><triangle v1='0' v2='0' v3='0'</mesh></object>")
+        samples.forEach { assertNull(previewMesh(it),it) }
+    }
+
+    @Test fun similarlyNamedTagsCannotShiftTheVertexIndicesOrReplaceAMesh() {
+        val valid=mesh.replace("<vertices>","<vertices><vertex_extra x='99' y='99' z='99'/>")
+            .replace("<triangles>","<triangles><triangle_extra v1='0' v2='0' v3='0'/>")
+            .replace("<mesh>","<mesh >")
+        val result=previewMesh("<object id='1'><mesh_notes>unrelated</mesh_notes>$valid</object>")!!
+        assertEquals(1,result.triangles.size)
+        assertEquals(PreviewVertex(1f,0f,0f),result.triangles.single().b)
+        assertEquals(PreviewVertex(0f,1f,0f),result.triangles.single().c)
+    }
+
 }

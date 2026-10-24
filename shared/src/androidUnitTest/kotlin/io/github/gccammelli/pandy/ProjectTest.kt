@@ -164,6 +164,15 @@ class ProjectTest {
         assertEquals(emptyMap(), readPreviewMeshes(archive("Metadata/model_settings.config" to "<config/>")))
 
     }
+    @Test fun oversizedPreviewDoesNotPreventReadingThePrintProfile() = runTest {
+        val bytes=archive("3D/3dmodel.model" to ("<model>"+" ".repeat(8*1024*1024)+"</model>"),
+            "Metadata/project_settings.config" to """{"profile_name":"Large assembly","printer_model":"Bambu Lab P1S"}""")
+        val profile=readProject(bytes,preview=false)
+        assertEquals("Large assembly",profile.profileName); assertEquals("Bambu Lab P1S",profile.printerModel)
+        assertEquals(1,profile.plates.size); assertNull(profile.mesh)
+        assertEquals(emptyMap(),readPreviewMeshes(bytes))
+    }
+
 }
 
 class PresetTest {
