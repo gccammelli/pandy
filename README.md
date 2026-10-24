@@ -12,11 +12,20 @@ Pandy was built from scratch for people who keep their Bambu printer in LAN-only
 features. It talks directly to the printer on the local network, without sending printer control through
 Bambu's cloud.
 
-These are demo-mode screens; the demo printer lets you explore the app without a printer:
+These are dark-mode screens from the built-in demo printer, which lets you explore the app without a printer:
 
 <p align="center">
-  <img src="docs/images/pandy-demo-device.png" width="280" alt="Pandy device screen showing a demo print">
-  <img src="docs/images/pandy-demo-prepare.png" width="280" alt="Pandy print preparation screen in demo mode">
+  <img src="docs/images/pandy-dark-device.png" width="190" alt="Device screen with a demo print in progress">
+  <img src="docs/images/pandy-dark-control.png" width="190" alt="Device control: temperatures, speed, light, fans">
+  <img src="docs/images/pandy-dark-filament.png" width="190" alt="AMS and external spool filament screen">
+  <img src="docs/images/pandy-dark-history.png" width="190" alt="Print history">
+</p>
+
+<p align="center">
+  <img src="docs/images/pandy-dark-makerworld-print.png" width="190" alt="A MakerWorld model page inside Pandy, with the Print button">
+  <img src="docs/images/pandy-dark-select-profile.png" width="190" alt="Select a print profile for a MakerWorld model">
+  <img src="docs/images/pandy-dark-prepare-print.png" width="190" alt="Prepare to Print with the Print button">
+  <img src="docs/images/pandy-dark-print-options.png" width="190" alt="Filament mapping and print options">
 </p>
 
 ## Features

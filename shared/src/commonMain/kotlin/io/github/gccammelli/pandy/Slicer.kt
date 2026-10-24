@@ -1,7 +1,11 @@
 package io.github.gccammelli.pandy
 
 import io.ktor.client.HttpClient
+import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.network.sockets.SocketTimeoutException
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
@@ -134,8 +138,12 @@ fun String.encodeURLParam(): String = encodeToByteArray().joinToString("") { b -
 private fun JsonArray?.orEmpty() = this ?: JsonArray(emptyList())
 
 /** Fetches a MakerWorld file (with the web view's cookies, for files behind the sign-in). */
-suspend fun download(url: String, cookies: String?): ByteArray {
-    return slicerHttp.prepareGet(url) { if (!cookies.isNullOrBlank()) header("Cookie", cookies) }.execute { r ->
+suspend fun download(url: String, cookies: String?): ByteArray = try {
+    // The client's 20-minute limits suit slicing; a stalled model download must fail in seconds, not look like a hang.
+    slicerHttp.prepareGet(url) {
+        timeout { connectTimeoutMillis = 15_000; socketTimeoutMillis = 30_000; requestTimeoutMillis = 5 * 60_000 }
+        if (!cookies.isNullOrBlank()) header("Cookie", cookies)
+    }.execute { r ->
         if (r.status.value !in 200..299) throw ApiException("The download failed (HTTP ${r.status.value})")
         r.headers[HttpHeaders.ContentLength]?.toLongOrNull()?.takeIf { it > MAX_DOWNLOAD_BYTES }?.let {
             throw ApiException("The download is too large (64 MiB maximum)")
@@ -154,6 +162,12 @@ suspend fun download(url: String, cookies: String?): ByteArray {
         }
         result.toByteArray()
     }
+} catch (e: HttpRequestTimeoutException) {
+    throw ApiException("The download timed out. Check your connection and try again.")
+} catch (e: ConnectTimeoutException) {
+    throw ApiException("Couldn't reach MakerWorld's download server. Try again.")
+} catch (e: SocketTimeoutException) {
+    throw ApiException("The download stalled. Try again.")
 }
 
 private class GrowingBytes {
@@ -189,7 +203,8 @@ private suspend fun ByteArray.entry(vararg names: String) =
 private suspend fun ByteArray.boundedEntry(maxSize: Long, vararg names: String) =
     zipEntry(size.toLong(), names.map { Regex(it) }, maxSize) { o, l -> copyOfRange(o.toInt(), (o + l).toInt().coerceAtMost(size)) }?.second
 
-suspend fun readProject(data: ByteArray): Project {
+/** The plate pictures and settings are quick; [preview] adds the 3D meshes, which can take long on big models (use [readPreviewMeshes] later instead). */
+suspend fun readProject(data: ByteArray, preview: Boolean = true): Project {
     if (data.size < 4 || data[0] != 'P'.code.toByte() || data[1] != 'K'.code.toByte()) throw ApiException("That download isn't a 3MF project")
     val settings = data.entry("Metadata/project_settings\\.config")?.decodeToString()?.let { runCatching { json.parseToJsonElement(it).jsonObject }.getOrNull() }
     fun list(k: String) = (settings?.get(k) as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
@@ -212,26 +227,28 @@ suspend fun readProject(data: ByteArray): Project {
         settings?.s("wall_loops")?.toIntOrNull()?.let { "$it walls" },
         settings?.s("sparse_infill_density")?.let { density(it) }
     ).takeIf { it.isNotEmpty() }?.joinToString(", ")
-    val model3d = data.boundedEntry(MAX_PREVIEW_ENTRY_BYTES, Regex.escape(ROOT_MODEL_PATH))?.decodeToString()
-    val modelSources = mutableMapOf(ROOT_MODEL_PATH to model3d?.let(::xmlObjects).orEmpty())
-    model3d?.let(::componentPaths).orEmpty().forEach { path ->
-        data.boundedEntry(MAX_PREVIEW_ENTRY_BYTES, Regex.escape(path))?.decodeToString()?.let { modelSources[path] = xmlObjects(it) }
-    }
-    val objectMaterials = objectExtruders(model)
-    val meshes = model3d?.let { runCatching { previewMeshes(it, modelSources, plateObjectIds(model), objectMaterials) }.getOrDefault(emptyMap()) }.orEmpty()
+    val meshes = if (preview) readPreviewMeshes(data, model) else emptyMap()
     val mesh = meshes[plateIds.firstOrNull()?.first] ?: meshes.values.firstOrNull()
     return Project(plates, (settings?.get("printer_model") as? JsonPrimitive)?.contentOrNull, types.mapIndexed { i, t -> t to (colours.getOrNull(i) ?: "#888888") },
         sliceInfo != null || data.entry("Metadata/plate_\\d+\\.gcode\\.md5") != null,
         settings?.s("profile_name")?.takeIf { it.isNotBlank() }, profileSummary, mesh, meshes)
 }
 
+/** The 3D preview meshes of a project, by plate. Slow on big models, so the Print sheet loads them only when the preview opens. */
+suspend fun readPreviewMeshes(data: ByteArray, modelSettings: String? = null): Map<Int, PreviewMesh> {
+    val model = modelSettings ?: data.entry("Metadata/model_settings\\.config")?.decodeToString().orEmpty()
+    val model3d = data.boundedEntry(MAX_PREVIEW_ENTRY_BYTES, Regex.escape(ROOT_MODEL_PATH))?.decodeToString() ?: return emptyMap()
+    val modelSources = mutableMapOf(ROOT_MODEL_PATH to xmlObjects(model3d))
+    componentPaths(model3d).forEach { path ->
+        data.boundedEntry(MAX_PREVIEW_ENTRY_BYTES, Regex.escape(path))?.decodeToString()?.let { modelSources[path] = xmlObjects(it) }
+    }
+    return runCatching { previewMeshes(model3d, modelSources, plateObjectIds(model), objectExtruders(model)) }.getOrDefault(emptyMap())
+}
+
 private const val MAX_PREVIEW_TRIANGLES = 20_000
 private const val MAX_PREVIEW_ENTRY_BYTES = 8L * 1024 * 1024
 private const val ROOT_MODEL_PATH = "3D/3dmodel.model"
 private val XML_OBJECT = Regex("""(?s)<object\b([^>]*)>(.*?)</object>""")
-private val XML_MESH = Regex("""(?s)<mesh\b[^>]*>(.*?)</mesh>""")
-private val XML_VERTEX = Regex("""<vertex\b([^>]*)/?>""")
-private val XML_TRIANGLE = Regex("""<triangle\b([^>]*)/?>""")
 private val XML_COMPONENT = Regex("""<component\b([^>]*)/?>""")
 private val XML_ITEM = Regex("""<item\b([^>]*)/?>""")
 private val XML_METADATA = Regex("""<metadata\b([^>]*)/?>""")
@@ -263,9 +280,42 @@ private fun xmlMetadata(body: String): Map<String, String> = XML_METADATA.findAl
     key to (xmlAttr(attrs, "value") ?: "")
 }.toMap()
 
-private fun xmlObjects(xml: String): Map<Int, String> = XML_OBJECT.findAll(xml).mapNotNull { match ->
-    xmlAttr(match.groupValues[1], "id")?.toIntOrNull()?.let { it to match.groupValues[2] }
-}.toMap()
+// Meshes run to megabytes, where regexes crawl (minutes on a phone); these scan with indexOf, once through.
+private fun xmlObjects(xml: String): Map<Int, String> {
+    val out = mutableMapOf<Int, String>()
+    var at = xml.indexOf("<object")
+    while (at >= 0) {
+        val tagEnd = xml.indexOf('>', at)
+        val close = if (tagEnd < 0) -1 else xml.indexOf("</object>", tagEnd)
+        if (close < 0) break
+        if (xml[tagEnd - 1] == '/') { at = xml.indexOf("<object", tagEnd); continue } // self-closing: no body, don't pair it with the next </object>
+        if (xml.getOrNull(at + 7)?.isWhitespace() == true) xmlAttr(xml.substring(at + 7, tagEnd), "id")?.toIntOrNull()?.let { out[it] = xml.substring(tagEnd + 1, close) }
+        at = xml.indexOf("<object", close)
+    }
+    return out
+}
+
+private fun xmlMesh(body: String): String? {
+    var at = body.indexOf("<mesh")
+    while (at >= 0 && body.getOrNull(at + 5)?.let { it == '>' || it.isWhitespace() } != true) at = body.indexOf("<mesh", at + 5)
+    if (at < 0) return null
+    val tagEnd = body.indexOf('>', at)
+    val close = if (tagEnd < 0) -1 else body.indexOf("</mesh>", tagEnd)
+    return if (close < 0) null else body.substring(tagEnd + 1, close)
+}
+
+/** Calls [block] with the attributes of each `<name …>` tag of [xml], until it returns false. */
+private inline fun eachTag(xml: String, name: String, block: (String) -> Boolean) {
+    val open = "<$name"
+    var at = xml.indexOf(open)
+    while (at >= 0) {
+        val after = at + open.length
+        val end = xml.indexOf('>', after)
+        if (end < 0) return
+        if (xml[after].let { it == '/' || it == '>' || it.isWhitespace() } && !block(xml.substring(after, end))) return
+        at = xml.indexOf(open, end)
+    }
+}
 
 private fun componentPaths(xml: String): List<String> = XML_COMPONENT.findAll(xml).mapNotNull { match ->
     xmlAttr(match.groupValues[1], "p:path")?.trim()?.removePrefix("/")
@@ -312,20 +362,19 @@ private fun applyTransform(v: PreviewVertex, t: FloatArray) = PreviewVertex(
 )
 
 private fun appendMesh(body: String, transform: FloatArray, out: MutableList<PreviewTriangle>, defaultMaterial: Int? = null) {
-    val vertices = XML_VERTEX.findAll(body).mapNotNull { match ->
-        val attrs = match.groupValues[1]
-        PreviewVertex(xmlAttr(attrs, "x")?.toFloatOrNull() ?: return@mapNotNull null,
-            xmlAttr(attrs, "y")?.toFloatOrNull() ?: return@mapNotNull null,
-            xmlAttr(attrs, "z")?.toFloatOrNull() ?: return@mapNotNull null)
-    }.toList()
-    for (match in XML_TRIANGLE.findAll(body)) {
-        if (out.size >= MAX_PREVIEW_TRIANGLES) break
-        val attrs = match.groupValues[1]
+    val vertices = ArrayList<PreviewVertex?>()
+    eachTag(body, "vertex") { attrs ->
+        val x = xmlAttr(attrs, "x")?.toFloatOrNull(); val y = xmlAttr(attrs, "y")?.toFloatOrNull(); val z = xmlAttr(attrs, "z")?.toFloatOrNull()
+        vertices += if (x != null && y != null && z != null) PreviewVertex(x, y, z) else null
+        true
+    }
+    eachTag(body, "triangle") { attrs ->
         val a = xmlAttr(attrs, "v1")?.toIntOrNull()?.let(vertices::getOrNull)
         val b = xmlAttr(attrs, "v2")?.toIntOrNull()?.let(vertices::getOrNull)
         val c = xmlAttr(attrs, "v3")?.toIntOrNull()?.let(vertices::getOrNull)
         if (a != null && b != null && c != null) out += PreviewTriangle(applyTransform(a, transform), applyTransform(b, transform), applyTransform(c, transform),
             xmlAttr(attrs, "p1")?.toIntOrNull() ?: defaultMaterial)
+        out.size < MAX_PREVIEW_TRIANGLES
     }
 }
 
@@ -333,7 +382,7 @@ private fun appendObject(id: Int, source: String, transform: FloatArray, sources
     if (depth > 8 || out.size >= MAX_PREVIEW_TRIANGLES) return
     val body = sources[source]?.get(id) ?: return
     val ownMaterial = objectMaterials[id]?.takeIf { source == ROOT_MODEL_PATH }
-    val mesh = XML_MESH.find(body)?.groupValues?.get(1)
+    val mesh = xmlMesh(body)
     if (mesh != null) {
         appendMesh(mesh, transform, out, ownMaterial ?: defaultMaterial)
         return

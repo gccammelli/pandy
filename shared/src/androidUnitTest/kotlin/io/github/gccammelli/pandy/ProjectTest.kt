@@ -143,6 +143,27 @@ class ProjectTest {
         assertEquals(1,p.meshes.getValue(1).triangles.single().material)
         assertEquals(PreviewVertex(1f,0f,0f),p.mesh!!.triangles.single().b)
     }
+
+    @Test fun previewMeshesLoadSeparatelyAndScanTagsWithoutRegexes() = runTest {
+        fun archive(vararg entries: Pair<String, String>) = java.io.ByteArrayOutputStream().also { out ->
+            java.util.zip.ZipOutputStream(out).use { z -> entries.forEach { (name, text) -> z.putNextEntry(java.util.zip.ZipEntry(name)); z.write(text.toByteArray()); z.closeEntry() } }
+        }.toByteArray()
+        val model = """<model><resources>
+            <object id="9"/>
+            <object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="bad" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices>
+            <triangles><triangle v1="0" v2="1" v3="3" p1="1"/><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>
+            <object id="2"></object><object id="x"><mesh></mesh></object><meshy/></resources><build><item objectid="1"/></build></model>"""
+        val data = archive("3D/3dmodel.model" to model, "Metadata/model_settings.config" to "<config><plate><metadata key=\"plater_id\" value=\"1\"/></plate></config>")
+        val quick = readProject(data, preview = false)
+        assertEquals(emptyMap(), quick.meshes); assertNull(quick.mesh)
+        val meshes = readPreviewMeshes(data)
+        // The malformed vertex keeps its index slot, so the triangle that uses it is skipped rather than shifted onto another vertex.
+        assertEquals(1, meshes.getValue(1).triangles.size)
+        assertEquals(1, meshes.getValue(1).triangles.single().material)
+        assertEquals(meshes, readProject(data).meshes)
+        assertEquals(emptyMap(), readPreviewMeshes(archive("Metadata/model_settings.config" to "<config/>")))
+
+    }
 }
 
 class PresetTest {
