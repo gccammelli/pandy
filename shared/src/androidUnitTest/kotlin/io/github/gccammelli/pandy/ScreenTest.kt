@@ -1037,5 +1037,111 @@ class ScreenTest {
         org.junit.Assert.assertTrue(commands.isEmpty())
     }
 
+    @Test fun amsHtFilamentChoicesPersistWithoutPreviewColorsChangingThePrintMapping() {
+        val standard=printer.info.ams.first()
+        val ht=standard.copy(model="AMS HT",protocolId=129,trays=standard.trays.filterKeys { it==1 })
+        Repo.state.value=st.copy(printers=listOf(Printer(printer.info.copy(ams=listOf(ht)),snapshot)))
+        val bytes=modelBytes(mapOf("Metadata/project_settings.config" to """{"printer_model":"Bambu Lab X1 Carbon","filament_type":["PLA"],"filament_colour":["#FFFFFF"]}""".toByteArray()))
+        prepareModel(bytes)
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("HT",substring=false).performScrollTo().assertExists()
+        compose.onAllNodesWithText("PLA",substring=false).onFirst().performClick()
+        compose.onNodeWithText("AMS HT").performClick()
+        compose.onNodeWithText("Confirm").performClick()
+        assertEquals(setOf(129),Repo.filamentPreset(printer.serial).values.toSet())
+        compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+        compose.onNodeWithText("Printer colors").performClick()
+        compose.onAllNodes(isToggleable()).onFirst().performClick()
+        compose.onNodeWithText("Customize colors").performClick()
+        val side=36*compose.activity.resources.displayMetrics.density
+        compose.onAllNodes(hasClickAction() and SemanticsMatcher("Color swatch") { node ->
+            kotlin.math.abs(node.boundsInRoot.width-side)<1 && kotlin.math.abs(node.boundsInRoot.height-side)<1
+        }).onLast().performClick()
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("Reset").performClick()
+        compose.onNodeWithText("Confirm").performClick()
+        assertEquals(setOf(129),Repo.filamentPreset(printer.serial).values.toSet())
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun previewWithoutFilamentMetadataExplainsWhyThereAreNoCustomColorChoices() {
+        prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to "{}".toByteArray())))
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+        compose.onNodeWithText("Customize colors").performClick()
+        compose.onNodeWithText("This model has no filament color metadata.").assertExists()
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("Confirm").performClick()
+        compose.onNodeWithText("Prepare to Print").assertExists()
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun emptyPrintHistoryExplainsTheIntegrationFileCache() {
+        val demo=FakeHomeAssistant()
+        val backend=object : HaBackend by demo { override suspend fun get(path: String)="""{"files":[]}""" }
+        Repo::class.java.getDeclaredField("extras").apply { isAccessible=true }.set(Repo,backend)
+        show("History") { HistoryScreen(printer) }
+        compose.onNodeWithText("No prints yet").assertExists()
+        compose.onNodeWithText("Pandy lists the prints",substring=true).assertExists()
+    }
+
+    @Test fun cachedHistoryRowsWithoutThumbnailsOpenTheirPrintSettings() {
+        val demo=FakeHomeAssistant()
+        val backend=object : HaBackend by demo {
+            override suspend fun get(path: String)=if(path.endsWith(".slice_info.config")) "<config/>" else
+                """{"files":[{"filename":"1024-Test.3mf","path":"TEST/prints/Test.3mf","size":1024,"modified":"2026-10-24T08:00"}]}"""
+        }
+        Repo::class.java.getDeclaredField("extras").apply { isAccessible=true }.set(Repo,backend)
+        show("History") { HistoryScreen(printer) }
+        compose.onNodeWithText("3MF").assertExists()
+        compose.onNodeWithText("1 KB").assertExists()
+        compose.onNodeWithText("Test").performClick()
+        compose.onNodeWithText("Print",substring=false).assertExists()
+        compose.onNodeWithText("Send").assertIsNotEnabled()
+    }
+
+    private fun savedDirectConnection() {
+        val field=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }
+        val original=field.get(Repo) as PlatformStorage
+        val keys=listOf("demo","mode","lan_serial","lan_ip","lan_model","ha_url","slicer_url")
+        val before=keys.associateWith { original.settings.getString(it) }
+        val secrets=mutableMapOf<String,String>()
+        field.set(Repo,PlatformStorage(original.settings,object : SecretStore {
+            override fun get(key: String)=secrets[key]
+            override fun set(key: String,value: String?) { if(value==null) secrets.remove(key) else secrets[key]=value }
+        },original.files))
+        restorePrintSettings={ before.forEach { (k,v) -> original.settings.putString(k,v) }; field.set(Repo,original) }
+        Repo.setSetting("demo","false"); Repo.setSetting("mode","lan")
+        Repo.saveLan(LanConfig("192.0.2.1",printer.serial,"test-code",printer.model))
+    }
+
+    @Test fun disconnectingADirectPrinterRequiresConfirmationAndKeepsRemoteSettings() {
+        savedDirectConnection()
+        Repo.setSetting("ha_url","https://home.example"); Repo.setSetting("slicer_url","https://slicer.example")
+        val firmwareId=printer.info.ids.getValue("binary_sensor.firmware_update")
+        val p=Printer(printer.info,snapshot+(firmwareId to Entity(firmwareId,"on",JsonObject(emptyMap()))))
+        show("Settings") { PrinterSettingsScreen(p) }
+        compose.onNodeWithText("Update available",substring=true).performScrollTo().assertExists()
+        compose.onNodeWithText("Disconnect printer").performScrollTo().performClick()
+        compose.onNodeWithText("Cancel").performClick()
+        org.junit.Assert.assertNotNull(Repo.lan)
+        compose.onNodeWithText("Disconnect printer").performClick()
+        compose.onNodeWithText("Disconnect",substring=false).performClick()
+        org.junit.Assert.assertNull(Repo.lan); org.junit.Assert.assertFalse(Repo.connected)
+        assertEquals("https://home.example",Repo.haUrl); assertEquals("https://slicer.example",Repo.slicerUrl)
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun combinedConnectionSettingsExplainBothSavedBackendsAndToggleUnavailableControls() {
+        savedDirectConnection(); Repo.setSetting("ha_url","https://home.example")
+        show("Settings") { SettingsScreen() }
+        compose.onAllNodes(isToggleable()).onFirst().performClick()
+        org.junit.Assert.assertFalse(Repo.showUnavailable)
+        compose.onNodeWithText("${printer.model} · 192.0.2.1").performScrollTo().assertExists()
+        compose.onNodeWithText("Remove Home Assistant").performScrollTo().assertExists()
+        compose.onNodeWithText("Slicer for MakerWorld prints").performScrollTo().performClick()
+        kotlin.test.assertIs<Screen.Slicer>(Nav.stack.last())
+    }
+
 }
 
