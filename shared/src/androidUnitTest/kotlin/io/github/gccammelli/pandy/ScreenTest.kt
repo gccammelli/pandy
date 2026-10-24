@@ -943,5 +943,99 @@ class ScreenTest {
             org.junit.Assert.assertTrue(moves.any { it.s("axis")==axis && it.s("distance")==mm.toString() })
     }
 
+    @Test fun temperatureEntryFiltersDigitsClampsToTheHardwareLimitAndAllowsCancellation() {
+        val set=mutableListOf<Int>(); var closed=0
+        show("Temperature") { TempSheet("Temperature","Test heater",listOf(0,40),null,0..65,{closed++}) { set+=it } }
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(1,closed); org.junit.Assert.assertTrue(set.isEmpty())
+        compose.onNode(hasSetTextAction()).performTextInput("x999z")
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(listOf(65),set)
+        compose.onNodeWithText("Off",substring=false).performClick()
+        compose.onNode(hasSetTextAction()).performImeAction()
+        assertEquals(listOf(65,0),set)
+    }
+
+    @Test fun heatedChamberUsesItsOwnTarget() {
+        val id="number.chamber_target"
+        val info=printer.info.copy(ids=printer.info.ids+("number.target_chamber_temperature" to id))
+        val heated=Printer(info,snapshot+(id to Entity(id,"0",JsonObject(emptyMap()))))
+        show("Device Control") { ControlScreen(heated) }
+        compose.onNodeWithText("Chamber",substring=false).performClick()
+        compose.onNodeWithText("Chamber temperature").assertExists()
+        compose.onNodeWithText("40°C").performClick()
+        compose.onNodeWithText("Done").performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("/set_value") } }
+        val data=json.parseToJsonElement(commands.first { it.first.endsWith("/set_value") }.second).jsonObject
+        assertEquals(id,data.s("entity_id")); assertEquals("40.0",data.s("value"))
+    }
+
+    @Test fun pickingAnAlreadySkippedPartDoesNotSelectItAndImageTapsToggleOtherParts() {
+        val id=printer.info.ids.getValue("sensor.skipped_objects")
+        val p=Printer(printer.info,snapshot+(id to Entity(id,"1",buildJsonObject { put("objects",JsonArray(listOf(JsonPrimitive(101)))) })))
+        show("Skip Parts") { SkipScreen(p) }
+        compose.onNodeWithText("Skipped").assertExists()
+        val density=compose.activity.resources.displayMetrics.density
+        val title=compose.onNodeWithText("Skip Parts").fetchSemanticsNode().boundsInRoot
+        val width=compose.onRoot().fetchSemanticsNode().boundsInRoot.width-32*density
+        val top=title.center.y+44*density
+        fun tap(x: Float,y: Float) {
+            compose.onRoot().performTouchInput { click(androidx.compose.ui.geometry.Offset(16*density+x/512*width,top+y/512*width)) }
+        }
+        // The real demo pick bitmap encodes object IDs in its red channel.
+        tap(230f,270f); compose.onNodeWithText("0/2 Selected").assertExists()
+        tap(10f,10f); compose.onNodeWithText("0/2 Selected").assertExists()
+        tap(300f,250f); compose.onNodeWithText("1/2 Selected").assertExists()
+        compose.runOnIdle {
+            val view=compose.activity.window.decorView
+            view.draw(Canvas(Bitmap.createBitmap(view.width,view.height,Bitmap.Config.ARGB_8888)))
+        }
+        tap(300f,250f); compose.onNodeWithText("0/2 Selected").assertExists()
+        compose.onNodeWithText("Select All").performClick()
+        compose.onNodeWithText("2/2 Selected").assertExists()
+        compose.onNodeWithText("Skip",substring=false).performClick()
+        compose.onNodeWithText("Skip 2 parts?").assertExists()
+        compose.onAllNodesWithText("Skip",substring=false).filter(hasAnyAncestor(isDialog())).onFirst().performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("/skip_objects") } }
+        val sent=json.parseToJsonElement(commands.first { it.first.endsWith("/skip_objects") }.second).jsonObject.s("objects")!!.split(',').toSet()
+        assertEquals(setOf("102","103"),sent)
+    }
+
+    @Test fun multiplePrintersCanBeSelectedAndOfflineOnesStayClearlyMarked() {
+        val other=Printer(printer.info.copy(serial="OTHER",name="Other printer",ids=printer.info.ids-"sensor.printer_name"),
+            snapshot+(printer.info.ids.getValue("binary_sensor.online") to Entity(printer.info.ids.getValue("binary_sensor.online"),"off",JsonObject(emptyMap()))))
+        val state=st.copy(printers=listOf(printer,other))
+        show(printer.name) { DevicesTab(state,printer) }
+        compose.onNodeWithText(printer.name).performClick()
+        compose.onNodeWithText("Printers").assertExists()
+        compose.onNodeWithText("Offline").assertExists()
+        compose.onNodeWithText("Other printer").performClick()
+        assertEquals("OTHER",Repo.selected)
+        compose.onNodeWithText("Printers").assertDoesNotExist()
+    }
+
+    @Test fun failedOrUnmatchedCachedPrintSettingsKeepTheSendActionDisabled() {
+        val demo=FakeHomeAssistant()
+        var failure=true
+        val backend=object : HaBackend by demo {
+            override suspend fun get(path: String): String {
+                if(path.endsWith(".slice_info.config")) {
+                    if(failure) throw ApiException("Metadata missing")
+                    return """<config><filament type="ABS" color="#FFFFFF"/></config>"""
+                }
+                return demo.get(path)
+            }
+        }
+        Repo::class.java.getDeclaredField("extras").apply { isAccessible=true }.set(Repo,backend)
+        val file=androidx.compose.runtime.mutableStateOf(CachedFile("Test.3mf","TEST/prints/Test.3mf",10,"",null))
+        show("Print") { ReprintSheet(changed("sensor.print_status" to "idle"),file.value,{}) }
+        compose.onNodeWithText("Print settings could not be read, so this print is disabled.").assertExists()
+        compose.onNodeWithText("Send").assertIsNotEnabled()
+        compose.runOnIdle { failure=false; file.value=file.value.copy(path="TEST/prints/Other.3mf") }
+        compose.onNodeWithText("Load matching filament before sending this print.").assertExists()
+        compose.onNodeWithText("Send").assertIsNotEnabled()
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
 }
 
