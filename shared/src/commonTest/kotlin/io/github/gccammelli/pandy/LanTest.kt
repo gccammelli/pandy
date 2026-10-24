@@ -55,10 +55,22 @@ class LanTest {
         }
         assertEquals("future-model",modelName("future-model"))
         assertEquals("Bambu printer",modelName(null,"future-serial"))
+        assertEquals("X1C",modelName("Bambu X1-Carbon"))
+        assertEquals("X1E",modelName("Bambu X1E"))
+        assertEquals("P1S",modelName(" ","01P123"))
     }
 
     @Test fun stageAndErrorReportsRemainVisibleInThePrinterModel() {
         for ((stage,expected) in listOf(
+            -1 to "idle",255 to "idle",0 to "printing",1 to "auto_bed_leveling",2 to "heatbed_preheating",
+            3 to "sweeping_xy_mech_mode",4 to "changing_filament",5 to "m400_pause",7 to "heating_hotend",
+            8 to "calibrating_extrusion",9 to "scanning_bed_surface",10 to "inspecting_first_layer",
+            12 to "calibrating_micro_lidar",18 to "calibrating_micro_lidar",13 to "homing_toolhead",
+            15 to "checking_extruder_temperature",16 to "paused_user",17 to "paused_front_cover_falling",
+            19 to "calibrating_extrusion_flow",21 to "paused_heat_bed_temperature_malfunction",
+            23 to "paused_skipped_step",24 to "filament_loading",25 to "calibrating_motor_noise",
+            29 to "cooling_chamber",30 to "paused_user_gcode",34 to "paused_first_layer_error",35 to "paused_nozzle_clog",
+            54 to "waiting_for_heatbed_temperature",
             6 to "paused_filament_runout",11 to "identifying_build_plate_type",14 to "cleaning_nozzle_tip",
             20 to "paused_nozzle_temperature_malfunction",22 to "filament_unloading",26 to "paused_ams_lost",
             49 to "heating_chamber",99 to "stage_99",
@@ -103,6 +115,14 @@ class LanTest {
         val m = deepMerge(report, json.parseToJsonElement("""{"print":{"mc_percent":47}}""").jsonObject)
         assertEquals(47, printer(m).progress)
         assertEquals(312, printer(m).layers) // untouched fields stay
+    }
+
+    @Test fun partialReportsReplaceArraysAndExplicitNullsRatherThanKeepingStaleValues() {
+        val old=json.parseToJsonElement("""{"print":{"value":{},"array":[1,2],"removed":1},"other":4}""").jsonObject
+        val patch=json.parseToJsonElement("""{"print":{"value":7,"array":[3],"removed":null},"other":{"nested":true}}""").jsonObject
+        val merged=deepMerge(old,patch)
+        assertEquals(patch,merged)
+        assertEquals(old,deepMerge(old,JsonObject(emptyMap())))
     }
 
     @Test fun nestedLayerFields() {

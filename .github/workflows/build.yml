@@ -32,6 +32,7 @@ jobs:
       - name: Test
         run: |
           python3 .github/scripts/public_issue_patch.py --self-test
+          python3 tools/check_codecov.py --self-test
           ./gradlew testDebugUnitTest :shared:koverXmlReportDebug :shared:koverVerifyDebug
 
       - name: Upload coverage
@@ -166,8 +167,14 @@ jobs:
         with:
           files: reportDebug.xml
           flags: android-unit
-          fail_ci_if_error: false
+          fail_ci_if_error: true
           use_oidc: true
+          disable_search: true
+
+      - name: Verify fully covered lines in Codecov
+        env:
+          COVERAGE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 tools/check_codecov.py "$GITHUB_REPOSITORY" "$COVERAGE_SHA"
 
   release:
     needs: [android, ios]

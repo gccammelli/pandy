@@ -12,14 +12,17 @@ import kotlin.test.*
 @RunWith(RobolectricTestRunner::class)
 class RepositoryLiveTest {
     private fun init(backend: HaBackend) {
+        Repo.stop()
+        Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.set(Repo,null)
         val values = mutableMapOf<String,String>()
+        val tokens = mutableMapOf<String,String>()
         Repo.init(PlatformStorage(object : KeyValue {
             override fun getString(key: String) = values[key]
             override fun putString(key: String,value: String?) { if(value==null) values.remove(key) else values[key]=value }
             override fun clear() = values.clear()
         },object : SecretStore {
-            override fun get(key: String): String? = null
-            override fun set(key: String,value: String?) = Unit
+            override fun get(key: String)=tokens[key]
+            override fun set(key: String,value: String?) { if(value==null) tokens.remove(key) else tokens[key]=value }
         },object : AppFiles {
             override fun read(name: String): ByteArray? = null
             override fun write(name: String,bytes: ByteArray) = Unit
@@ -120,6 +123,43 @@ class RepositoryLiveTest {
             assertEquals(config.serial,store.settings.getString("lan_serial"))
             assertEquals(config.ip,store.settings.getString("lan_ip"))
             assertTrue(Repo.connected)
+        } finally { Repo.logout(); Dispatchers.resetMain() }
+    }
+
+    @Test fun addingHomeAssistantToADirectConnectionKeepsTheSimulatedPrinterInControl() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val demo=FakeHomeAssistant()
+        init(demo)
+        val config=LanConfig("192.0.2.1","COMBINED-TEST","test-code","P1S","Workshop")
+        val direct=DirectPrinter(config,true,{ object : LanLink {
+            override suspend fun run(onConnected: ()->Unit,onMessage: (String)->Unit) {
+                onConnected(); onMessage("""{"print":{"command":"push_status","gcode_state":"IDLE"}}""")
+                awaitCancellation()
+            }
+            override fun publish(payload: String)=Unit
+            override fun close()=Unit
+        } })
+        try {
+            Repo.connectPrinter(config) { direct }
+            assertTrue(Repo.direct); assertEquals(config,Repo.lan)
+            val types=listOf("config/device_registry/list","config/entity_registry/list")
+            val registry=types.zip(demo.ws(types.map { buildJsonObject { put("type",it) } }).map { it!! }).toMap()
+            HaSocket(registry=registry).use { peer ->
+                Repo.connect(" ${peer.url}/ "," pasted\n token ",asPrinter=false)
+                assertTrue(Repo.ha is PreferPrimaryBackend); assertTrue((Repo.ha as PreferPrimaryBackend).usingPrimary)
+                assertTrue(Repo.extras is HaHttp); assertEquals(peer.url,Repo.haUrl)
+                assertTrue(Repo.direct); assertEquals(config,Repo.lan)
+                assertEquals(mapOf("Authorization" to "Bearer pastedtoken"),Repo.authHeaders())
+                assertNotNull(Repo.slicer)
+                val live=withContext(Dispatchers.Default) { withTimeout(5000) { Repo.state.first { it.live && !it.printers.isNullOrEmpty() } } }
+                assertEquals(config.serial,live.printers!!.single().serial)
+                Repo.removeDirectPrinter()
+                assertFalse(Repo.connected); assertNull(Repo.lan); assertTrue(Repo.extras is HaHttp)
+                assertEquals(peer.url,Repo.haUrl); assertNotNull(Repo.slicer)
+                Repo.removeHa()
+                assertNull(Repo.haUrl); assertNull(Repo.ha); assertNull(Repo.extras); assertNull(Repo.slicer)
+                assertFalse(Repo.state.value.on)
+            }
         } finally { Repo.logout(); Dispatchers.resetMain() }
     }
 

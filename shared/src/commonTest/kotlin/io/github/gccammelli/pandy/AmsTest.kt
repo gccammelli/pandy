@@ -7,6 +7,26 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonObject
 
 class AmsTest {
+    private fun mappingPrinter(): Printer {
+        val ams=AmsInfo("ams",1,"AMS",emptyMap(),mapOf(1 to "sensor.white",2 to "sensor.green"))
+        val info=PrinterInfo("printer","serial","Printer","X1C",null,emptyMap(),listOf(ams),emptyList())
+        return Printer(info,listOf("white" to "#FFFFFF","green" to "#00FF00").associate { (name,color) ->
+            "sensor.$name" to Entity("sensor.$name","PLA",json.parseToJsonElement("""{"type":"PLA","color":"$color"}""").jsonObject)
+        })
+    }
+
+    @Test fun slicerMappingPreservesUnusedSlotsAndRefusesUnmatchedFilaments() {
+        val p=mappingPrinter()
+        assertEquals(listOf(0,-1,1),amsMappingFor(p,listOf(mapOf("id" to "1","type" to "PLA","color" to "#FFFFFF"),
+            mapOf("id" to "3","type" to "pla","color" to "#00FF00"))))
+        assertEquals(listOf(0),amsMappingFor(p,listOf(mapOf("id" to "bad","type" to "PLA","color" to "#FFFFFF"))))
+        assertEquals(listOf(0),amsMappingFor(p,listOf(mapOf("type" to "PLA","color" to "#FFFFFF"))))
+        assertNull(amsMappingFor(p,emptyList()))
+        assertNull(amsMappingFor(p,listOf(mapOf("type" to "PETG"))))
+        val bare=Printer(p.info.copy(ams=emptyList()),emptyMap())
+        assertNull(amsMappingFor(bare,listOf(mapOf("type" to "PLA"))))
+    }
+
     @Test
     fun mapsStandardAndAmsHtTrayIds() {
         val standard = AmsInfo("standard", 2, "AMS", emptyMap(), emptyMap())

@@ -53,7 +53,7 @@ suspend fun zipEntry(total: Long, wanted: List<Regex>, fetch: suspend (offset: L
 suspend fun zipEntry(total: Long, wanted: List<Regex>, maxSize: Long, fetch: suspend (offset: Long, len: Int) -> ByteArray): Pair<String, ByteArray>? {
     if (total < 22 || maxSize < 0) return null
     suspend fun exact(offset: Long, length: Int): ByteArray? {
-        if (offset < 0 || offset > total || length < 0 || length.toLong() > total - offset) return null
+        if (offset > total || length.toLong() > total - offset) return null // offsets and lengths come from unsigned zip fields: never negative
         return fetch(offset, length).takeIf { it.size == length }
     }
     val tailLen = minOf(total, 65_557L).toInt()
@@ -63,11 +63,10 @@ suspend fun zipEntry(total: Long, wanted: List<Regex>, maxSize: Long, fetch: sus
     if (e < 0) return null
     val cdSizeLong = tail.u32(e + 12)
     val cdOffset = tail.u32(e + 16)
-    if (cdSizeLong > MAX_ZIP_DIRECTORY_BYTES || cdSizeLong > Int.MAX_VALUE || cdOffset > total || cdSizeLong > total - cdOffset) return null
+    if (cdSizeLong > MAX_ZIP_DIRECTORY_BYTES || cdOffset > total || cdSizeLong > total - cdOffset) return null
     val cdSize = cdSizeLong.toInt()
     val cdInTail = cdOffset - (total - tailLen)
     val cd = if (cdInTail >= 0) {
-        if (cdInTail > tail.size || cdSize > tail.size - cdInTail.toInt()) return null
         tail.copyOfRange(cdInTail.toInt(), cdInTail.toInt() + cdSize)
     } else exact(cdOffset, cdSize) ?: return null
     data class Ent(val name: String, val method: Int, val comp: Long, val size: Long, val local: Long)
@@ -76,15 +75,15 @@ suspend fun zipEntry(total: Long, wanted: List<Regex>, maxSize: Long, fetch: sus
     while (i + 46 <= cd.size && cd.u32(i) == 0x02014b50L) {
         val n = cd.u16(i + 28); val x = cd.u16(i + 30); val c = cd.u16(i + 32)
         val end = i.toLong() + 46 + n + x + c
-        if (end > cd.size || i + 46 + n > cd.size) return null
+        if (end > cd.size) return null
         ents += Ent(cd.copyOfRange(i + 46, i + 46 + n).decodeToString(), cd.u16(i + 10), cd.u32(i + 20), cd.u32(i + 24), cd.u32(i + 42))
         i += 46 + n + x + c
     }
     val hit = wanted.firstNotNullOfOrNull { r -> ents.firstOrNull { r.matches(it.name) } } ?: return null
-    if (hit.size > maxSize || hit.size < 0 || hit.comp > Int.MAX_VALUE || hit.comp < 0 || hit.local < 0) return null
+    if (hit.size > maxSize || hit.comp > Int.MAX_VALUE) return null
     val head = exact(hit.local, 30) ?: return null
     val start = hit.local + 30 + head.u16(26) + head.u16(28)
-    if (start < hit.local || start > total || hit.comp > total - start) return null
+    if (start > total || hit.comp > total - start) return null
     val raw = exact(start, hit.comp.toInt()) ?: return null
     val bytes = when (hit.method) {
         0 -> raw.takeIf { hit.comp == hit.size }

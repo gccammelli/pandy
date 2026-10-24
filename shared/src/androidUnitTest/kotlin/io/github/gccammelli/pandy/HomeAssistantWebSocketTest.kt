@@ -13,7 +13,7 @@ import kotlin.concurrent.thread
 import kotlin.test.*
 
 /** A loopback-only WebSocket peer: exercises the real Ktor client without a Home Assistant. */
-internal class HaSocket(private val authenticate: Boolean = true, private val reject: Boolean = false, private val stream: Boolean = false, private val registry: Map<String, JsonElement>? = null) : AutoCloseable {
+internal class HaSocket(private val authenticate: Boolean = true, private val reject: Boolean = false, private val stream: Boolean = false, private val registry: Map<String, JsonElement>? = null, private val bare: Boolean = false) : AutoCloseable {
     private val listener = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
     val url = "http://localhost:${listener.localPort}"
     val received = mutableListOf<JsonObject>()
@@ -58,10 +58,11 @@ internal class HaSocket(private val authenticate: Boolean = true, private val re
                         val c = next()
                         val id = c.getValue("id")
                         if (stream) {
-                            send("""{"id":$id,"type":"result","success":${!reject},"error":{"message":"subscription denied"}}""")
+                            send("""{"id":$id,"type":"result","success":${!reject}${if(bare) "" else ""","error":{"message":"subscription denied"}"""}}""")
+                            if(!reject && bare) { send("""{"id":$id,"type":"pong"}"""); send("""{"id":$id,"type":"event"}""") }
                             if(!reject) send("""{"id":$id,"type":"event","event":{"a":{"sensor.test":{"s":"running","a":{}}}}}""")
                         }
-                        else if (reject) send("{\"id\":$id,\"success\":false,\"error\":{\"message\":\"operation denied\"}}")
+                        else if (reject) send("{\"id\":$id,\"success\":false${if (bare) "" else ",\"error\":{\"message\":\"operation denied\"}"}}")
                         else {
                             send("{\"id\":999,\"success\":true,\"result\":\"unrelated\"}")
                             val result = registry?.get(c.s("type")) ?: buildJsonObject { put("command", c.getValue("type")) }
@@ -143,6 +144,21 @@ class HomeAssistantWebSocketTest {
         HaSocket(reject = true).use { server ->
             val error = assertFailsWith<ApiException> { HaHttp(server.url, "token").ws(listOf(buildJsonObject { put("type", "config/device_registry/list") })) }
             assertEquals("operation denied", error.message)
+        }
+    }
+    @Test fun refusalsWithoutADetailMessageStillSayWhatWasRefusedAndStrayFramesAreIgnored() = runTest {
+        HaSocket(reject = true, bare = true).use { server ->
+            val error = assertFailsWith<ApiException> { HaHttp(server.url, "token").ws(listOf(buildJsonObject { put("type", "config/device_registry/list") })) }
+            assertEquals("Home Assistant refused config/device_registry/list", error.message)
+        }
+        HaSocket(reject = true, stream = true, bare = true).use { server ->
+            val error = assertFailsWith<ApiException> { HaHttp(server.url, "token").stream(buildJsonObject { put("type", "subscribe_entities") }) { } }
+            assertEquals("Home Assistant refused the subscription", error.message)
+        }
+        HaSocket(stream = true, bare = true).use { server ->
+            val events = mutableListOf<JsonObject>()
+            runCatching { HaHttp(server.url, "token").stream(buildJsonObject { put("type", "subscribe_entities") }) { events += it } }
+            assertEquals(1, events.size) // the pong and the event without a payload are skipped
         }
     }
     @Test fun subscriptionEventsAreDeliveredAndRefusalIsExplicit() = runTest {

@@ -57,7 +57,7 @@ class FakeHomeAssistant : HaBackend {
 
     private var startedAt = Clock.System.now().toEpochMilliseconds()
     private val totalMinutes = 154.0
-    private var progress = 46.0
+    internal var progress = 46.0
 
     init {
         add("binary_sensor", "online", "on")
@@ -194,7 +194,7 @@ class FakeHomeAssistant : HaBackend {
     }
 
     /** Every two seconds: the print moves on, temperatures drift toward their targets. */
-    private fun tick() {
+    internal fun tick() {
         val status = state("sensor", "print_status").state
         if (status == "running") {
             progress = (progress + 0.25).coerceAtMost(100.0)

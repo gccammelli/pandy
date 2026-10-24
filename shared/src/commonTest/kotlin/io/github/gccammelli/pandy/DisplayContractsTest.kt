@@ -22,4 +22,15 @@ class DisplayContractsTest {
         }
     }
 
+    @Test fun speedHumidityAndFileSizesUseTheirDocumentedDisplayBoundaries() {
+        for((key,label) in listOf("silent" to "Silent","standard" to "Standard","sport" to "Sport","ludicrous" to "Ludicrous",null to "--","future" to "--")) assertEquals(label,speedLabel(key))
+        assertEquals(listOf("0min","59min","1h 0min","1h 59min"),listOf(0.0,59.9,60.0,119.9).map(::minutes))
+        assertEquals(listOf("0 B","1023 B","1 KB","1023 KB","1.0 MB"),listOf(0L,1023L,1024L,1_048_575L,1_048_576L).map(::sizeText))
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF00A33E),humidityColor(2))
+        assertEquals(androidx.compose.ui.graphics.Color(0xFFFFB020),humidityColor(3))
+        assertEquals(androidx.compose.ui.graphics.Color(0xFFE5484D),humidityColor(4))
+        assertEquals("",stageText("")); assertEquals("",nozzleType(""))
+        for((raw,label) in listOf("hardened_steel" to "Hardened steel","stainless_steel" to "Stainless steel","brass" to "Brass","tungsten_carbide" to "Tungsten carbide","high_flow_stainless_steel" to "High flow stainless steel")) assertEquals(label,nozzleType(raw))
+    }
+
 }

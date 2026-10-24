@@ -96,6 +96,14 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
+/** Fetches a model file; a variable only so tests can supply or fail the download without a network. */
+internal var downloadModel: suspend (String, String?) -> ByteArray = ::download
+
+/** Reads a model's 3D preview meshes; a variable only so tests can slow or fail it. */
+internal var loadPreviewMeshes: suspend (ByteArray) -> Map<Int, io.github.gccammelli.pandy.PreviewMesh> = { readPreviewMeshes(it) }
+
+internal var modelDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default
+
 const val MAKERWORLD = "https://makerworld.com/en"
 
 /**
@@ -125,7 +133,7 @@ fun MakerWorld(modifier: Modifier) {
     fileDownload?.let { d ->
         LaunchedEffect(d) {
             try {
-                val bytes = d.bytes ?: withContext(Dispatchers.Default) { download(d.url!!, d.cookies) }
+                val bytes = d.bytes ?: withContext(Dispatchers.Default) { downloadModel(d.url!!, d.cookies) }
                 platform.saveFile(d.name, downloadMime(d.name), bytes) { e -> platform.toast(e?.message ?: "Saved ${d.name}") }
             } catch (e: CancellationException) {
                 throw e
@@ -221,12 +229,12 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         presets = false
         buildPlate = printerBed ?: "Textured PEI Plate"
         runCatching {
-            val bytes = d.bytes ?: withContext(Dispatchers.Default) { download(d.url!!, d.cookies) }
+            val bytes = d.bytes ?: withContext(Dispatchers.Default) { downloadModel(d.url!!, d.cookies) }
             data = bytes
             reading = true
             val loaded = try {
-                // shortcut: the timeout is only checked between zip entries, not mid-scan; the scanners are linear, so upgrade only if one proves slow
-                withContext(Dispatchers.Default) { withTimeout(60_000) { readProject(bytes, preview = false) } }
+                // shortcut: timeout checks happen between zip entries; revisit if a scanner proves slow
+                withContext(modelDispatcher) { withTimeout(60_000) { readProject(bytes, preview = false) } }
             } catch (e: TimeoutCancellationException) {
                 throw ApiException("Reading the model took too long. Try another model or file.")
             }
@@ -245,7 +253,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         val bytes = data
         if (view != PrepareView.Preview || previewLoaded || project == null || bytes == null) return@LaunchedEffect
         val meshes = try {
-            withContext(Dispatchers.Default) { withTimeout(120_000) { readPreviewMeshes(bytes) } }
+            withContext(modelDispatcher) { withTimeout(120_000) { loadPreviewMeshes(bytes) } }
         } catch (e: CancellationException) {
             if (e is TimeoutCancellationException) emptyMap() else throw e // leaving the preview must not publish a half result
         } catch (e: Exception) {
@@ -350,11 +358,10 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     if (printerPicker) PrinterPicker(p, buildPlate, close = { printerPicker = false }, plate = { printerPicker = false; platePicker = true })
     if (platePicker) PlatePicker(buildPlate, close = { platePicker = false }) { buildPlate = it; platePicker = false }
     if (filamentPicker) FilamentPicker(p, pr, filamentIndex, auto, presets, manualMapping, close = { filamentPicker = false }) { slot ->
-        pr.filaments.getOrNull(filamentIndex)?.let { (type, colour) ->
-            manualMapping = manualMapping + (filamentKey(type, colour) to slot)
-            presets = true
-            Repo.setFilamentPreset(p.serial, manualMapping)
-        }
+        val (type, colour) = pr.filaments[filamentIndex] // the picker opens from a filament chip
+        manualMapping = manualMapping + (filamentKey(type, colour) to slot)
+        presets = true
+        Repo.setFilamentPreset(p.serial, manualMapping)
     }
     help?.let { topic -> HelpSheet(topic) { help = null } }
     if (confirmPrint) AlertDialog(
@@ -576,9 +583,7 @@ private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, en
             Box(Modifier.size(30.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(hexColor(colour))))
             Spacer(Modifier.width(7.dp))
             Column(Modifier.weight(1f)) {
-                T(when {
-                    else -> trayLabel
-                }, 12.sp, C.Text, FontWeight.Medium)
+                T(trayLabel, 12.sp, C.Text, FontWeight.Medium)
                 T(loaded?.type ?: type, 12.sp, C.Sub, maxLines = 1)
             }
             T("⌄", 18.sp, C.Sub)
@@ -592,8 +597,7 @@ private fun HelpSheet(topic: String, close: () -> Unit) = Sheet(close, topic, ce
         "Printer and build plate" -> "Choose the printer and the build plate installed on it. The plate type is sent to the printer when a direct-LAN print starts."
         "Plate selection" -> "Choose one plate from the project. The time, filament weight and part count come from the downloaded 3MF when the designer included them."
         "Filament matching" -> "Each model filament must map to a loaded AMS tray, or to the external spool on printers without an AMS. Pandy refuses a mismatched mapping before it starts a print."
-        "Filament presets" -> "Presets remember your chosen tray for this printer and filament colour. They are only used when the selected tray is still loaded."
-        else -> "Review the model, filament colours and printer settings before starting the print."
+        else -> "Presets remember your chosen tray for this printer and filament colour. They are only used when the selected tray is still loaded."
     }, 14.sp, C.Sub, lh = 21.sp)
 }
 
@@ -632,7 +636,7 @@ private fun PreviewView(p: Printer, project: Project, plate: Int, auto: List<Int
         Card(radius = 16.dp, padding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
             Box(Modifier.fillMaxWidth().height(280.dp).clip(RoundedCornerShape(12.dp)).background(C.Fill), contentAlignment = Alignment.Center) {
                 mesh?.let { PreviewMeshCanvas(it, displayColors, showPlate) } ?: if (showPlate && image != null) Image(image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                else T(if (mesh == null) "3D preview unavailable" else "Model", 24.sp, C.Faint, FontWeight.Bold)
+                else T("3D preview unavailable", 24.sp, C.Faint, FontWeight.Bold)
             }
             Gap(12.dp); T("Color scheme", 16.sp, weight = FontWeight.Medium)
             Gap(8.dp)
@@ -683,12 +687,12 @@ private fun PreviewMeshCanvas(mesh: PreviewMesh, colors: List<Long>, showPlate: 
     var pitch by remember(mesh) { mutableFloatStateOf(0.65f) }
     var zoom by remember(mesh) { mutableFloatStateOf(1f) }
     val vertices = remember(mesh) { mesh.triangles.flatMap { listOf(it.a, it.b, it.c) } }
-    val minX = remember(mesh) { vertices.minOfOrNull { it.x } ?: 0f }
-    val maxX = remember(mesh) { vertices.maxOfOrNull { it.x } ?: 1f }
-    val minY = remember(mesh) { vertices.minOfOrNull { it.y } ?: 0f }
-    val maxY = remember(mesh) { vertices.maxOfOrNull { it.y } ?: 1f }
-    val minZ = remember(mesh) { vertices.minOfOrNull { it.z } ?: 0f }
-    val maxZ = remember(mesh) { vertices.maxOfOrNull { it.z } ?: 1f }
+    val minX = remember(mesh) { vertices.fold(Float.MAX_VALUE) { m, v -> minOf(m, v.x) } }
+    val maxX = remember(mesh) { vertices.fold(-Float.MAX_VALUE) { m, v -> maxOf(m, v.x) } }
+    val minY = remember(mesh) { vertices.fold(Float.MAX_VALUE) { m, v -> minOf(m, v.y) } }
+    val maxY = remember(mesh) { vertices.fold(-Float.MAX_VALUE) { m, v -> maxOf(m, v.y) } }
+    val minZ = remember(mesh) { vertices.fold(Float.MAX_VALUE) { m, v -> minOf(m, v.z) } }
+    val maxZ = remember(mesh) { vertices.fold(-Float.MAX_VALUE) { m, v -> maxOf(m, v.z) } }
     Box(Modifier.fillMaxSize().pointerInput(mesh) {
         detectTransformGestures { _, pan, gestureZoom, _ ->
             yaw += pan.x * 0.01f
@@ -745,9 +749,10 @@ private fun PlatePicker(current: String, close: () -> Unit, choose: (String) -> 
 
 @Composable
 private fun FilamentPicker(p: Printer, project: Project, index: Int, auto: List<Int>?, presets: Boolean, selected: Map<String, Int>, close: () -> Unit, choose: (Int) -> Unit) = Sheet(close, "Please select filament", centeredTitle = true, confirm = "Confirm", onConfirm = close) {
-    if (project.filaments.isNotEmpty()) {
-        val current = project.filaments.getOrNull(index)?.let { (type, colour) -> if (presets) selected[filamentKey(type, colour)] else null } ?: auto?.getOrNull(index) ?: -1
-        T("${project.filaments.getOrNull(index)?.first ?: "Filament"} · choose a loaded spool", 13.sp, C.Sub, modifier = Modifier.padding(bottom = 8.dp))
+    run {
+        val (type, colour) = project.filaments[index]
+        val current = (if (presets) selected[filamentKey(type, colour)] else null) ?: auto?.getOrNull(index) ?: -1
+        T("$type · choose a loaded spool", 13.sp, C.Sub, modifier = Modifier.padding(bottom = 8.dp))
         p.ams.flatMap { (ams, spools) -> spools.mapIndexedNotNull { slot, spool -> spool?.takeIf { it.known }?.let { ams to (ams.trayId(slot) to it) } } }.forEach { (ams, tray) ->
             val (slot, spool) = tray
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { choose(slot) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -760,7 +765,7 @@ private fun FilamentPicker(p: Printer, project: Project, index: Int, auto: List<
                 Box(Modifier.size(28.dp).clip(CircleShape).background(Color(spool.color))); Spacer(Modifier.width(10.dp)); T("External spool", 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (current == 254) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
             }
         }
-    } else T("This model did not include filament metadata.", 14.sp, C.Sub)
+    }
 }
 
 /** Me › Settings › Slicer: the Pandy Slicer add-on through Home Assistant, or a slicer's address and optional token, with a check. */

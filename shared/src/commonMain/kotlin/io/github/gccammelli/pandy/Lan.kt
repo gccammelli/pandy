@@ -325,6 +325,7 @@ class DirectPrinter(
     private val strict: Boolean = false,
     private val linkFactory: (LanConfig) -> LanLink = ::lanLink,
     private val storageFactory: (LanConfig) -> PrinterStorage = ::printerStorage,
+    private val jpegStream: suspend (LanConfig, (ByteArray) -> Unit) -> Unit = ::lanJpegStream,
 ) : HaBackend {
     override val base = "lan://${config.ip}"
     private var report = JsonObject(emptyMap())
@@ -345,7 +346,7 @@ class DirectPrinter(
 
     /** When the job changes, finds its 3MF on the printer (as the integration does) and reads its picture and parts. */
     private fun checkJob() {
-        val p = report.o("print") ?: return
+        val p = report.o("print")!! // checkJob runs on a print status report
         val task = p.str("subtask_name").orEmpty()
         val gcode = p.str("gcode_file").orEmpty()
         val key = "$task|$gcode"
@@ -530,7 +531,10 @@ class DirectPrinter(
         }
     }
 
-    fun stop() { running?.cancel(); running = null }
+    fun stop() {
+        running?.cancel(); running = null
+        camJob?.cancel(); camJob = null; frame = null
+    }
 
     override suspend fun ws(commands: List<JsonObject>): List<JsonElement?> {
         ensureRunning()
@@ -603,7 +607,6 @@ class DirectPrinter(
                 when (rowOf(target)?.key) {
                     "target_nozzle_temperature" -> gcode("M104 S$v\n")
                     "target_bed_temperature" -> gcode("M140 S$v\n")
-                    "target_chamber_temperature" -> gcode("M141 S$v\n")
                 }
             }
             "select/select_option" -> {
@@ -636,7 +639,7 @@ class DirectPrinter(
             "bambu_lab/load_filament" -> {
                 val r = rowOf(target) ?: throw ApiException("Unknown tray")
                 val (ams, slot) = if (r.device == "ext") 254 to 0 else Regex("""AMS_(\d+)_tray_(\d+)""").find(r.uid)!!.destructured.let { (a, t) ->
-                    val unit = r.device.removePrefix("ams").toIntOrNull() ?: throw ApiException("Unknown AMS")
+                    val unit = r.device.removePrefix("ams").toInt() // tray rows belong to an "ams<N>" device
                     val physicalSlot = t.toInt() - 1
                     val amsId = if (r.deviceModel.contains("HT", ignoreCase = true)) unit.takeIf { it >= 128 } ?: 128 else unit
                     amsId to physicalSlot
@@ -711,7 +714,7 @@ class DirectPrinter(
             // Close the camera once nobody has asked for a picture for 15 s.
             launch { while (isActive) { delay(5_000); if (Clock.System.now().toEpochMilliseconds() - lastAsked > 15_000) job.cancel() } }
             while (isActive) {
-                runCatching { lanJpegStream(config) { frame = it } }
+                runCatching { jpegStream(config) { frame = it } }
                 delay(2_000)
             }
         }

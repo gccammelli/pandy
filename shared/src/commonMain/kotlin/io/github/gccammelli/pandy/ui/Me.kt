@@ -167,14 +167,11 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
     val missingMapping = filaments.isNotEmpty() && mapping == null
     val canSend = infoLoaded && info != null && !busy && !p.printing && !missingMapping
     Sheet(close, "Print", centeredTitle = true, confirm = if (busy) "Sending…" else "Send", confirmEnabled = canSend, onConfirm = {
-        if (busy) return@Sheet
-        if (p.printing) { err("The printer is busy"); return@Sheet }
-        if (!infoLoaded || info == null) { err("Print settings are not available yet"); return@Sheet }
-        if (missingMapping) { err("No loaded filament matches this print"); return@Sheet }
+        if (busy) return@Sheet // a second tap can arrive before the button redraws as disabled
         busy = true
         Repo.act({ err(it); busy = false }) {
             val path = needHa().ensureOnPrinter(p.serial, f)
-            startPrint(p, path, info.plate, mapping, timelapse, leveling, flow)
+            startPrint(p, path, info!!.plate, mapping, timelapse, leveling, flow)
             busy = false
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { close(); Nav.stack.clear(); Nav.tab = 1 }
         }
@@ -386,11 +383,6 @@ fun AboutScreen() {
 @Composable
 fun ModelsTab() = Column(Modifier.fillMaxSize().background(C.Card).statusBarsPadding()) {
     MakerWorld(Modifier.fillMaxSize())
-}
-
-@Composable
-fun WebScreen(url: String, title: String) = Page(title, { Nav.back() }) {
-    io.github.gccammelli.pandy.WebPage(url, Modifier.fillMaxSize(), onDownload = null)
 }
 
 

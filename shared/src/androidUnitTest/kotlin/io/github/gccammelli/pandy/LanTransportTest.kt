@@ -78,6 +78,32 @@ class LanTransportTest {
         }
     }
 
+    @Test fun closingAnActiveMqttConnectionDisconnectsAndStopsFurtherPublishing() = runBlocking<Unit> {
+        val disconnected = CompletableDeferred<Unit>()
+        Peer { socket ->
+            val input = DataInputStream(socket.inputStream)
+            val output = socket.outputStream
+            assertEquals(0x10, input.packet().first)
+            output.write(byteArrayOf(0x20, 2, 0, 0)); output.flush()
+            val subscription = input.packet()
+            output.write(byteArrayOf(0x90.toByte(), 3, subscription.second[0], subscription.second[1], 0)); output.flush()
+            val goodbye = input.packet()
+            assertEquals(0xe0, goodbye.first)
+            assertTrue(goodbye.second.isEmpty())
+            disconnected.complete(Unit)
+        }.use { peer ->
+            val link = PahoLink(config, { peer.context.socketFactory }, peer.port)
+            val connected = CompletableDeferred<Unit>()
+            val job = launch(Dispatchers.Default) { link.run({ connected.complete(Unit) }, {}) }
+            try {
+                withTimeout(5000) { connected.await() }
+                withContext(Dispatchers.IO) { link.close() }
+                withTimeout(5000) { disconnected.await() }
+                assertFailsWith<ApiException> { link.publish("after closing") }
+            } finally { job.cancelAndJoin(); link.close() }
+        }
+    }
+
     @Test fun mqttRejectedAccessCodeHasAnActionableError() = runBlocking<Unit> {
         Peer(connections = 2) { socket ->
             DataInputStream(socket.inputStream).packet()
@@ -110,6 +136,35 @@ class LanTransportTest {
             }
             assertEquals("The camera sent something unexpected", error.message)
             assertContentEquals(image, frames.single())
+        }
+    }
+
+    @Test fun otherMqttRefusalsAndUnreachablePrintersAreDescribedWithoutLeakingDetails() = runBlocking<Unit> {
+        Peer(connections = 2) { socket ->
+            DataInputStream(socket.inputStream).packet()
+            socket.outputStream.write(byteArrayOf(0x20, 2, 0, 4)); socket.outputStream.flush() // bad user name or password
+        }.use { peer ->
+            val link = PahoLink(config, { peer.context.socketFactory }, peer.port)
+            try {
+                assertEquals("The printer refused the access code", assertFailsWith<ApiException> { withTimeout(5000) { link.run({}, {}) } }.message)
+            } finally { link.close() }
+        }
+        val closed = java.net.ServerSocket(0).use { it.localPort } // nothing listens here
+        val factory = testTlsContext().socketFactory
+        val unreachable = PahoLink(config, { factory }, closed)
+        try {
+            val message = assertFailsWith<ApiException> { withTimeout(10_000) { unreachable.run({}, {}) } }.message!!
+            assertTrue(message.isNotBlank() && !message.contains("access code"))
+        } finally { unreachable.close() }
+        assertEquals("Not connected to the printer", assertFailsWith<ApiException> { unreachable.publish("{}") }.message)
+    }
+
+    @Test fun anEmptyCameraFrameIsRejectedLikeAnOversizedOne() = runBlocking<Unit> {
+        Peer { socket ->
+            DataInputStream(socket.inputStream).readFully(ByteArray(80))
+            socket.outputStream.write(ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).putInt(0).array()); socket.outputStream.flush()
+        }.use { peer ->
+            assertEquals("The camera sent something unexpected", assertFailsWith<ApiException> { readLanJpegStream(config, peer.context.socketFactory, peer.port) { } }.message)
         }
     }
 }

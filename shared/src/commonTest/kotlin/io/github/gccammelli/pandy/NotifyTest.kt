@@ -7,11 +7,11 @@ import kotlinx.serialization.json.JsonObject
 
 class NotifyTest {
     private val ids = mapOf("sensor.print_status" to "s", "sensor.subtask_name" to "t", "binary_sensor.hms_errors" to "h", "binary_sensor.print_error" to "e")
-    private fun printer(status: String, hms: Int = 0, error: Boolean = false, code: (Int) -> String = { "C$it" }): Printer {
+    private fun printer(status: String, hms: Int = 0, error: Boolean = false, code: (Int) -> String = { "C$it" }, job: String? = "Benchy"): Printer {
         val attrs = if (hms == 0) JsonObject(emptyMap()) else json.parseToJsonElement(
             """{"Count":"$hms",""" + (1..hms).joinToString(",") { """"$it-Code":"${code(it)}","$it-Error":"Problem $it"""" } + "}").let { it as JsonObject }
         val states = mapOf(
-            "s" to Entity("s", status, JsonObject(emptyMap())), "t" to Entity("t", "Benchy", JsonObject(emptyMap())),
+            "s" to Entity("s", status, JsonObject(emptyMap())), "t" to Entity("t", job ?: "unknown", JsonObject(emptyMap())),
             "h" to Entity("h", if (hms == 0) "off" else "on", attrs),
             "e" to Entity("e", if (error) "on" else "off", json.parseToJsonElement("""{"error":"Filament ran out"}""") as JsonObject))
         return Printer(PrinterInfo("p", "SN", "X1C", "X1C", null, ids, emptyList(), emptyList()), states)
@@ -52,5 +52,21 @@ class NotifyTest {
         assertNull(printEvent(printer("idle"), printer("finish"))) // finished long ago
         assertNull(printEvent(printer("running"), printer("pause")))
         assertNull(printEvent(printer("running"), printer("running")))
+    }
+
+    @Test fun missingJobNamesUseTheLastKnownJobOrAnExplicitGenericLabel() {
+        assertEquals("Benchy is done on X1C",printEvent(printer("running"),printer("finish",job=null))!!.text)
+        assertEquals("The print is done on X1C",printEvent(printer("running",job=null),printer("finish",job=null))!!.text)
+        assertEquals("The print (X1C)",printEvent(printer("running",job=null),printer("failed",job=null))!!.text)
+    }
+
+    @Test fun hmsSeverityAndMalformedCodesNeverHideAnActionableNewError() {
+        for(code in listOf("HMS_0C00_0300_0001_000B","HMS_0C00_0300_0002_000B","HMS_0C00_0300_invalid_000B","unrecognized")) {
+            assertEquals("Problem 1",printEvent(printer("running"),printer("running",hms=1,code={code}))!!.text)
+        }
+        for(code in listOf("HMS_0C00_0300_0003_000B","HMS_0C00_0300_0004_000B")) {
+            assertNull(printEvent(printer("running"),printer("running",hms=1,code={code})))
+            assertEquals("Problem 1",printEvent(printer("running"),printer("pause",hms=1,code={code}))!!.text)
+        }
     }
 }

@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.gccammelli.pandy.INTEGRATION_URL
 import io.github.gccammelli.pandy.LocalPlatform
+import io.github.gccammelli.pandy.discoverPrinters
 import io.github.gccammelli.pandy.Printer
 import io.github.gccammelli.pandy.Repo
 import io.github.gccammelli.pandy.UiState
@@ -68,7 +69,6 @@ sealed interface Screen {
     data object History : Screen
     data object Settings : Screen
     data object About : Screen
-    data class Web(val url: String, val title: String) : Screen
     data object AddHa : Screen
     data object AddDirect : Screen
     data object Slicer : Screen
@@ -116,7 +116,6 @@ fun Root() {
         Screen.History -> HistoryScreen(p)
         Screen.Settings -> SettingsScreen()
         Screen.About -> AboutScreen()
-        is Screen.Web -> WebScreen(s.url, s.title)
         Screen.AddHa -> AddHaScreen()
         Screen.AddDirect -> AddDirectScreen()
         Screen.Slicer -> SlicerScreen()
@@ -277,7 +276,11 @@ private fun ConnectActionButton(title: String, description: String, onClick: () 
 
 /** Direct mode: printers found on the Wi-Fi to pick from, or the IP, serial number and access code typed in. */
 @Composable
-fun PrinterForm(done: () -> Unit = {}) {
+fun PrinterForm(
+    discover: suspend (Long) -> List<io.github.gccammelli.pandy.FoundPrinter> = ::discoverPrinters,
+    connect: suspend (io.github.gccammelli.pandy.LanConfig) -> Unit = { Repo.connectPrinter(it) },
+    done: () -> Unit = {},
+) {
     var found by remember { mutableStateOf<List<io.github.gccammelli.pandy.FoundPrinter>?>(null) }
     var searching by remember { mutableStateOf(true) }
     var ip by remember { mutableStateOf("") }
@@ -290,7 +293,7 @@ fun PrinterForm(done: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     androidx.compose.runtime.LaunchedEffect(searching) {
         if (!searching) return@LaunchedEffect
-        found = runCatching { io.github.gccammelli.pandy.discoverPrinters(8_000) }.getOrDefault(emptyList())
+        found = runCatching { discover(8_000) }.getOrDefault(emptyList())
         found?.singleOrNull()?.let { if (ip.isEmpty()) { ip = it.ip; serial = it.serial; model = it.model; name = it.name } }
         searching = false
     }
@@ -330,7 +333,7 @@ fun PrinterForm(done: () -> Unit = {}) {
     AccentButton(if (busy) "Connecting…" else "Connect", enabled = !busy && ip.isNotBlank() && serial.length >= 8 && code.isNotBlank()) {
         busy = true; err = null
         val c = io.github.gccammelli.pandy.LanConfig(ip, serial, code, model ?: io.github.gccammelli.pandy.modelName(null, serial), name)
-        scope.launch { runCatching { Repo.connectPrinter(c); done() }.onFailure { err = it.message ?: it.toString() }; busy = false }
+        scope.launch { runCatching { connect(c); done() }.onFailure { err = it.message ?: it.toString() }; busy = false }
     }
 }
 

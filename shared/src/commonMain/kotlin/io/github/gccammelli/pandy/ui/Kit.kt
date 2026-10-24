@@ -80,7 +80,6 @@ object C {
     /** Status green: online, done, dry. */
     val Ok get() = c(0xFF00A33E, 0xFF2FC768)
     val Red get() = c(0xFFE5484D, 0xFFFF6B6B)
-    val RedBg get() = c(0xFFFFF1F1, 0xFF3A1E1F)
     val Orange get() = c(0xFFFF8A00, 0xFFFFA23A)
     val Blue get() = c(0xFF1677FF, 0xFF5AA2FF)
     /** Grey chips and keys (fan −/+, speed presets). */
@@ -88,7 +87,6 @@ object C {
     val Track get() = c(0xFFE0E0E0, 0xFF3A3A3A)
     val Line get() = c(0xFFEDEDED, 0xFF2C2C2C)
     val Nav get() = c(0xFFFFFFFF, 0xFF1A1A1A)
-    val Scrim get() = c(0x99000000, 0xB3000000)
     val OnAccent get() = Color.White
 }
 

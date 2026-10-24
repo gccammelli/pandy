@@ -83,4 +83,80 @@ class SlicerClientTest {
             }
         }
     }
+
+    @Test fun normalizesAddressesAndPrefersAnExplicitSlicerOverIngress() = runTest {
+        for ((address, expected) in listOf(
+            " slicer.local/ " to "http://slicer.local:8737",
+            "https://slicer.example/" to "https://slicer.example:8737",
+            "http://slicer.local:9000/" to "http://slicer.local:9000")) {
+            HttpClient(MockEngine { request ->
+                assertEquals("$expected/health", request.url.toString())
+                assertNull(request.headers[HttpHeaders.Authorization])
+                assertNull(request.headers[HttpHeaders.Cookie])
+                respond("{}")
+            }).use { http ->
+                val client = SlicerClient(address," ",Supervisor("https://ha.example"),http)
+                assertFalse(client.viaHa)
+                assertEquals("?",client.health())
+            }
+        }
+        HttpClient(MockEngine { error("An unset slicer must not send a request") }).use { http ->
+            assertEquals("Set up Pandy Slicer in Me › Settings",
+                assertFailsWith<ApiException> { SlicerClient(null,null,http=http).health() }.message)
+        }
+    }
+
+    @Test fun ingressHealthFailuresExplainTheHomeAssistantProblem() = runTest {
+        for ((status, body, message) in listOf(
+            Triple(401,"{}","Home Assistant didn't let Pandy in to the slicer"),
+            Triple(500,"{}","The Pandy Slicer add-on didn't answer: is it started?"),
+            Triple(200,"not json","The Pandy Slicer add-on didn't answer: is it started?"))) {
+            HttpClient(MockEngine { respond(body,HttpStatusCode.fromValue(status)) }).use { http ->
+                val client = SlicerClient(null,null,Supervisor("https://ha.example"),http)
+                assertTrue(client.viaHa)
+                assertEquals(message,assertFailsWith<ApiException> { client.health() }.message)
+            }
+        }
+    }
+
+    @Test fun secureIngressRequiresAnExplicitUploadedPathAndValidResponse() = runTest {
+        for ((status, body, message) in listOf(
+            Triple(500,"""{"error":"Printer unavailable"}""","Printer unavailable"),
+            Triple(503,"unavailable","The slicer answered HTTP 503"),
+            Triple(200,"not json","The slicer answered HTTP 200"),
+            Triple(200,"{}","The slicer didn't say where it put the file"))) {
+            HttpClient(MockEngine { respond(body,HttpStatusCode.fromValue(status)) }).use { http ->
+                val client = SlicerClient(null,null,Supervisor("https://ha.example"),http,
+                    storageFactory={ error("Secure ingress must not upload a second copy") })
+                assertEquals(message,assertFailsWith<ApiException> {
+                    client.sliceAndUpload(byteArrayOf(1),3,"m.3mf",printer)
+                }.message)
+            }
+        }
+    }
+
+    @Test fun sparsePlateMetadataKeepsTheRequestedPlateAndUnknownMetrics() = runTest {
+        val plates = listOf(
+            "{}" to null,
+            """{"plates":{}}""" to null,
+            """{"plates":[]}""" to null,
+            """{"plates":[null]}""" to null,
+            """{"plates":[{}]}""" to SlicedPlate(3,0,0.0,emptyList()),
+            """{"plates":[{"index":"bad","seconds":"?","grams":"?","filaments":[null,{}, {"type":"PLA","grams":null,"details":{}}]}]}""" to
+                SlicedPlate(3,0,0.0,listOf(emptyMap(),mapOf("type" to "PLA","grams" to "","details" to ""))),
+            """{"plates":[{"filaments":{}}]}""" to SlicedPlate(3,0,0.0,emptyList()))
+        for ((metadata,expected) in plates) {
+            val storage = Storage()
+            HttpClient(MockEngine { request ->
+                assertNull(request.headers[HttpHeaders.Authorization])
+                assertNull(request.headers["X-Printer-Code"])
+                respond(byteArrayOf(7),headers=headersOf("X-Pandy-Result",metadata))
+            }).use { http ->
+                val client = SlicerClient("slicer.local",null,http=http,storageFactory={ storage })
+                assertEquals("cache/model.gcode.3mf" to expected,
+                    client.sliceAndUpload(byteArrayOf(1),3,"m.3mf",printer))
+                assertContentEquals(byteArrayOf(7),storage.written!!.second)
+            }
+        }
+    }
 }

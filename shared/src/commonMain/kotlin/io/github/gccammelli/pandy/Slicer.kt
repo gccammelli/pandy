@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import kotlinx.coroutines.CancellationException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
@@ -141,7 +142,7 @@ private fun JsonArray?.orEmpty() = this ?: JsonArray(emptyList())
 suspend fun download(url: String, cookies: String?): ByteArray = try {
     // The client's 20-minute limits suit slicing; a stalled model download must fail in seconds, not look like a hang.
     slicerHttp.prepareGet(url) {
-        timeout { connectTimeoutMillis = 15_000; socketTimeoutMillis = 30_000; requestTimeoutMillis = 5 * 60_000 }
+        timeout { connectTimeoutMillis = 15_000; socketTimeoutMillis = downloadStallMillis; requestTimeoutMillis = 5 * 60_000 }
         if (!cookies.isNullOrBlank()) header("Cookie", cookies)
     }.execute { r ->
         if (r.status.value !in 200..299) throw ApiException("The download failed (HTTP ${r.status.value})")
@@ -155,20 +156,24 @@ suspend fun download(url: String, cookies: String?): ByteArray = try {
         while (true) {
             val n = channel.readAvailable(buffer, 0, buffer.size)
             if (n == -1) break
-            if (n == 0) continue
             if (total > MAX_DOWNLOAD_BYTES - n) throw ApiException("The download is too large (64 MiB maximum)")
             result.append(buffer, n)
             total += n
         }
         result.toByteArray()
     }
-} catch (e: HttpRequestTimeoutException) {
-    throw ApiException("The download timed out. Check your connection and try again.")
-} catch (e: ConnectTimeoutException) {
-    throw ApiException("Couldn't reach MakerWorld's download server. Try again.")
-} catch (e: SocketTimeoutException) {
-    throw ApiException("The download stalled. Try again.")
+} catch (e: Exception) {
+    // Transport errors name the (signed) URL; show a plain message instead.
+    if (e is CancellationException || e is ApiException) throw e
+    throw ApiException(if (e.timedOut()) "The download stalled or timed out. Check your connection and try again." else "The download failed. Check your connection and try again.")
 }
+
+internal fun Throwable.timedOut() = generateSequence(this) { it.cause }.any {
+    it is HttpRequestTimeoutException || it is ConnectTimeoutException || it is SocketTimeoutException || it.message?.startsWith("Socket timeout has expired") == true
+}
+
+/** How long a model download may go without data before it fails (a variable only so tests needn't wait). */
+internal var downloadStallMillis = 30_000L
 
 private class GrowingBytes {
     private var bytes = ByteArray(64 * 1024)
@@ -228,7 +233,7 @@ suspend fun readProject(data: ByteArray, preview: Boolean = true): Project {
         settings?.s("sparse_infill_density")?.let { density(it) }
     ).takeIf { it.isNotEmpty() }?.joinToString(", ")
     val meshes = if (preview) readPreviewMeshes(data, model) else emptyMap()
-    val mesh = meshes[plateIds.firstOrNull()?.first] ?: meshes.values.firstOrNull()
+    val mesh = meshes[plateIds.first().first] ?: meshes.values.firstOrNull()
     return Project(plates, (settings?.get("printer_model") as? JsonPrimitive)?.contentOrNull, types.mapIndexed { i, t -> t to (colours.getOrNull(i) ?: "#888888") },
         sliceInfo != null || data.entry("Metadata/plate_\\d+\\.gcode\\.md5") != null,
         settings?.s("profile_name")?.takeIf { it.isNotBlank() }, profileSummary, mesh, meshes)
@@ -242,7 +247,7 @@ suspend fun readPreviewMeshes(data: ByteArray, modelSettings: String? = null): M
     componentPaths(model3d).forEach { path ->
         data.boundedEntry(MAX_PREVIEW_ENTRY_BYTES, Regex.escape(path))?.decodeToString()?.let { modelSources[path] = xmlObjects(it) }
     }
-    return runCatching { previewMeshes(model3d, modelSources, plateObjectIds(model), objectExtruders(model)) }.getOrDefault(emptyMap())
+    return previewMeshes(model3d, modelSources, plateObjectIds(model), objectExtruders(model))
 }
 
 private const val MAX_PREVIEW_TRIANGLES = 20_000
@@ -255,7 +260,7 @@ private val XML_METADATA = Regex("""<metadata\b([^>]*)/?>""")
 private val XML_PLATE = Regex("""(?s)<plate\b[^>]*>(.*?)</plate>""")
 private val WHITESPACE = Regex("""\s+""")
 
-private fun xmlAttr(text: String, name: String): String? {
+internal fun xmlAttr(text: String, name: String): String? {
     var from = 0
     while (true) {
         val at = text.indexOf(name, from)
@@ -289,7 +294,7 @@ private fun xmlObjects(xml: String): Map<Int, String> {
         val close = if (tagEnd < 0) -1 else xml.indexOf("</object>", tagEnd)
         if (close < 0) break
         if (xml[tagEnd - 1] == '/') { at = xml.indexOf("<object", tagEnd); continue } // self-closing: no body, don't pair it with the next </object>
-        if (xml.getOrNull(at + 7)?.isWhitespace() == true) xmlAttr(xml.substring(at + 7, tagEnd), "id")?.toIntOrNull()?.let { out[it] = xml.substring(tagEnd + 1, close) }
+        if (xml[at + 7].isWhitespace()) xmlAttr(xml.substring(at + 7, tagEnd), "id")?.toIntOrNull()?.let { out[it] = xml.substring(tagEnd + 1, close) }
         at = xml.indexOf("<object", close)
     }
     return out
@@ -337,7 +342,7 @@ private fun plateObjectIds(xml: String): Map<Int, Set<Int>> = XML_PLATE.findAll(
     plate to objects
 }.toMap()
 
-private fun identityTransform() = floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f)
+private fun identityTransform() = floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f)
 
 private fun parseTransform(raw: String?): FloatArray {
     val values = raw?.trim()?.split(WHITESPACE)?.mapNotNull(String::toFloatOrNull)
@@ -361,7 +366,7 @@ private fun applyTransform(v: PreviewVertex, t: FloatArray) = PreviewVertex(
     t[6] * v.x + t[7] * v.y + t[8] * v.z + t[11],
 )
 
-private fun appendMesh(body: String, transform: FloatArray, out: MutableList<PreviewTriangle>, defaultMaterial: Int? = null) {
+private fun appendMesh(body: String, transform: FloatArray, out: MutableList<PreviewTriangle>, defaultMaterial: Int?) {
     val vertices = ArrayList<PreviewVertex?>()
     eachTag(body, "vertex") { attrs ->
         val x = xmlAttr(attrs, "x")?.toFloatOrNull(); val y = xmlAttr(attrs, "y")?.toFloatOrNull(); val z = xmlAttr(attrs, "z")?.toFloatOrNull()
@@ -406,7 +411,7 @@ private fun previewMeshes(root: String, sources: Map<String, Map<Int, String>>, 
         val triangles = mutableListOf<PreviewTriangle>()
         val candidates = buildItems.filter { wanted.isEmpty() || it.first in wanted }.ifEmpty { buildItems }
         if (candidates.isNotEmpty()) candidates.forEach { (id, transform) -> appendObject(id, ROOT_MODEL_PATH, transform, sources, triangles, objectMaterials) }
-        else sources[ROOT_MODEL_PATH].orEmpty().keys.forEach { id -> appendObject(id, ROOT_MODEL_PATH, identityTransform(), sources, triangles, objectMaterials) }
+        else sources.getValue(ROOT_MODEL_PATH).keys.forEach { id -> appendObject(id, ROOT_MODEL_PATH, identityTransform(), sources, triangles, objectMaterials) }
         triangles.takeIf { it.isNotEmpty() }?.let { plate to PreviewMesh(it) }
     }.toMap()
 }
@@ -420,7 +425,7 @@ fun previewMesh(xml: String): PreviewMesh? {
 private data class PlateMetrics(val seconds: Int?, val grams: Double?, val parts: Int?)
 
 private fun sliceInfoMetrics(xml: String, plate: Int): PlateMetrics? {
-    val block = XML_PLATE.findAll(xml).firstOrNull { xmlMetadata(it.groupValues[1])["index"]?.toIntOrNull() == plate }?.groupValues?.get(1) ?: return null
+    val block = (XML_PLATE.findAll(xml).firstOrNull { xmlMetadata(it.groupValues[1])["index"]?.toIntOrNull() == plate } ?: return null).groupValues[1]
     val metadata = xmlMetadata(block)
     val parts = Regex("""<object\b([^>]*)/?>""").findAll(block).count { xmlAttr(it.groupValues[1], "skipped") != "true" }
     return PlateMetrics(metadata["prediction"]?.toIntOrNull(), metadata["weight"]?.toDoubleOrNull(), parts.takeIf { it > 0 })
