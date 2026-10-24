@@ -294,4 +294,47 @@ class WebPageTest {
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() } // no overlay: the web view history goes back
         compose.runOnIdle { assertEquals(1,overlays); assertNotNull(web) }
     }
+
+    private fun matrix(withDownload: Boolean,withState: Boolean) {
+        val downloads=mutableListOf<WebDownload>()
+        val state=if(withState) WebState() else null
+        compose.setContent { WebPage("https://makerworld.com",Modifier,if(withDownload) ({ downloads+=it }) else null,state,"X1C") }
+        compose.runOnIdle {
+            val web=views(compose.activity.window.decorView).filterIsInstance<WebView>().single(); val shadow=shadowOf(web)
+            val bridge=shadow.getJavascriptInterface("PandyBridge"); val token=bridgeToken(bridge)
+            val client=shadow.webViewClient
+            val pages=listOf("https://makerworld.com/en/x","https://sub.makerworld.com/y","https://notmakerworld.com/","https://example.com/",null)
+            val urls=listOf("https://cdn.bblmw.com/a.3mf","http://cdn.bblmw.com/a.3mf","https://evil.example/a.3mf","https://cdn.bblmw.com/a b.3mf","https://makerworld.com@evil.example/a","https://cdn.bblmw.com\\a","https://makerworld.com/dl/a.3mf","")
+            for(page in pages) {
+                client.onPageFinished(web,page); client.doUpdateVisitedHistory(web,page,false)
+                for(tok in listOf(token,"wrong")) {
+                    for(b64 in listOf("AQID","!!!","")) bridgeCall(bridge,"blob","m.3mf",b64,tok)
+                    for(url in urls) { bridgeCall(bridge,"file","m.3mf",url,tok); bridgeCall(bridge,"nativeFile","m.3mf",url,tok) }
+                    bridgeCall(bridge,"problem","oops",tok)
+                    // a transfer the page started, completed or corrupted with every combination of chunk arguments
+                    bridgeCall(bridge,"file","c.3mf","https://cdn.bblmw.com/c.3mf",token)
+                    val id=pending(bridge).firstOrNull() ?: "none"
+                    for((i,t,data) in listOf(Triple(0,1,"AQ=="),Triple(0,2,"AQ=="),Triple(1,2,"!!!"),Triple(5,2,"AQ=="),Triple(0,0,"AQ=="),Triple(0,1,"A".repeat(70_001)),Triple(-1,1,"AQ==")))
+                        bridgeCall(bridge,"blobChunk",if(i==1) "other-$id" else id,"c.3mf",i,t,data,tok)
+                }
+                shadowOf(android.os.Looper.getMainLooper()).idle()
+            }
+            // navigation: every kind of link, with and without a printer that can print
+            client.onPageFinished(web,"https://makerworld.com/en/x")
+            for(canPrint in listOf(true,false)) {
+                state?.canPrint=canPrint
+                for(link in listOf("https://makerworld.com/a","https://other.example/x","http://other.example/x","intent://x","ftp://x/y","bambustudioopen://open?file=https%3A%2F%2Fcdn.bblmw.com%2Fa.3mf",
+                    "bambustudioopen://open?url=https%3A%2F%2Fcdn.bblmw.com%2Fb.3mf","bambustudioopen://open?file=http%3A%2F%2Fevil.example%2Fc.3mf","bambustudioopen://open?file=https%3A%2F%2Fevil.example%2Fd.3mf","bambustudioopen://open","bambu-handy://open?file=https%3A%2F%2Fcdn.bblmw.com%2Fe.3mf"))
+                    for(main in listOf(true,false)) client.shouldOverrideUrlLoading(web,request(link,main))
+            }
+            // downloads the page hands to the browser
+            for(u in listOf("blob:https://makerworld.com/x","https://cdn.bblmw.com/a.3mf","https://evil.example/a.3mf"))
+                shadow.downloadListener.onDownloadStart(u,"","attachment; filename=\"a.3mf\"","application/octet-stream",1)
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+        }
+        compose.waitForIdle()
+    }
+
+    @Test fun bridgeAndNavigationMatrixWithDownloadsAndPageState() = matrix(withDownload=true,withState=true)
+    @Test fun bridgeAndNavigationMatrixWithoutADownloadHandlerOrPageState() = matrix(withDownload=false,withState=false)
 }

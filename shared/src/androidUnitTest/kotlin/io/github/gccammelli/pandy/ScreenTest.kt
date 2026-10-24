@@ -2076,4 +2076,83 @@ class ScreenTest {
         }
         compose.onRoot().assertExists()
     }
+
+    @Test fun theRootRoutesEveryScreenAndExplainsEachNoPrinterState() {
+        val store=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
+        val keys=listOf("demo","mode","lan_serial","lan_ip")
+        val before=keys.associateWith { store.settings.getString(it) }
+        val selectedBefore=Repo.selected
+        restorePrintSettings={ before.forEach { (k,v) -> store.settings.putString(k,v) }; Repo.selected=selectedBefore; Nav.stack.clear(); Nav.tab=1 }
+        val second=variant(info=printer.info.copy(serial="SECOND"),set=arrayOf("sensor.print_status" to entity("idle")))
+        val screens=listOf(null,Screen.Control,Screen.Motion,Screen.Skip,Screen.LiveFull,Screen.PrinterSettings,Screen.Calibration,Screen.PrintOptions,Screen.AmsSettings,
+            Screen.LiveviewSettings,Screen.Assistant,Screen.Files,Screen.Filament,Screen.History,Screen.Settings,Screen.About,Screen.AddHa,Screen.AddDirect,Screen.Slicer)
+        val states=listOf(
+            st.copy(on=false),
+            st.copy(printers=null,error=null),
+            st.copy(printers=null,error="Home Assistant refused the token"),
+            st.copy(printers=emptyList()),
+            st,
+            st.copy(printers=listOf(printer,second)),
+        )
+        val tick=androidx.compose.runtime.mutableStateOf(0)
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { tick.value; Root() } } }
+        for((demo,mode) in listOf("true" to "lan","false" to "lan","false" to "ha")) {
+            store.settings.putString("demo",demo); store.settings.putString("mode",mode)
+            for(state in states) {
+                compose.runOnIdle { Repo.state.value=state }; compose.waitForIdle()
+                for(screen in screens) {
+                    compose.runOnIdle { Nav.stack.clear(); screen?.let { Nav.go(it) }; Repo.selected= if(state.printers?.size==2) "SECOND" else null; tick.value++ }
+                    compose.waitForIdle(); compose.mainClock.advanceTimeBy(100)
+                    if(screen==null) for(tab in 0..2) { compose.runOnIdle { Nav.tab=tab }; compose.waitForIdle(); compose.mainClock.advanceTimeBy(100) }
+                }
+            }
+        }
+        compose.runOnIdle { Repo.state.value=st.copy(printers=null,error="Offline"); Nav.stack.clear() }; compose.waitForIdle()
+        compose.onNodeWithText("Retry").performClick()
+        compose.onRoot().assertExists()
+    }
+
+    @Test fun thePrintButtonAndSetupNotesFollowTheModeSlicerAndPrinterState() {
+        val store=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
+        val keys=listOf("demo","mode")
+        val before=keys.associateWith { store.settings.getString(it) }
+        restorePrintSettings={ before.forEach { (k,v) -> store.settings.putString(k,v) } }
+        val http=io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { _ -> respond(byteArrayOf(1),io.ktor.http.HttpStatusCode.ServiceUnavailable) }).also { testHttpClients += it }
+        val slicer=SlicerClient("http://slicer.invalid:8737",null,http=http)
+        val idle="sensor.print_status" to entity("idle")
+        val printers=listOf(
+            variant(set=arrayOf(idle,"binary_sensor.online" to entity("on"),"sensor.ip_address" to entity("127.0.0.1"))),
+            variant(set=arrayOf(idle,"binary_sensor.online" to entity("off"))),
+            variant(set=arrayOf("sensor.print_status" to entity("running"),"binary_sensor.online" to entity("on"))),
+            variant(set=arrayOf(idle,"binary_sensor.online" to entity("on"),"binary_sensor.developer_lan_mode" to entity("off"))),
+            variant(remove=listOf("sensor.ip_address"),set=arrayOf(idle,"binary_sensor.online" to entity("on"))),
+            variant(info=printer.info.copy(ams=emptyList()),set=arrayOf(idle,"binary_sensor.online" to entity("on"),"sensor.ip_address" to entity("127.0.0.1"))),
+        )
+        val selection=androidx.compose.runtime.mutableStateOf(0 to (null as SlicerClient?))
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            androidx.compose.runtime.key(selection.value.first,selection.value.second) {
+                PrintModelSheet(WebDownload(null,"Test model.3mf",null,modelBytes(),true),{},slicerClient=selection.value.second)
+            }
+        } } }
+        var round=0
+        for((demo,mode) in listOf("true" to "lan","false" to "ha")) {
+            store.settings.putString("demo",demo); store.settings.putString("mode",mode)
+            for(client in listOf<SlicerClient?>(null,slicer)) for(printer in printers) {
+                round++
+                compose.runOnIdle { Repo.state.value=st.copy(printers=listOf(printer)); selection.value=round to client }
+                compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Next").performClick(); compose.waitForIdle()
+                val code=compose.onAllNodesWithText("Printer access code").fetchSemanticsNodes()
+                if(code.isNotEmpty()) { compose.onNodeWithText("Printer access code").performScrollTo().performTextInput("123456"); compose.waitForIdle() }
+                val button=compose.onAllNodes(hasClickAction() and (hasText("Print (demo)") or hasText("Print current plate")))
+                if(button.fetchSemanticsNodes().isNotEmpty()) {
+                    runCatching { button.onFirst().performScrollTo() }
+                    button.onFirst().performClick(); compose.waitForIdle()
+                    if(compose.onAllNodesWithText("Cancel").fetchSemanticsNodes().isNotEmpty()) { compose.onNodeWithText("Cancel").performClick(); compose.waitForIdle() }
+                }
+                compose.onAllNodes(hasText("Setup guide",substring=true)).fetchSemanticsNodes().firstOrNull()
+            }
+        }
+        compose.onRoot().assertExists()
+    }
 }
