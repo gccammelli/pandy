@@ -119,6 +119,10 @@ jobs:
           xcodebuild -project iosApp/iosApp.xcodeproj -target iosApp -configuration Release -sdk iphoneos \
             SYMROOT="$PWD/build/ios" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
           mkdir -p Payload && cp -R build/ios/Release-iphoneos/Pandy.app Payload/
+          # A "v1.2.3" tag stamps its version on the app, so the label never lags the Android version.
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${GITHUB_REF_NAME#v}" -c "Set :CFBundleVersion ${GITHUB_REF_NAME#v}" Payload/Pandy.app/Info.plist
+          fi
           zip -qry pandy.ipa Payload
 
       - name: Simulator screenshot of the first screen
