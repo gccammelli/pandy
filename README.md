@@ -22,7 +22,7 @@ These are dark-mode screens from the built-in demo printer, which lets you explo
 </p>
 
 <p align="center">
-  <img src="docs/images/pandy-dark-makerworld.png" width="190" alt="MakerWorld browsing inside Pandy">
+  <img src="docs/images/pandy-dark-makerworld-print.png" width="190" alt="A MakerWorld model page inside Pandy, with the Print button">
   <img src="docs/images/pandy-dark-select-profile.png" width="190" alt="Select a print profile for a MakerWorld model">
   <img src="docs/images/pandy-dark-prepare-print.png" width="190" alt="Prepare to Print with the Print button">
   <img src="docs/images/pandy-dark-print-options.png" width="190" alt="Filament mapping and print options">
