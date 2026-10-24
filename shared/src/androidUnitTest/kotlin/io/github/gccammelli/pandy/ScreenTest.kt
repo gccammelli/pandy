@@ -45,7 +45,7 @@ class ScreenTest {
         override fun setDarkBars(dark: Boolean) = Unit
         override fun saveFile(name: String, mime: String, bytes: ByteArray, done: (Throwable?) -> Unit) {
             savedFiles += Triple(name,mime,bytes)
-            done(null)
+            done(saveFileError)
         }
         override fun openApp(androidPackage: String, storeUrl: String) = Unit
         override fun landscape(on: Boolean) = Unit
@@ -60,6 +60,7 @@ class ScreenTest {
     private val savedImages = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
     private val savedFiles = mutableListOf<Triple<String,String,ByteArray>>()
     private var saveImageError: Throwable?=null
+    private var saveFileError: Throwable?=null
     private var commandFailure: String?=null
     private val openedUrls=mutableListOf<String>()
     private val messages = java.util.concurrent.ConcurrentLinkedQueue<String>()
@@ -1716,5 +1717,134 @@ class ScreenTest {
             }
         }
         compose.onRoot().assertExists()
+    }
+
+    @Test fun theModelsTabReportsFailedSavesBusyDownloadsAndClosesASheetWithTheBackButton() {
+        Repo.state.value=UiState(on=true,printers=emptyList()) // no printer: MakerWorld must not offer printing
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { ModelsTab() } } }
+        fun until(what: String,condition: () -> Boolean) { try { compose.waitUntil(5000) { compose.waitForIdle(); condition() } } catch(e: androidx.compose.ui.test.ComposeTimeoutException) { throw AssertionError("$what; toasts=${messages.toList()} saved=${savedFiles.map { it.first }}") } }
+        fun bridge() = descendants(compose.activity.window.decorView).filterIsInstance<android.webkit.WebView>().single().let { web ->
+            val shadow=org.robolectric.Shadows.shadowOf(web); shadow.webViewClient.onPageFinished(web,"https://makerworld.com/en")
+            Triple(web,shadow,shadow.getJavascriptInterface("PandyBridge"))
+        }
+        fun token(b: Any) = b.javaClass.declaredFields.first { it.name.contains("bridgeToken") }.apply { isAccessible=true }.get(b) as String
+        fun call(b: Any,name: String,vararg args: Any) = b.javaClass.declaredMethods.single { it.name==name }.apply { isAccessible=true }.invoke(b,*args)
+        compose.runOnIdle {
+            val (_,_,b)=bridge()
+            call(b,"blob","model.unknown","AQID",token(b))
+        }
+        until("step 2") { savedFiles.any { it.first=="model.unknown" } }
+        assertEquals("application/octet-stream",savedFiles.last().second)
+        saveFileError=java.io.IOException("Disk full")
+        compose.runOnIdle { val (_,_,b)=bridge(); call(b,"blob","again.3mf","AQID",token(b)) }
+        until("step 3") { messages.contains("Disk full") }
+        saveFileError=null
+        // A second download arriving before the first is handled is refused.
+        compose.runOnIdle { val (_,_,b)=bridge(); val t=token(b); call(b,"blob","one.3mf","AQID",t); call(b,"blob","two.3mf","AQID",t) }
+        until("step 4") { messages.contains("A download is already in progress") }
+        // A link the page serves directly is fetched; a failure is shown (with a fallback when it has no message).
+        val realDownload=downloadModel
+        try {
+            for((failure,expected) in listOf<Pair<Throwable,String>>(java.io.IOException("Connection reset") to "Connection reset",
+                object : Exception() { override val message: String? = null } to "Couldn't download x.bin")) {
+                downloadModel={ _,_ -> throw failure }
+                compose.runOnIdle { val (_,shadow,_)=bridge(); shadow.downloadListener.onDownloadStart("https://cdn.bblmw.com/x.3mf","","","application/octet-stream",1) }
+                until("step 5") { messages.contains(expected) }
+            }
+            downloadModel={ url,cookies -> assertEquals("https://cdn.bblmw.com/y.3mf",url); byteArrayOf(9) }
+            compose.runOnIdle { val (_,shadow,_)=bridge(); shadow.downloadListener.onDownloadStart("https://cdn.bblmw.com/y.3mf","","","application/octet-stream",1) }
+            until("step 6") { savedFiles.any { it.first=="y.bin" } }
+        } finally { downloadModel=realDownload }
+        // A sheet is open: another print request is refused, and Back closes the sheet.
+        Repo.state.value=st
+        debugDownload.value=WebDownload(null,"Sheet.3mf",null,modelBytes(),true)
+        until("step 7") { compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+        compose.runOnIdle { val (_,_,b)=bridge(); call(b,"nativeFile","other.3mf","https://cdn.bblmw.com/other.3mf",token(b)) }
+        until("step 8") { messages.contains("Finish or close the current print first") }
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        until("step 9") { compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isEmpty() }
+        org.junit.Assert.assertNull(debugDownload.value)
+    }
+
+    @Test fun makerWorldNamesTheCarbonPrinterAndPassesOtherModelsThrough() {
+        assertEquals("X1 Carbon",makerWorldName("X1C")); assertEquals("P1S",makerWorldName("P1S"))
+    }
+
+    private class Silent : Exception()
+
+    @Test fun aModelThatCannotBeDownloadedShowsWhateverTheFailureSays() {
+        val real=downloadModel
+        downloadModel={ _,_ -> throw Silent() }
+        try {
+            compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+                PrintModelSheet(WebDownload("https://cdn.bblmw.com/x.3mf","x.3mf",null,printSheet=true),{})
+            } } }
+            compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Silent",substring=true).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Select a Print Profile").assertDoesNotExist()
+        } finally { downloadModel=real }
+    }
+
+    @Test fun thePreviewLoadsOnceSurvivesLeavingMidLoadAndFallsBackWhenTheMeshesCannotBeRead() {
+        val real=loadPreviewMeshes
+        var back: (() -> Unit)? = null
+        val calls=java.util.concurrent.atomic.AtomicInteger()
+        val gate=kotlinx.coroutines.CompletableDeferred<Unit>()
+        loadPreviewMeshes={ bytes ->
+            when(calls.incrementAndGet()) { 1 -> gate.await().let { real(bytes) }; 2 -> throw IllegalStateException("unreadable"); else -> real(bytes) }
+        }
+        try {
+            compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+                PrintModelSheet(WebDownload(null,"Test model.3mf",null,modelBytes(),true),{}) { back=it }
+            } } }
+            compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Next").performClick()
+            compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); calls.get()==1 }
+            compose.runOnIdle { back!!.invoke() } // leaving cancels the unfinished load and does not mark it done
+            compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); calls.get()>=2 }
+            compose.waitForIdle()
+            compose.onNodeWithText("3D preview unavailable").assertExists() // the unreadable second attempt leaves a plain placeholder
+            compose.runOnIdle { back!!.invoke() }
+            compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+            compose.waitForIdle()
+            assertEquals(2,calls.get()) // a finished attempt is never repeated
+        } finally { loadPreviewMeshes=real }
+    }
+
+    @Test fun savedPrinterDetailsSkipTheAccessCodeAndAreNotOverwrittenWhenThePrintStarts() {
+        val storeField=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }
+        val original=storeField.get(Repo)
+        restorePrintSettings={ storeField.set(Repo,original) }
+        val settings=mutableMapOf("demo" to "false","mode" to "ha","lan_serial" to printer.serial.lowercase(),"lan_ip" to "127.0.0.1","lan_model" to "X1C")
+        storeField.set(Repo,PlatformStorage(Memory(settings),Memory(mutableMapOf("lan_code" to "12345678")),object : AppFiles {
+            override fun read(name: String): ByteArray? = null
+            override fun write(name: String,bytes: ByteArray) = Unit
+            override fun delete(name: String) = Unit
+        }))
+        val values=snapshot.toMutableMap()
+        for((role,state) in listOf("sensor.print_status" to "idle","binary_sensor.online" to "on")) { val id=printer.info.ids.getValue(role); values[id]=Entity(id,state,JsonObject(emptyMap())) }
+        Repo.state.value=st.copy(printers=listOf(Printer(printer.info.copy(ams=emptyList()),values)))
+        val http=io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { _ ->
+            respond(byteArrayOf(1,2,3),headers=io.ktor.http.headersOf("Content-Disposition" to listOf("attachment; filename=\"test.gcode.3mf\""),
+                "X-Pandy-Result" to listOf("""{"plates":[{"index":1,"filaments":[{"id":"1","type":"PLA","color":"#FFFFFF"}]}]}""")))
+        }).also { testHttpClients += it }
+        val slicer=SlicerClient("http://slicer.invalid:8737",null,http=http,storageFactory={ object : PrinterStorage {
+            override suspend fun list(dir: String) = emptyList<FileEntry>()
+            override suspend fun read(path: String,offset: Long,length: Int) = byteArrayOf()
+            override suspend fun write(path: String,data: ByteArray,progress: (Float)->Unit) = Unit
+        } })
+        val closed=java.util.concurrent.atomic.AtomicBoolean(false)
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            PrintModelSheet(WebDownload(null,"Test model.3mf",null,modelBytes(),true),{closed.set(true)},slicerClient=slicer)
+        } } }
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Printer access code").assertDoesNotExist()
+        compose.onNodeWithText("Print current plate",substring=false).performClick()
+        compose.onNodeWithText("Start",substring=false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); closed.get() }
+        org.junit.Assert.assertTrue(commands.any { it.first.endsWith("/print_project_file") })
+        assertEquals("127.0.0.1",settings["lan_ip"]) // the saved details were not replaced
     }
 }

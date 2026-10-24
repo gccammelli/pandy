@@ -94,6 +94,12 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
+/** Fetches a model file; a variable only so tests can supply or fail the download without a network. */
+internal var downloadModel: suspend (String, String?) -> ByteArray = ::download
+
+/** Reads a model's 3D preview meshes; a variable only so tests can slow or fail it. */
+internal var loadPreviewMeshes: suspend (ByteArray) -> Map<Int, io.github.gccammelli.pandy.PreviewMesh> = { readPreviewMeshes(it) }
+
 const val MAKERWORLD = "https://makerworld.com/en"
 
 /**
@@ -123,7 +129,7 @@ fun MakerWorld(modifier: Modifier) {
     fileDownload?.let { d ->
         LaunchedEffect(d) {
             try {
-                val bytes = d.bytes ?: withContext(Dispatchers.Default) { download(d.url!!, d.cookies) }
+                val bytes = d.bytes ?: withContext(Dispatchers.Default) { downloadModel(d.url!!, d.cookies) }
                 platform.saveFile(d.name, downloadMime(d.name), bytes) { e -> platform.toast(e?.message ?: "Saved ${d.name}") }
             } catch (e: CancellationException) {
                 throw e
@@ -219,7 +225,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         presets = false
         buildPlate = printerBed ?: "Textured PEI Plate"
         runCatching {
-            val bytes = d.bytes ?: withContext(Dispatchers.Default) { download(d.url!!, d.cookies) }
+            val bytes = d.bytes ?: withContext(Dispatchers.Default) { downloadModel(d.url!!, d.cookies) }
             data = bytes
             reading = true
             val loaded = withContext(Dispatchers.Default) { readProject(bytes, preview = false) }
@@ -238,7 +244,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         val bytes = data
         if (view != PrepareView.Preview || previewLoaded || project == null || bytes == null) return@LaunchedEffect
         val meshes = try {
-            withContext(Dispatchers.Default) { readPreviewMeshes(bytes) }
+            withContext(Dispatchers.Default) { loadPreviewMeshes(bytes) }
         } catch (e: CancellationException) {
             throw e // leaving the preview must not publish a half result
         } catch (e: Exception) {
