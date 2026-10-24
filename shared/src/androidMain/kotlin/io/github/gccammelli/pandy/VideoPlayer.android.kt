@@ -97,7 +97,7 @@ private fun VideoPlayerInner(url: String, muted: Boolean, modifier: Modifier, on
 
 /** Play/pause, a scrubber and the times, for recorded clips. */
 @Composable
-private fun Controls(player: ExoPlayer, modifier: Modifier) {
+internal fun Controls(player: Player, modifier: Modifier) {
     var pos by remember { mutableLongStateOf(0L) }
     var dur by remember { mutableLongStateOf(0L) }
     var playing by remember { mutableStateOf(true) }
@@ -131,7 +131,7 @@ private fun Controls(player: ExoPlayer, modifier: Modifier) {
  * HTTP 416. Retry those shortly instead of failing (the default would drop the only playlist and stop).
  */
 @OptIn(UnstableApi::class)
-private object RetryEarlyParts : DefaultLoadErrorHandlingPolicy() {
+internal object RetryEarlyParts : DefaultLoadErrorHandlingPolicy() {
     private fun early(info: LoadErrorHandlingPolicy.LoadErrorInfo) =
         (info.exception as? HttpDataSource.InvalidResponseCodeException)?.responseCode == 416
 

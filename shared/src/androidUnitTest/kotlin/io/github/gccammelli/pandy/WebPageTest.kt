@@ -29,6 +29,96 @@ class WebPageTest {
         override fun getMethod() = "GET"
         override fun getRequestHeaders() = emptyMap<String,String>()
     }
+    private fun bridgeCall(bridge: Any,name: String,vararg args: Any) =
+        bridge.javaClass.declaredMethods.single { it.name==name }.apply { isAccessible=true }.invoke(bridge,*args)
+    private fun bridgeToken(bridge: Any) = bridge.javaClass.declaredFields.first { it.name.contains("bridgeToken") }.apply { isAccessible=true }.get(bridge) as String
+    @Suppress("UNCHECKED_CAST")
+    private fun pending(bridge: Any) = bridge.javaClass.declaredFields.first { it.name.contains("pendingPrints") }.apply { isAccessible=true }.get(bridge) as Set<String>
+
+    @Test fun untrustedNativeDownloadUrlsAreRejectedEvenWithAValidBridgeToken() {
+        val downloads=mutableListOf<WebDownload>()
+        compose.setContent { WebPage("https://makerworld.com",Modifier,{downloads+=it},WebState(),null) }
+        compose.runOnIdle {
+            val web=views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
+            val shadow=shadowOf(web); val bridge=shadow.getJavascriptInterface("PandyBridge"); val token=bridgeToken(bridge)
+            shadow.webViewClient.onPageFinished(web,"https://makerworld.com/model/1")
+            for (url in listOf("http://cdn.bblmw.com/file.3mf","https://makerworld.com@evil.example/file.3mf",
+                "https://evil.example/file.3mf","https://cdn.bblmw.com/file with space.3mf","https://cdn.bblmw.com\\evil.3mf","https:///file.3mf")) {
+                bridgeCall(bridge,"nativeFile","model.3mf",url,token)
+                bridgeCall(bridge,"file","model.3mf",url,token)
+            }
+            assertTrue(pending(bridge).isEmpty())
+        }
+        compose.runOnIdle { assertTrue(downloads.isEmpty()) }
+    }
+
+    @Test fun malformedAndUnsolicitedChunksCannotProduceAPrint() {
+        val downloads=mutableListOf<WebDownload>()
+        compose.setContent { WebPage("https://makerworld.com",Modifier,{downloads+=it},WebState(),"X1C") }
+        compose.runOnIdle {
+            val web=views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
+            val shadow=shadowOf(web); val bridge=shadow.getJavascriptInterface("PandyBridge"); val token=bridgeToken(bridge)
+            shadow.webViewClient.onPageFinished(web,"https://makerworld.com/model/1")
+            bridgeCall(bridge,"blobChunk","unsolicited","m.3mf",0,1,"AQ==",token)
+            bridgeCall(bridge,"file","m.3mf","https://cdn.bblmw.com/m.3mf",token)
+            val id=pending(bridge).single()
+            for ((index,total) in listOf(0 to 0,0 to 1367,-1 to 1,1 to 1)) bridgeCall(bridge,"blobChunk",id,"m.3mf",index,total,"AQ==",token)
+            bridgeCall(bridge,"blobChunk",id,"m.3mf",0,1,"AQ==","wrong-token")
+            bridgeCall(bridge,"blobChunk",id,"m.3mf",0,1,"A".repeat(70_001),token)
+            bridgeCall(bridge,"blobChunk",id,"m.3mf",0,1,"A",token)
+            assertEquals(setOf(id),pending(bridge))
+            bridgeCall(bridge,"blobChunk",id,"m.3mf",0,1,"AQI=",token)
+        }
+        compose.runOnIdle { assertEquals(1,downloads.size); assertArrayEquals(byteArrayOf(1,2),downloads.single().bytes) }
+    }
+
+    @Test fun incompletePageTransfersExpireAndCannotBeResumedAfterTimeout() {
+        val downloads=mutableListOf<WebDownload>()
+        lateinit var bridge: Any; lateinit var token: String; lateinit var id: String
+        compose.setContent { WebPage("https://makerworld.com",Modifier,{downloads+=it},WebState(),"X1C") }
+        compose.runOnIdle {
+            val web=views(compose.activity.window.decorView).filterIsInstance<WebView>().single(); val shadow=shadowOf(web)
+            bridge=shadow.getJavascriptInterface("PandyBridge"); token=bridgeToken(bridge)
+            shadow.webViewClient.onPageFinished(web,"https://makerworld.com/model/1")
+            bridgeCall(bridge,"file","m.3mf","https://cdn.bblmw.com/m.3mf",token); id=pending(bridge).single()
+            bridgeCall(bridge,"blobChunk",id,"m.3mf",0,2,"AQI=",token)
+            shadow.webViewClient.doUpdateVisitedHistory(web,"https://makerworld.com/model/1#details",false)
+            assertEquals(setOf(id),pending(bridge))
+            shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMinutes(5))
+            assertTrue(pending(bridge).isEmpty())
+            bridgeCall(bridge,"blobChunk",id,"m.3mf",1,2,"AwQ=",token)
+        }
+        compose.runOnIdle { assertTrue(downloads.isEmpty()) }
+    }
+
+    @Test fun watchOnlyModeHandsSlicerLinksToTheCompanionAppWithoutImporting() {
+        val downloads=mutableListOf<WebDownload>(); val state=WebState().apply { canPrint=false }
+        compose.setContent { WebPage("https://makerworld.com",Modifier,{downloads+=it},state,"P1S") }
+        compose.runOnIdle {
+            val web=views(compose.activity.window.decorView).filterIsInstance<WebView>().single(); val shadow=shadowOf(web)
+            shadow.webViewClient.onPageFinished(web,"https://makerworld.com/model/1")
+            val url="bambu-handy://open?file=https%3A%2F%2Fcdn.bblmw.com%2Fm.3mf"
+            assertTrue(shadow.webViewClient.shouldOverrideUrlLoading(web,request(url)))
+            assertEquals(url,shadowOf(compose.activity).nextStartedActivity.dataString)
+            assertTrue(downloads.isEmpty())
+        }
+    }
+
+    @Test fun optionalPageStateAndDownloadHandlerDoNotEnableNativeImports() {
+        compose.setContent { WebPage("https://makerworld.com",Modifier,null,null,null) }
+        compose.runOnIdle {
+            val web=views(compose.activity.window.decorView).filterIsInstance<WebView>().single(); val shadow=shadowOf(web)
+            val bridge=shadow.getJavascriptInterface("PandyBridge"); val token=bridgeToken(bridge)
+            shadow.webViewClient.onPageFinished(web,"https://sub.makerworld.com/model/1")
+            bridgeCall(bridge,"file","m.3mf","https://cdn.bblmw.com/m.3mf",token)
+            assertTrue(pending(bridge).isEmpty())
+            bridgeCall(bridge,"nativeFile","m.3mf","https://cdn.bblmw.com/m.3mf",token)
+            bridgeCall(bridge,"blob","m.3mf","A",token)
+            shadow.webViewClient.doUpdateVisitedHistory(web,null,false)
+            shadow.webViewClient.onPageFinished(web,null)
+        }
+        compose.waitForIdle()
+    }
     @Test fun navigationAndDownloadsStayInsideMakerWorldTrustBoundary() {
         val downloads = mutableListOf<WebDownload>()
         val state = WebState()

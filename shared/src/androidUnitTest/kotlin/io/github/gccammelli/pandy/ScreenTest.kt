@@ -335,19 +335,24 @@ class ScreenTest {
     @Test fun meShowsAccountActions() = show("Settings") { MeTab(st) }
     @Test fun rootShowsSelectedPrinter() = show("Devices") { Root() }
 
-    private fun modelBytes(): ByteArray = java.io.ByteArrayOutputStream().also { out ->
+    private fun modelBytes(overrides: Map<String,ByteArray> = emptyMap()): ByteArray = java.io.ByteArrayOutputStream().also { out ->
             java.util.zip.ZipOutputStream(out).use { zip ->
+                val written=mutableSetOf<String>()
                 fun put(name: String, text: String) {
-                    zip.putNextEntry(java.util.zip.ZipEntry(name)); zip.write(text.toByteArray()); zip.closeEntry()
+                    written+=name
+                    zip.putNextEntry(java.util.zip.ZipEntry(name)); zip.write(overrides[name] ?: text.toByteArray()); zip.closeEntry()
                 }
                 put("Metadata/slice_info.config", """<config><plate><metadata key="index" value="1"/><metadata key="prediction" value="3900"/><metadata key="weight" value="12.5"/><object identify_id="1"/></plate><plate><metadata key="index" value="2"/><metadata key="prediction" value="120"/><metadata key="weight" value="2"/><object identify_id="2"/><object identify_id="3"/></plate></config>""")
                 put("Metadata/project_settings.config", """{"printer_model":"Bambu Lab X1 Carbon","filament_type":["PLA","PETG"],"filament_colour":["#FFFFFF","#00AE42"]}""")
                 put("Metadata/model_settings.config", """<config><plate><metadata key="plater_id" value="1"/><metadata key="plater_name" value="Body"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>""")
                 put("3D/3dmodel.model", """<model><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2" p1="1"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>""")
+                overrides.filterKeys { it !in written }.forEach { (name,bytes) ->
+                    zip.putNextEntry(java.util.zip.ZipEntry(name)); zip.write(bytes); zip.closeEntry()
+                }
             }
         }.toByteArray()
 
-    private fun prepareRealPrint(filaments: String, failSlice: Boolean = false): Pair<java.util.concurrent.ConcurrentLinkedQueue<String>, java.util.concurrent.atomic.AtomicBoolean> {
+    private fun prepareRealPrint(filaments: String?, failSlice: Boolean = false, keepAms: Boolean = false): Pair<java.util.concurrent.ConcurrentLinkedQueue<String>, java.util.concurrent.atomic.AtomicBoolean> {
         val store = Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
         val keys = listOf("demo","mode","lan_serial","lan_ip","lan_model")
         val before = keys.associateWith { store.settings.getString(it) }
@@ -358,14 +363,14 @@ class ScreenTest {
             val id = printer.info.ids.getValue(role)
             values[id] = Entity(id,state,JsonObject(emptyMap()))
         }
-        Repo.state.value = st.copy(printers=listOf(Printer(printer.info.copy(ams=emptyList()),values)))
+        Repo.state.value = st.copy(printers=listOf(Printer(if(keepAms) printer.info else printer.info.copy(ams=emptyList()),values)))
         val uploads = java.util.concurrent.ConcurrentLinkedQueue<String>()
         val http = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { request ->
             org.junit.Assert.assertNull(request.headers["X-Printer-Code"])
             if(failSlice) respond("""{"error":"Slicing failed in test"}""",io.ktor.http.HttpStatusCode.ServiceUnavailable)
             else respond(byteArrayOf(1,2,3),headers=io.ktor.http.headersOf(
                 "Content-Disposition" to listOf("attachment; filename=\"test.gcode.3mf\""),
-                "X-Pandy-Result" to listOf("""{"plates":[{"index":1,"filaments":$filaments}]}""")))
+                "X-Pandy-Result" to listOf(if(filaments==null) "{}" else """{"plates":[{"index":1,"filaments":$filaments}]}""")))
         }).also { testHttpClients += it }
         val slicer = SlicerClient("http://slicer.invalid:8737",null,http=http,storageFactory={ c ->
             assertEquals("127.0.0.1",c.ip)
@@ -417,6 +422,36 @@ class ScreenTest {
         compose.onNodeWithText("Print current plate",substring=false).assertIsEnabled()
     }
 
+    @Test fun amsPrintingRefusesSlicedMaterialsThatDoNotMatchAnyLoadedSpool() {
+        val (uploads,closed)=prepareRealPrint("""[{"id":"1","type":"Unsupported material","color":"#FFFFFF"}]""",keepAms=true)
+        compose.onNodeWithText("Start",substring=false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); messages.contains("Load a matching filament before printing") }
+        assertEquals(listOf("/cache/test.gcode.3mf"),uploads.toList())
+        org.junit.Assert.assertFalse(closed.get())
+        org.junit.Assert.assertFalse(commands.any { it.first.endsWith("/print_project_file") })
+        compose.onNodeWithText("Print current plate",substring=false).assertIsEnabled()
+    }
+
+    @Test fun amsPrintingRefusesASlicerReplyWithoutPlateMetadata() {
+        val (_,closed)=prepareRealPrint(null,keepAms=true)
+        compose.onNodeWithText("Start",substring=false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); messages.any { it.contains("no filament mapping") } }
+        org.junit.Assert.assertFalse(closed.get())
+        org.junit.Assert.assertFalse(commands.any { it.first.endsWith("/print_project_file") })
+    }
+
+    @Test fun amsPrintUsesSparseSlicerFilamentIdsWithoutAssigningUnusedSlots() {
+        val (_,closed)=prepareRealPrint("""[{"id":"1","type":"PLA","color":"#FFFFFF"},{"id":"3","type":"PETG","color":"#00AE42"}]""",keepAms=true)
+        compose.onNodeWithText("Start",substring=false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); closed.get() }
+        val body=json.parseToJsonElement(commands.first { it.first.endsWith("/print_project_file") }.second).jsonObject
+        assertEquals("true",body.s("use_ams"))
+        val mapping=body.s("ams_mapping")!!.split(',').map(String::toInt)
+        assertEquals(3,mapping.size); assertEquals(-1,mapping[1])
+        org.junit.Assert.assertTrue(mapping[0] in printer.loadedTrayIds())
+        org.junit.Assert.assertTrue(mapping[2] in printer.loadedTrayIds())
+    }
+
     @Test fun makerWorldProjectCanBePreparedAndPreviewedWithoutPrinting() {
         val bytes = modelBytes()
         compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) {
@@ -457,6 +492,82 @@ class ScreenTest {
         compose.onNodeWithText("Confirm").performClick()
         org.junit.Assert.assertTrue(Repo.filamentPreset(printer.serial).isNotEmpty())
         compose.onNodeWithText("Print (demo)").assertIsNotEnabled()
+    }
+
+    private fun prepareModel(bytes: ByteArray,client: SlicerClient?=null) {
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            PrintModelSheet(WebDownload(null,"Test model.3mf",null,bytes,true),{},slicerClient=client)
+        } } }
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test fun sparseProjectKeepsUnknownMetricsAndMissingMeshExplicit() {
+        val picture=java.io.File("src/commonMain/composeResources/files/demo_cover.png").readBytes()
+        prepareModel(modelBytes(mapOf(
+            "Metadata/project_settings.config" to "{}".toByteArray(),
+            "Metadata/model_settings.config" to "<config/>".toByteArray(),
+            "Metadata/slice_info.config" to "<config/>".toByteArray(),
+            "3D/3dmodel.model" to "<model/>".toByteArray(),
+            "Metadata/plate_1.png" to picture)))
+        compose.onNodeWithText("1 plate · 0 colors").assertExists()
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("No filament metadata was provided by the model.").performScrollTo().assertExists()
+        compose.onNodeWithText("Ready",substring=false).assertExists()
+        compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithText("3D preview unavailable").assertDoesNotExist()
+        compose.onAllNodes(isToggleable()).onFirst().performClick()
+        compose.onNodeWithText("3D preview unavailable").assertExists()
+        compose.onNodeWithText("Confirm").performClick()
+        compose.onNodeWithText("Prepare to Print").assertExists()
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun designerProfileNameAndSingleFilamentAreShownBeforePreparation() {
+        prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to """{
+            "profile_name":"Fine detail","layer_height":0.12,"filament_type":["PLA"],"filament_colour":["#FFFFFF"]}""".toByteArray())))
+        compose.onNodeWithText("Fine detail").assertExists()
+        compose.onNodeWithText("0.12 mm layer").assertExists()
+        compose.onNodeWithText("2 plates · 1 color").assertExists()
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun incompatibleDesignerModelExplainsRetargetingAndRequiresSlicerSetup() {
+        homeAssistantMode()
+        Repo.state.value=st.copy(printers=listOf(changed("sensor.print_status" to "idle")))
+        prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to """{"printer_model":"Bambu Lab A1 mini"}""".toByteArray())))
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Prepared for ${printer.model}; the designer's A1 mini profile",substring=true).performScrollTo().assertExists()
+        compose.onNodeWithText("Printing MakerWorld models needs Pandy Slicer",substring=true).performScrollTo().assertExists()
+        compose.onNodeWithText("Print current plate").assertIsNotEnabled()
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun mismatchedModelFilamentCannotEnablePrintingJustByEnteringAnAccessCode() {
+        homeAssistantMode()
+        Repo.state.value=st.copy(printers=listOf(changed("sensor.print_status" to "idle")))
+        val http=io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { error("A mismatched model must not reach the slicer") }).also { testHttpClients+=it }
+        prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to """{"filament_type":["Unsupported material"],"filament_colour":["#FFFFFF"]}""".toByteArray())),
+            SlicerClient("slicer.invalid",null,http=http))
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Printer access code").performScrollTo().performTextInput("12345678")
+        compose.onNodeWithText("Load matching filament types",substring=true).performScrollTo().assertExists()
+        compose.onNodeWithText("Print current plate").assertIsNotEnabled().performClick()
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun externalSpoolCanBeChosenAndItsPresetPersistsForTheModel() {
+        val id="sensor.test_external_spool"
+        val spool=Entity(id,"PLA",json.parseToJsonElement("""{"type":"PLA","color":"#FFFFFF","name":"External PLA"}""").jsonObject)
+        val p=Printer(printer.info.copy(ams=emptyList(),external=listOf(id)),snapshot+(id to spool))
+        Repo.state.value=st.copy(printers=listOf(p))
+        prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to """{"filament_type":["PLA"],"filament_colour":["#FFFFFF"]}""".toByteArray())))
+        compose.onNodeWithText("Next").performClick()
+        compose.onAllNodesWithText("PLA").onFirst().performScrollTo().performClick()
+        compose.onNodeWithText("External spool").performClick()
+        assertEquals(254,Repo.filamentPreset(p.serial)[filamentKey("PLA","#FFFFFF")])
+        compose.onNodeWithText("Ext").assertExists()
+        org.junit.Assert.assertTrue(commands.isEmpty())
     }
     @Test fun rootNavigationReachesPrinterAndAccountDestinations() {
         show("Devices") { Root() }
