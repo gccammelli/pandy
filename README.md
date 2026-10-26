@@ -102,13 +102,3 @@ Bug reports, feature requests and pull requests are welcome. See [CONTRIBUTING.m
 ## Support Pandy
 
 [![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/cammelli)
-
-### Coverage checks
-
-**The target is at least 95% fully covered lines in [Codecov](https://app.codecov.io/gh/gccammelli/pandy).** Partial lines remain uncovered, and the Codecov project check uses a fixed 95% target with no tolerance. The separate Kover gate measures executed lines; passing it does not prove the Codecov target has been reached. Coverage upload failures fail CI. CI also reads the processed Codecov report for the exact commit and fails unless fully covered hits are at least 95% of all hit, partial and missed lines; an absent or stale report cannot pass. The report uses JaCoCo 0.8.15 through Kover, including its standard Kotlin/Compose compiler-bytecode filters. The only package exclusion is the Compose-generated `io.github.gccammelli.pandy.res` package: resource accessors and collectors produced under `shared/build/generated/compose/resourceGenerator/`. These are generated resource lookup tables and wrappers, rather than application decisions. Handwritten UI, demo behavior, networking, storage, encryption and device logic remain measured. Run the full automated suite and gate locally:
-
-```sh
-./gradlew testDebugUnitTest :shared:koverXmlReportDebug :shared:koverVerifyDebug
-```
-
-The report is `shared/build/reports/kover/reportDebug.xml`. Tests include simulated service boundaries and Robolectric screens; physical devices and iOS execution are separate checks.
