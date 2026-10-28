@@ -174,6 +174,8 @@ class MainActivity : ComponentActivity(), PlatformUi {
         if (!BuildConfig.DEBUG) return
         // `--es print_url http://…/model.3mf`: hands the MakerWorld print sheet a file, as a download from the web view would.
         i?.getStringExtra("print_url")?.let { u -> Nav.stack.clear(); Nav.tab = 0; io.github.gccammelli.pandy.ui.debugDownload.value = WebDownload(u, u.substringAfterLast('/'), null, printSheet = true); return }
+        // `--es site thingiverse|printables|makerworld`: the Models tab shows that site.
+        i?.getStringExtra("site")?.let { n -> io.github.gccammelli.pandy.ModelSite.entries.firstOrNull { it.name.equals(n, true) }?.let { Nav.stack.clear(); Nav.site = it; Nav.tab = 0; return } }
         // `--es notify_test 1`: shows a sample print alert.
         i?.getStringExtra("notify_test")?.let { Repo.notifier?.show("test", "Print finished", "Benchy is done on Test printer"); return }
         val name = i?.getStringExtra("screen") ?: return

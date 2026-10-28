@@ -200,11 +200,8 @@ const val PRINT_BUTTON_JS = """
 })();
 """
 
-/** Sites the MakerWorld page may open inside Pandy: MakerWorld, Bambu's sign-in and files, and the sign-in providers. */
-private val IN_APP_HOSTS = listOf("makerworld.com", "bambulab.com", "bblmw.com", "appleid.apple.com", "accounts.google.com", "facebook.com")
-
 /**
- * Whether a top-level page may load in Pandy's web view. Others open in the browser, so the bridge to the printer is
+ * Whether a top-level page may load in Pandy's web view (the model sites and sign-in). Others open in the browser, so the bridge to the printer is
  * only ever next to MakerWorld; frames inside a page (sign-in captchas, videos) aren't affected.
  */
 fun inAppPage(scheme: String?, host: String?): Boolean {
@@ -212,5 +209,5 @@ fun inAppPage(scheme: String?, host: String?): Boolean {
     if (s in setOf("about", "blob", "data")) return true // made by the page itself
     if (s != "http" && s != "https") return false
     val h = host?.lowercase()?.removeSuffix(".") ?: return false
-    return s == "https" && IN_APP_HOSTS.any { h == it || h.endsWith(".$it") }
+    return s == "https" && SITE_HOSTS.any { h == it || h.endsWith(".$it") }
 }

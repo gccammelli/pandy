@@ -66,13 +66,13 @@ private fun makerWorldOnly(script: String) = """
  * Bambu Studio" link) handed to [onDownload] with the page's cookies instead of leaving the app.
  */
 @Composable
-actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -> Unit)?, state: WebState?, printer: String?) {
+actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -> Unit)?, state: WebState?, printer: String?, site: ModelSite) {
     val toast = LocalPlatform.current::toast
     val currentPrinter = rememberUpdatedState(printer)
     val bridgeToken = remember(url) { NSUUID.UUID().UUIDString }
     fun printerJs() = "window.__pandyBridgeToken = ${json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(bridgeToken))}; window.__pandyPrinter = ${json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(currentPrinter.value.orEmpty()))};"
     // WebKit holds delegates weakly: they live as long as this composable.
-    val handlers = remember(url) { Handlers(onDownload, state, toast, currentPrinter.value, bridgeToken) }
+    val handlers = remember(url) { Handlers(onDownload, state, toast, currentPrinter.value, bridgeToken, site) }
     UIKitView(
         factory = {
             val content = WKUserContentController()
@@ -102,7 +102,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
     )
 }
 
-private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebState?, val toast: (String) -> Unit, var printer: String?, private val bridgeToken: String) {
+private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebState?, val toast: (String) -> Unit, var printer: String?, private val bridgeToken: String, private val site: ModelSite) {
     var webView: WeakReference<WKWebView>? = null
     private val chunks = mutableMapOf<String, ChunkCollector>()
     private val pendingPrints = mutableSetOf<String>()
@@ -254,7 +254,14 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
             val r = decidePolicyForNavigationResponse.response
             val attachment = (r as? NSHTTPURLResponse)?.allHeaderFields?.entries?.any { (k, v) -> (k as? String).equals("Content-Disposition", true) && (v as? String)?.contains("attachment", true) == true } == true
             val url = r.URL?.absoluteString
-            if (url != null && makerWorldPage() && trustedFile(url) && (attachment || !decidePolicyForNavigationResponse.canShowMIMEType)) {
+            val download = attachment || !decidePolicyForNavigationResponse.canShowMIMEType
+            if (url != null && download && site != ModelSite.MakerWorld && site.ownsFile(url)) {
+                // Thingiverse and Printables: an STL or 3MF can be printed with Pandy; anything else is saved.
+                val name = r.suggestedFilename ?: "model.stl"
+                cookies(url) { c -> onDownload?.invoke(WebDownload(url, name, c, ask = isPrintableModel(name))) }
+                return decisionHandler(WKNavigationResponsePolicy.WKNavigationResponsePolicyCancel)
+            }
+            if (url != null && makerWorldPage() && trustedFile(url) && download) {
                 hand(url, r.suggestedFilename ?: "model.3mf")
                 return decisionHandler(WKNavigationResponsePolicy.WKNavigationResponsePolicyCancel)
             }

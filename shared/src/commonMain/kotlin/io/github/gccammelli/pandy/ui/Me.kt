@@ -83,7 +83,7 @@ fun MeTab(st: UiState) {
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.Card).padding(vertical = 14.dp)) {
             Shortcut(Icons.Outlined.History, "Printing\nHistory", Modifier.weight(1f)) { Nav.go(Screen.History) }
             Shortcut(Icons.Outlined.Videocam, "Timelapse", Modifier.weight(1f)) { Nav.go(Screen.Files) }
-            Shortcut(Icons.Outlined.ViewInAr, "MakerWorld", Modifier.weight(1f)) { Nav.tab = 0 }
+            SiteMenuBox(Modifier.weight(1f), onClick = { Nav.tab = 0 }) { ShortcutContent(Icons.Outlined.ViewInAr, "MakerWorld") }
             Shortcut(Icons.Outlined.Folder, "Filament", Modifier.weight(1f)) { Nav.go(Screen.Filament) }
         }
         Gap(12.dp)
@@ -99,7 +99,11 @@ fun MeTab(st: UiState) {
 
 @Composable
 private fun Shortcut(icon: ImageVector, label: String, modifier: Modifier, onClick: () -> Unit) =
-    Column(modifier.clickable(onClick = onClick).padding(vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Box(modifier.clickable(onClick = onClick)) { ShortcutContent(icon, label) }
+
+@Composable
+private fun ShortcutContent(icon: ImageVector, label: String) =
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(icon, null, Modifier.size(24.dp), tint = C.Text)
         Gap(6.dp)
         T(label, 11.sp, C.Text, align = androidx.compose.ui.text.style.TextAlign.Center, lh = 13.sp)
@@ -379,10 +383,13 @@ fun AboutScreen() {
 
 // ---------- MakerWorld ----------
 
-/** Models: MakerWorld in a web view, signed in with the user's own Bambu account; "Print" goes through Pandy. */
+/**
+ * Models: MakerWorld in a web view, signed in with the user's own Bambu account; "Print" goes through Pandy. A long press on
+ * MakerWorld (the tab, or Me's shortcut) switches to Thingiverse or Printables, whose STL files Pandy wraps and slices too.
+ */
 @Composable
 fun ModelsTab() = Column(Modifier.fillMaxSize().background(C.Card).statusBarsPadding()) {
-    MakerWorld(Modifier.fillMaxSize())
+    androidx.compose.runtime.key(Nav.site) { MakerWorld(Modifier.fillMaxSize(), Nav.site) }
 }
 
 

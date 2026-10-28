@@ -17,6 +17,9 @@ import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.readRawBytes
 import io.ktor.utils.io.readAvailable
 import io.ktor.http.HttpHeaders
+import io.ktor.http.URLBuilder
+import io.ktor.http.Url
+import io.ktor.http.takeFrom
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -138,30 +141,56 @@ fun String.encodeURLParam(): String = encodeToByteArray().joinToString("") { b -
 }
 private fun JsonArray?.orEmpty() = this ?: JsonArray(emptyList())
 
-/** Fetches a MakerWorld file (with the web view's cookies, for files behind the sign-in). */
+/** Model downloads follow redirects by hand, so the site's cookies never go to a host they weren't made for. */
+private val downloadHttp = HttpClient {
+    install(HttpTimeout) { connectTimeoutMillis = 15_000; requestTimeoutMillis = 20 * 60_000; socketTimeoutMillis = 20 * 60_000 }
+    expectSuccess = false
+    followRedirects = false
+}.localOnlyCleartext()
+
+private const val MAX_REDIRECTS = 5
+
+/** Fetches a model file (with the web view's cookies, for files behind the sign-in; they go only to the address's own host). */
 suspend fun download(url: String, cookies: String?): ByteArray = try {
-    // The client's 20-minute limits suit slicing; a stalled model download must fail in seconds, not look like a hang.
-    slicerHttp.prepareGet(url) {
-        timeout { connectTimeoutMillis = 15_000; socketTimeoutMillis = downloadStallMillis; requestTimeoutMillis = 5 * 60_000 }
-        if (!cookies.isNullOrBlank()) header("Cookie", cookies)
-    }.execute { r ->
-        if (r.status.value !in 200..299) throw ApiException("The download failed (HTTP ${r.status.value})")
-        r.headers[HttpHeaders.ContentLength]?.toLongOrNull()?.takeIf { it > MAX_DOWNLOAD_BYTES }?.let {
-            throw ApiException("The download is too large (64 MiB maximum)")
+    var target = url
+    var cookie = cookies?.takeIf { it.isNotBlank() }
+    val host = Url(url).host
+    var redirects = 0
+    var bytes: ByteArray? = null
+    while (bytes == null) {
+        // The client's 20-minute limits suit slicing; a stalled model download must fail in seconds, not look like a hang.
+        val sent = cookie
+        val (next, body) = downloadHttp.prepareGet(target) {
+            timeout { connectTimeoutMillis = 15_000; socketTimeoutMillis = downloadStallMillis; requestTimeoutMillis = 5 * 60_000 }
+            if (sent != null) header("Cookie", sent)
+        }.execute { r ->
+            val location = r.headers[HttpHeaders.Location]
+            if (r.status.value in setOf(301, 302, 303, 307, 308) && location != null) return@execute location to null
+            if (r.status.value !in 200..299) throw ApiException("The download failed (HTTP ${r.status.value})")
+            r.headers[HttpHeaders.ContentLength]?.toLongOrNull()?.takeIf { it > MAX_DOWNLOAD_BYTES }?.let {
+                throw ApiException("The download is too large (64 MiB maximum)")
+            }
+            val channel = r.bodyAsChannel()
+            val result = GrowingBytes()
+            val buffer = ByteArray(64 * 1024)
+            var total = 0
+            while (true) {
+                val n = channel.readAvailable(buffer, 0, buffer.size)
+                if (n == -1) break
+                if (total > MAX_DOWNLOAD_BYTES - n) throw ApiException("The download is too large (64 MiB maximum)")
+                result.append(buffer, n)
+                total += n
+            }
+            null to result.toByteArray()
         }
-        val channel = r.bodyAsChannel()
-        val result = GrowingBytes()
-        val buffer = ByteArray(64 * 1024)
-        var total = 0
-        while (true) {
-            val n = channel.readAvailable(buffer, 0, buffer.size)
-            if (n == -1) break
-            if (total > MAX_DOWNLOAD_BYTES - n) throw ApiException("The download is too large (64 MiB maximum)")
-            result.append(buffer, n)
-            total += n
+        if (body != null) bytes = body else {
+            if (++redirects > MAX_REDIRECTS) throw ApiException("The download redirected too many times")
+            val resolved = URLBuilder(target).takeFrom(next!!).build()
+            if (!resolved.host.equals(host, ignoreCase = true)) cookie = null
+            target = resolved.toString()
         }
-        result.toByteArray()
     }
+    bytes
 } catch (e: Exception) {
     // Transport errors name the (signed) URL; show a plain message instead.
     if (e is CancellationException || e is ApiException) throw e
@@ -175,9 +204,10 @@ internal fun Throwable.timedOut() = generateSequence(this) { it.cause }.any {
 /** How long a model download may go without data before it fails (a variable only so tests needn't wait). */
 internal var downloadStallMillis = 30_000L
 
-private class GrowingBytes {
+internal class GrowingBytes {
     private var bytes = ByteArray(64 * 1024)
-    private var size = 0
+    var size = 0
+        private set
 
     fun append(source: ByteArray, count: Int) {
         if (size + count > bytes.size) bytes = bytes.copyOf(maxOf(bytes.size * 2, size + count))

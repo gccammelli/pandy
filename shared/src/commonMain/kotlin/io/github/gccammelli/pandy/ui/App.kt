@@ -3,6 +3,7 @@ package io.github.gccammelli.pandy.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,6 +79,8 @@ object Nav {
     val stack = mutableStateListOf<Screen>()
     /** 0 Models, 1 Devices, 2 Me. Devices first, as Handy can be set to open on it. */
     var tab by mutableStateOf(1)
+    /** The model site the Models tab shows; long-pressing MakerWorld (the Models tab or Me's shortcut) switches it. */
+    var site by mutableStateOf(io.github.gccammelli.pandy.ModelSite.MakerWorld)
     fun go(s: Screen) { stack += s }
     /** False when there's nothing to go back to (the system then closes the app). */
     fun back(): Boolean = stack.removeLastOrNull() != null
@@ -135,10 +138,15 @@ fun Tabs(st: UiState, p: Printer) = Column(Modifier.fillMaxSize().background(C.B
     Row(Modifier.fillMaxWidth().background(C.Nav).navigationBarsPadding().height(58.dp)) {
         tabs.forEachIndexed { i, (label, icon) ->
             val sel = Nav.tab == i
-            Column(Modifier.weight(1f).fillMaxSize().clickable { Nav.tab = i }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Icon(icon, label, Modifier.size(24.dp), tint = if (sel) C.Accent else C.Sub)
-                T(label, 11.sp, if (sel) C.Accent else C.Sub)
+            val tab = Modifier.weight(1f).fillMaxSize()
+            val content: @Composable () -> Unit = {
+                Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Icon(icon, label, Modifier.size(24.dp), tint = if (sel) C.Accent else C.Sub)
+                    T(label, 11.sp, if (sel) C.Accent else C.Sub)
+                }
             }
+            if (i == 0) SiteMenuBox(tab, onClick = { Nav.tab = 0 }, content = content)
+            else Box(tab.clickable { Nav.tab = i }) { content() }
         }
     }
 }
@@ -380,5 +388,27 @@ fun AddDirectScreen() = Page("Direct LAN connection", { Nav.back() }) {
         T("Pandy is using Home Assistant for this printer. A direct LAN connection adds every printer command and the live view, and keeps working when Home Assistant is down.", 14.sp, C.Sub, lh = 20.sp)
         Gap(20.dp)
         PrinterForm { Nav.back() }
+    }
+}
+
+
+/**
+ * Tap does [onClick]; a long press offers the model sites (MakerWorld, Thingiverse, Printables) and opens the chosen one
+ * in the Models tab.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun SiteMenuBox(modifier: Modifier, onClick: () -> Unit, content: @Composable () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier.combinedClickable(onClick = onClick, onLongClick = { open = true })) {
+        content()
+        androidx.compose.material3.DropdownMenu(open, { open = false }, containerColor = C.Card) {
+            for (site in io.github.gccammelli.pandy.ModelSite.entries) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { T(if (site == Nav.site) "${site.label} ✓" else site.label, 15.sp, if (site == Nav.site) C.Accent else C.Text) },
+                    onClick = { open = false; Nav.site = site; Nav.tab = 0 },
+                )
+            }
+        }
     }
 }

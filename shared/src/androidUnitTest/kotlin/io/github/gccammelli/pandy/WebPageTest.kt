@@ -181,6 +181,28 @@ class WebPageTest {
         }
         compose.waitForIdle()
     }
+    private fun siteDownloadsAsk(site: ModelSite,start: String,file: String,other: String) {
+        val downloads = mutableListOf<WebDownload>()
+        compose.setContent { WebPage(start, Modifier, { downloads += it }, WebState(), "X1C", site) }
+        compose.runOnIdle {
+            val web = views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
+            val shadow = shadowOf(web)
+            assertEquals(start,shadow.lastLoadedUrl)
+            shadow.downloadListener.onDownloadStart(file,"","attachment; filename=\"benchy.stl\"","model/stl",3)
+            assertTrue(downloads.single().ask); assertEquals("benchy.stl",downloads.single().name)
+            shadow.downloadListener.onDownloadStart(file.substringBeforeLast('/')+"/all.zip","","attachment; filename=\"all.zip\"","application/zip",3)
+            assertFalse(downloads.last().ask) // zips are simply saved
+            shadow.downloadListener.onDownloadStart(other,"","","model/stl",3)
+            shadow.downloadListener.onDownloadStart("https://evil.example/a.stl","","","model/stl",3)
+            assertEquals(2,downloads.size)
+            assertFalse(shadow.webViewClient.shouldOverrideUrlLoading(web,request(start+"/model/1")))
+            assertTrue(shadow.webViewClient.shouldOverrideUrlLoading(web,request("https://evil.example/")))
+        }
+    }
+    @Test fun thingiverseStlDownloadsAskAndOnlyItsOwnFilesCount() =
+        siteDownloadsAsk(ModelSite.Thingiverse,"https://www.thingiverse.com","https://cdn.thingiverse.com/assets/a/benchy.stl","https://files.printables.com/a.stl")
+    @Test fun printablesStlDownloadsAskAndOnlyItsOwnFilesCount() =
+        siteDownloadsAsk(ModelSite.Printables,"https://www.printables.com","https://files.printables.com/media/prints/1/stls/benchy.stl","https://cdn.thingiverse.com/a.stl")
     @Test fun navigationAndDownloadsStayInsideMakerWorldTrustBoundary() {
         val downloads = mutableListOf<WebDownload>()
         val state = WebState()

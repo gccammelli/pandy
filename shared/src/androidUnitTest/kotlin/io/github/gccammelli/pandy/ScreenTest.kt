@@ -431,6 +431,49 @@ class ScreenTest {
         return uploads to closed
     }
 
+    @Test fun longPressingMakerWorldOffersThingiverseAndPrintables() {
+        show("MakerWorld") { MeTab(st) }
+        compose.runOnIdle { Nav.site=ModelSite.MakerWorld; Nav.tab=2 }
+        compose.onNodeWithText("MakerWorld").performScrollTo().performTouchInput { longClick() }
+        compose.onNodeWithText("MakerWorld ✓").assertExists()
+        compose.onNodeWithText("Printables").assertExists()
+        compose.onNodeWithText("Thingiverse").performClick()
+        assertEquals(ModelSite.Thingiverse,Nav.site); assertEquals(0,Nav.tab)
+        compose.runOnIdle { Nav.site=ModelSite.MakerWorld }
+    }
+
+    @Test fun longPressingTheModelsTabSwitchesSiteAndItsWebViewLoadsThatSite() {
+        compose.runOnIdle { Nav.site=ModelSite.MakerWorld; Nav.tab=0 }
+        show("Models") { Tabs(st,printer) }
+        compose.onNodeWithText("Models").performTouchInput { longClick() }
+        compose.onNodeWithText("Printables").performClick()
+        assertEquals(ModelSite.Printables,Nav.site)
+        compose.waitForIdle()
+        val web=descendants(compose.activity.window.decorView).filterIsInstance<android.webkit.WebView>().single()
+        assertEquals("https://www.printables.com",org.robolectric.Shadows.shadowOf(web).lastLoadedUrl)
+        compose.runOnIdle { Nav.site=ModelSite.MakerWorld }
+    }
+
+    @Test fun aThingiverseStlAsksWhetherToPrintOrSaveAndSaveKeepsTheFile() {
+        Repo.state.value=UiState(on=true,printers=emptyList())
+        compose.runOnIdle { Nav.site=ModelSite.Thingiverse }
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { ModelsTab() } } }
+        val web=descendants(compose.activity.window.decorView).filterIsInstance<android.webkit.WebView>().single()
+        val shadow=org.robolectric.Shadows.shadowOf(web)
+        assertEquals("https://www.thingiverse.com",shadow.lastLoadedUrl)
+        compose.runOnIdle { shadow.downloadListener.onDownloadStart("https://cdn.thingiverse.com/assets/a/benchy.stl","","attachment; filename=\"benchy.stl\"","model/stl",3) }
+        compose.onNodeWithText("benchy.stl").assertExists()
+        compose.onNodeWithText("Connect a printer in Devices",substring=true).assertExists()
+        val realDownload=downloadModel
+        downloadModel={ _,_ -> byteArrayOf(1,2,3) }
+        try {
+            compose.onNodeWithText("Save").performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); savedFiles.isNotEmpty() }
+        } finally { downloadModel=realDownload }
+        assertEquals("benchy.stl",savedFiles.first().first)
+        compose.runOnIdle { Nav.site=ModelSite.MakerWorld }
+    }
+
     @Test fun makerWorldPrintWaitsForConfirmationThenSlicesUploadsAndStarts() {
         val (uploads,closed) = prepareRealPrint("""[{"id":"1","type":"PLA","color":"#FFFFFF"}]""")
         org.junit.Assert.assertTrue(uploads.isEmpty())

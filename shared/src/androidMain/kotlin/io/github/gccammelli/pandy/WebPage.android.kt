@@ -25,7 +25,7 @@ private const val PRINT_TRANSFER_TIMEOUT_MS = 5 * 60 * 1000L
 
 @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
 @Composable
-actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -> Unit)?, state: WebState?, printer: String?) {
+actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -> Unit)?, state: WebState?, printer: String?, site: ModelSite) {
     val currentPrinter = rememberUpdatedState(printer)
     var view: WebView? = null
     AndroidView({ ctx ->
@@ -203,8 +203,11 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                     evaluateJavascript("""(async()=>{const b=await (await fetch(${org.json.JSONObject.quote(u)})).blob();
                         if (b.size > $MAX_PRINT_BYTES) { PandyBridge.problem('The download is too large to save.',window.__pandyBridgeToken); return; }
                         const r=new FileReader();r.onload=()=>PandyBridge.blob(${org.json.JSONObject.quote(name)},r.result.split(',')[1],window.__pandyBridgeToken);r.readAsDataURL(b);})()""", null)
+                } else if (site != ModelSite.MakerWorld && site.ownsFile(u)) {
+                    // Thingiverse and Printables: an STL or 3MF can be printed with Pandy; anything else (zips, images) is saved.
+                    onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u), ask = isPrintableModel(name)))
                 } else if (trustedFile(u)) onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u)))
-                else toast("Pandy only opens downloads from MakerWorld")
+                else toast("Pandy only opens downloads from ${site.label}")
             }
             state?.goBack = { goBack() }
             loadUrl(url)
