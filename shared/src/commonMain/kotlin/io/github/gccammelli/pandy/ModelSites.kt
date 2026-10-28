@@ -29,3 +29,17 @@ internal val SITE_HOSTS = listOf("makerworld.com", "bambulab.com", "bblmw.com", 
 
 /** Files Pandy can slice: STL and 3MF. [name] may carry a query string. */
 fun isPrintableModel(name: String) = name.substringBefore('?').let { '.' in it && it.substringAfterLast('.').lowercase() in setOf("stl", "3mf") }
+
+/**
+ * Thingiverse makes its downloads in the page and saves them as an anonymous blob, so the file's name (and whether it is an
+ * STL) would be lost. This remembers the name the page gives the download link, for the blob that follows.
+ */
+const val SITE_DOWNLOAD_JS = """
+(function(){
+  if (window.__pandySite) return; window.__pandySite = true;
+  const remember = a => { if (a && a.getAttribute && a.getAttribute('download')) window.__pandyDownloadName = a.getAttribute('download'); };
+  document.addEventListener('click', e => remember(e.target && e.target.closest && e.target.closest('a[download]')), true);
+  const click = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function(){ remember(this); return click.apply(this, arguments); };
+})();
+"""

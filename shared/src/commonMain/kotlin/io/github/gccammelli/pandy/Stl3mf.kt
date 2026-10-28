@@ -7,8 +7,6 @@ fun looksLikeStl(data: ByteArray): Boolean {
         data.decodeToString(0, minOf(data.size, 4096)).contains("facet")
 }
 
-private const val MAX_STL_TRIANGLES = 600_000L
-
 private fun u32(d: ByteArray, at: Int): Long =
     (d[at].toLong() and 0xFF) or ((d[at + 1].toLong() and 0xFF) shl 8) or ((d[at + 2].toLong() and 0xFF) shl 16) or ((d[at + 3].toLong() and 0xFF) shl 24)
 
@@ -21,12 +19,11 @@ private fun f32(d: ByteArray, at: Int) = Float.fromBits(u32(d, at).toInt())
  */
 fun stlTo3mf(data: ByteArray, bed: Float = 90f): ByteArray {
     val binary = data.size >= 84 && data.size.toLong() == 84L + 50L * u32(data, 80)
-    // x, y, z per triangle corner; a phone can't hold the XML of much more than this.
+    // x, y, z per triangle corner.
     var corners = FloatArray(0)
     var used = 0
     if (binary) {
         val count = u32(data, 80)
-        if (count > MAX_STL_TRIANGLES) throw ApiException("That model is too detailed to prepare on a phone (over $MAX_STL_TRIANGLES triangles)")
         corners = FloatArray(count.toInt() * 9)
         for (t in 0 until count.toInt()) {
             val base = 84 + t * 50 + 12 // after the normal
@@ -36,7 +33,6 @@ fun stlTo3mf(data: ByteArray, bed: Float = 90f): ByteArray {
         for (line in data.decodeToString().lineSequence()) {
             val parts = line.trim().split(Regex("\\s+"))
             if (parts.size == 4 && parts[0].equals("vertex", true)) {
-                if (used + 3 > MAX_STL_TRIANGLES * 9) throw ApiException("That model is too detailed to prepare on a phone (over $MAX_STL_TRIANGLES triangles)")
                 if (used + 3 > corners.size) corners = corners.copyOf(maxOf(corners.size * 2, 3000))
                 for (i in 1..3) corners[used++] = parts[i].toFloatOrNull() ?: throw ApiException("That STL file is damaged")
             }

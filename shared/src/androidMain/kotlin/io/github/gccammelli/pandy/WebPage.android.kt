@@ -50,9 +50,17 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
             val chunks = mutableMapOf<String, ChunkCollector>()
             val pendingPrints = mutableSetOf<String>()
             val makerWorld = java.util.concurrent.atomic.AtomicBoolean(false)
+            // Thingiverse / Printables pages (never MakerWorld): they only hand over blob downloads through the bridge.
+            val sitePage = java.util.concurrent.atomic.AtomicBoolean(false)
             val bridgeToken = java.util.UUID.randomUUID().toString()
             var transferPage: String? = null
             fun makerWorldPage() = makerWorld.get()
+            fun bridgePage() = makerWorld.get() || sitePage.get()
+            fun pageHost(u: String?) {
+                val host = u?.let { Uri.parse(it).host }
+                makerWorld.set(host?.let { it == "makerworld.com" || it.endsWith(".makerworld.com") } == true)
+                sitePage.set(site != ModelSite.MakerWorld && site.ownsPage(host))
+            }
             fun clearTransfers() {
                 synchronized(chunks) { chunks.clear() }
                 synchronized(pendingPrints) { pendingPrints.clear() }
@@ -71,7 +79,10 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                 return Uri.parse(url).host?.lowercase()?.let { it.endsWith(".bblmw.com") || it == "makerworld.com" || it.endsWith(".makerworld.com") } == true
             }
             fun deliver(name: String, bytes: ByteArray?, printSheet: Boolean = false) = main.post {
-                if (bytes != null) onDownload?.invoke(WebDownload(null, name, null, bytes, printSheet)) else
+                // A site's blob download has the page's own file name when it set one, else a random ".bin"; an STL is recognised by its content.
+                val fromSite = sitePage.get()
+                val named = if (fromSite && bytes != null && !isPrintableModel(name) && looksLikeStl(bytes)) name.substringBeforeLast('.') + ".stl" else name
+                if (bytes != null) onDownload?.invoke(WebDownload(null, named, null, bytes, printSheet, ask = fromSite && isPrintableModel(named))) else
                     android.widget.Toast.makeText(ctx, "Couldn't read that download", android.widget.Toast.LENGTH_LONG).show()
             }
             fun fetchInPage(name: String, url: String): Boolean {
@@ -106,7 +117,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
             }
             addJavascriptInterface(object {
                 @JavascriptInterface fun blob(name: String, base64: String, token: String) {
-                    if (!validToken(token) || !makerWorldPage() || base64.length > MAX_BRIDGE_BASE64) return
+                    if (!validToken(token) || !bridgePage() || base64.length > MAX_BRIDGE_BASE64) return
                     val bytes = runCatching { android.util.Base64.decode(base64, android.util.Base64.DEFAULT) }.getOrNull()?.takeIf { it.size <= MAX_PRINT_BYTES }
                     deliver(name, bytes)
                 }
@@ -138,7 +149,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                     main.post { onDownload?.invoke(WebDownload(url, name, CookieManager.getInstance().getCookie(url), printSheet = true)) }
                 }
                 @JavascriptInterface fun problem(message: String, token: String) {
-                    if (validToken(token) && makerWorldPage()) {
+                    if (validToken(token) && bridgePage()) {
                         clearTransfers()
                         main.post { toast(message) }
                     }
@@ -146,16 +157,15 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
             }, "PandyBridge")
             webViewClient = object : WebViewClient() {
                 override fun doUpdateVisitedHistory(v: WebView, u: String?, reload: Boolean) {
-                    val host = u?.let { Uri.parse(it).host }
-                    makerWorld.set(host?.let { it == "makerworld.com" || it.endsWith(".makerworld.com") } == true)
+                    pageHost(u)
                     pageChanged(u)
                     state?.canGoBack = v.canGoBack(); state?.currentUrl = u.orEmpty()
                 }
 
                 override fun onPageFinished(v: WebView, u: String?) {
-                    val host = u?.let { Uri.parse(it).host }
-                    makerWorld.set(host?.let { it == "makerworld.com" || it.endsWith(".makerworld.com") } == true)
+                    pageHost(u)
                     pageChanged(u)
+                    if (sitePage.get()) v.evaluateJavascript("window.__pandyBridgeToken = ${org.json.JSONObject.quote(bridgeToken)};", null).also { v.evaluateJavascript(SITE_DOWNLOAD_JS, null) }
                     if (makerWorld.get()) {
                         v.evaluateJavascript("window.__pandyBridgeToken = ${org.json.JSONObject.quote(bridgeToken)}; window.__pandyPrinter = ${org.json.JSONObject.quote(currentPrinter.value.orEmpty())};", null)
                         v.evaluateJavascript(canPrintJs(state?.canPrint != false), null)
@@ -202,7 +212,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                     // Made in the page: read it there and pass the bytes back.
                     evaluateJavascript("""(async()=>{const b=await (await fetch(${org.json.JSONObject.quote(u)})).blob();
                         if (b.size > $MAX_PRINT_BYTES) { PandyBridge.problem('The download is too large to save.',window.__pandyBridgeToken); return; }
-                        const r=new FileReader();r.onload=()=>PandyBridge.blob(${org.json.JSONObject.quote(name)},r.result.split(',')[1],window.__pandyBridgeToken);r.readAsDataURL(b);})()""", null)
+                        const r=new FileReader();r.onload=()=>PandyBridge.blob(window.__pandyDownloadName||${org.json.JSONObject.quote(name)},r.result.split(',')[1],window.__pandyBridgeToken);r.readAsDataURL(b);})()""", null)
                 } else if (site != ModelSite.MakerWorld && site.ownsFile(u)) {
                     // Thingiverse and Printables: an STL or 3MF can be printed with Pandy; anything else (zips, images) is saved.
                     onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u), ask = isPrintableModel(name)))

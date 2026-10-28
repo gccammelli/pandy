@@ -201,6 +201,32 @@ class WebPageTest {
     }
     @Test fun thingiverseStlDownloadsAskAndOnlyItsOwnFilesCount() =
         siteDownloadsAsk(ModelSite.Thingiverse,"https://www.thingiverse.com","https://cdn.thingiverse.com/assets/a/benchy.stl","https://files.printables.com/a.stl")
+    @Test fun thingiverseBlobDownloadsReachTheBridgeNamedAndAskedButMakerWorldPagesKeepTheirRules() {
+        val downloads = mutableListOf<WebDownload>()
+        compose.setContent { WebPage("https://www.thingiverse.com", Modifier, { downloads += it }, WebState(), "X1C", ModelSite.Thingiverse) }
+        compose.runOnIdle {
+            val web = views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
+            val shadow = shadowOf(web)
+            val bridge = shadow.getJavascriptInterface("PandyBridge")!!
+            val token = bridgeToken(bridge)
+            shadow.webViewClient.onPageFinished(web, "https://www.thingiverse.com/thing:1/files")
+            assertTrue(shadow.lastEvaluatedJavascript.contains("__pandyDownloadName"))
+            // The page's own file name is kept; an anonymous ".bin" holding an STL is renamed by its content.
+            bridgeCall(bridge, "blob", "part.stl", android.util.Base64.encodeToString(byteArrayOf(1, 2, 3), android.util.Base64.NO_WRAP), token)
+            val stl = "solid x\nfacet normal 0 0 0\nendfacet\nendsolid x\n".toByteArray()
+            bridgeCall(bridge, "blob", "abc.bin", android.util.Base64.encodeToString(stl, android.util.Base64.NO_WRAP), token)
+            bridgeCall(bridge, "blob", "photo.png", android.util.Base64.encodeToString(byteArrayOf(9), android.util.Base64.NO_WRAP), token)
+            bridgeCall(bridge, "blob", "bad.stl", android.util.Base64.encodeToString(byteArrayOf(1), android.util.Base64.NO_WRAP), "wrong-token")
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            assertEquals(listOf("part.stl", "abc.stl", "photo.png"), downloads.map { it.name })
+            assertEquals(listOf(true, true, false), downloads.map { it.ask })
+            // Off the site (another host) the bridge is closed.
+            shadow.webViewClient.onPageFinished(web, "https://evil.example/")
+            bridgeCall(bridge, "blob", "late.stl", android.util.Base64.encodeToString(byteArrayOf(1), android.util.Base64.NO_WRAP), token)
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            assertEquals(3, downloads.size)
+        }
+    }
     @Test fun printablesStlDownloadsAskAndOnlyItsOwnFilesCount() =
         siteDownloadsAsk(ModelSite.Printables,"https://www.printables.com","https://files.printables.com/media/prints/1/stls/benchy.stl","https://cdn.thingiverse.com/a.stl")
     @Test fun navigationAndDownloadsStayInsideMakerWorldTrustBoundary() {

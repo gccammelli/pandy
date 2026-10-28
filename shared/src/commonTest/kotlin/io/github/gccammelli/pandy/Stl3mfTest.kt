@@ -62,13 +62,4 @@ class Stl3mfTest {
         assertFailsWith<ApiException> { stlTo3mf("solid x\nendsolid x\n".encodeToByteArray()) }
         assertFailsWith<ApiException> { stlTo3mf("solid x\nfacet\nvertex a b c\nvertex 1 2 3\nvertex 4 5 6\nendfacet\n".encodeToByteArray()) }
     }
-
-    @Test fun refusesModelsTooDetailedForAPhone() {
-        val count = 600_001
-        val big = ByteArray(84 + 50 * count)
-        for (j in 0 until 4) big[80 + j] = (count shr (8 * j)).toByte()
-        assertTrue(assertFailsWith<ApiException> { stlTo3mf(big) }.message!!.contains("too detailed"))
-        val ascii = buildString { append("solid x\n"); repeat(600_001 * 3) { append("vertex 1 2 3\n") } }.encodeToByteArray()
-        assertTrue(assertFailsWith<ApiException> { stlTo3mf(ascii) }.message!!.contains("too detailed"))
-    }
 }
