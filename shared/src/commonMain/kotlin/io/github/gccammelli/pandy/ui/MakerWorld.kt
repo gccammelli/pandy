@@ -111,7 +111,7 @@ const val MAKERWORLD = "https://makerworld.com/en"
  * "Open in Bambu Studio", comes to Pandy, which offers to slice and print it on the user's printer.
  */
 @Composable
-fun MakerWorld(modifier: Modifier, site: io.github.gccammelli.pandy.ModelSite = io.github.gccammelli.pandy.ModelSite.MakerWorld) {
+fun MakerWorld(modifier: Modifier, site: io.github.gccammelli.pandy.ModelSite) {
     val web = remember { WebState() }
     var printDownload by debugDownload
     var fileDownload by remember { mutableStateOf<WebDownload?>(null) }

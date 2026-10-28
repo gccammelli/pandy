@@ -19,6 +19,8 @@ class ModelSitesTest {
             "https://cdn.thingiverse.com.evil.example/a.stl", "https://cdn.thingiverse.com\\a.stl", "https://cdn.thingiverse.com/a b.stl", "https://evil.example/?h=cdn.thingiverse.com"))
             assertFalse(ModelSite.Thingiverse.ownsFile(bad), bad)
         assertFalse(ModelSite.Printables.ownsFile("https://cdn.thingiverse.com/a.stl"))
+        assertFalse(ModelSite.Thingiverse.ownsFile("https:///a.stl")) // no host
+        assertTrue(ModelSite.Thingiverse.ownsFile("https://thingiverse.com:443/a.stl#x"))
     }
 
     @Test fun othersListsTheTwoOtherSites() {

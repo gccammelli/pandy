@@ -442,6 +442,17 @@ class ScreenTest {
         compose.runOnIdle { Nav.site=ModelSite.MakerWorld }
     }
 
+    @Test fun theBottomTabsSwitchBetweenModelsDevicesAndMe() {
+        compose.runOnIdle { Nav.site=ModelSite.MakerWorld; Nav.tab=1 }
+        show("Devices") { Tabs(st,printer) }
+        compose.onNodeWithText("Me").performClick(); assertEquals(2,Nav.tab)
+        compose.onNodeWithText("Devices").performClick(); assertEquals(1,Nav.tab)
+        compose.onNodeWithText("Models").performClick(); assertEquals(0,Nav.tab)
+        compose.onNodeWithText("Models").performTouchInput { longClick() }
+        compose.onNodeWithText("MakerWorld ✓").performClick() // the current site: stays, menu closes
+        assertEquals(ModelSite.MakerWorld,Nav.site); compose.onNodeWithText("Thingiverse").assertDoesNotExist()
+    }
+
     @Test fun longPressingTheModelsTabSwitchesSiteAndItsWebViewLoadsThatSite() {
         compose.runOnIdle { Nav.site=ModelSite.MakerWorld; Nav.tab=0 }
         show("Models") { Tabs(st,printer) }
@@ -470,6 +481,32 @@ class ScreenTest {
         assertEquals("benchy.stl",savedFiles.first().first)
         compose.runOnIdle { Nav.site=ModelSite.MakerWorld }
     }
+
+    private fun stlBytes() = ("solid x\n" + listOf("0 0 0","10 0 0","0 10 0","0 0 10").let { v -> listOf(listOf(0,1,2),listOf(0,1,3),listOf(0,2,3),listOf(1,2,3)).joinToString("") { t -> "facet normal 0 0 0\nouter loop\n" + t.joinToString("") { "vertex ${v[it]}\n" } + "endloop\nendfacet\n" } } + "endsolid x\n").encodeToByteArray()
+
+    private fun printablesStl(slicer: Boolean) {
+        if (slicer) Repo.setSlicer("http://slicer.example:8737",null)
+        compose.runOnIdle { Nav.site=ModelSite.Printables }
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { ModelsTab() } } }
+        val web=descendants(compose.activity.window.decorView).filterIsInstance<android.webkit.WebView>().single()
+        val shadow=org.robolectric.Shadows.shadowOf(web)
+        val realDownload=downloadModel
+        downloadModel={ _,_ -> stlBytes() }
+        try {
+            compose.runOnIdle { shadow.downloadListener.onDownloadStart("https://files.printables.com/media/a.stl","","attachment; filename=\"a.stl\"","model/stl",3) }
+            if (slicer) {
+                // With a printer and a slicer the download is a print: the wrapped STL reads as a one-plate project.
+                compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("1 plate",substring=true).assertExists()
+            } else {
+                // A printer but no slicer: a plain save.
+                compose.waitUntil(5000) { compose.waitForIdle(); savedFiles.isNotEmpty() }
+                assertEquals("a.stl",savedFiles.last().first)
+            }
+        } finally { downloadModel=realDownload; Repo.setSlicer(null,null); compose.runOnIdle { Nav.site=ModelSite.MakerWorld } }
+    }
+    @Test fun anStlOnPrintablesOpensThePrintSheetWhenASlicerIsSetUp() = printablesStl(true)
+    @Test fun anStlOnPrintablesIsJustSavedWithoutASlicer() = printablesStl(false)
 
     @Test fun makerWorldPrintWaitsForConfirmationThenSlicesUploadsAndStarts() {
         val (uploads,closed) = prepareRealPrint("""[{"id":"1","type":"PLA","color":"#FFFFFF"}]""")

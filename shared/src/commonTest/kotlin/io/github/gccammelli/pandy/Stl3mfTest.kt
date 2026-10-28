@@ -62,4 +62,19 @@ class Stl3mfTest {
         assertFailsWith<ApiException> { stlTo3mf("solid x\nendsolid x\n".encodeToByteArray()) }
         assertFailsWith<ApiException> { stlTo3mf("solid x\nfacet\nvertex a b c\nvertex 1 2 3\nvertex 4 5 6\nendfacet\n".encodeToByteArray()) }
     }
+
+    @Test fun malformedStlIsRefusedWithAReason() {
+        fun ascii(vararg vertices: String) = ("solid x\nfacet normal 0 0 0\nouter loop\n" + vertices.joinToString("\n") { "vertex $it" } + "\nendloop\nendfacet\nendsolid x\n").encodeToByteArray()
+        assertTrue(assertFailsWith<ApiException> { stlTo3mf(ascii("0 0 0", "1 0 0")) }.message!!.contains("no model")) // a triangle needs three corners
+        assertTrue(assertFailsWith<ApiException> { stlTo3mf(ascii("0 0 0", "1 0 0", "NaN 1 0")) }.message!!.contains("damaged"))
+        assertTrue(assertFailsWith<ApiException> { stlTo3mf("".encodeToByteArray()) }.message!!.contains("no model"))
+        assertFalse(looksLikeStl("solid but nothing else of a model in here, just words".encodeToByteArray()))
+    }
+
+    @Test fun degenerateTrianglesAreLeftOut() = runTest {
+        val flat = "solid x\nfacet\nnormal 0 0 1\nvertex 0 0 0\nvertex 0 0 0\nvertex 1 0 0\nendfacet\nfacet\nvertex 0 0 0\nvertex 1 0 0\nvertex 1 0 0\nendfacet\nfacet\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 0 0\nendfacet\nfacet\nvertex -5 -5 -5\nvertex 1 0 0\nvertex 0 0 9\nendfacet\nfacet\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendfacet\nendsolid x\n"
+        val zip = stlTo3mf(flat.encodeToByteArray())
+        val model = zipEntry(zip.size.toLong(), listOf(Regex("3D/3dmodel\\.model"))) { o, l -> zip.copyOfRange(o.toInt(), (o + l).toInt()) }!!.second.decodeToString()
+        assertEquals(2, Regex("<triangle ").findAll(model).count())
+    }
 }

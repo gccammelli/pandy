@@ -37,6 +37,7 @@ class DownloadHttpTest {
             when(exchange.requestURI.path) {
                 "/same" -> { exchange.responseHeaders.add("Location","/final"); exchange.sendResponseHeaders(302,-1) }
                 "/other" -> { exchange.responseHeaders.add("Location","http://localhost:${port()}/final2"); exchange.sendResponseHeaders(302,-1) }
+                "/nowhere" -> exchange.sendResponseHeaders(302,-1) // a redirect without a Location is just a failure
                 "/loop" -> { exchange.responseHeaders.add("Location","/loop"); exchange.sendResponseHeaders(302,-1) }
                 else -> { exchange.sendResponseHeaders(200,2); exchange.responseBody.use { it.write(byteArrayOf(1,2)) } }
             }
@@ -49,6 +50,7 @@ class DownloadHttpTest {
             assertEquals("session=secret",seen["/final"])
             assertContentEquals(byteArrayOf(1,2),download("$base/other","session=secret"))
             assertNull(seen["/final2"])
+            assertTrue(assertFailsWith<ApiException> { download("$base/nowhere",null) }.message!!.contains("302"))
             assertTrue(assertFailsWith<ApiException> { download("$base/loop",null) }.message!!.contains("redirected too many times"))
         } finally { server.stop(0) }
     }

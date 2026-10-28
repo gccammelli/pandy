@@ -205,6 +205,18 @@ class WebPageTest {
             assertTrue(shadow.webViewClient.shouldOverrideUrlLoading(web,request("https://evil.example/")))
         }
     }
+    @Test fun aSitePageWithoutStateIsNeverPrintable() {
+        val downloads = mutableListOf<WebDownload>()
+        compose.setContent { WebPage("https://www.thingiverse.com", Modifier, { downloads += it }, null, null, ModelSite.Thingiverse) }
+        compose.runOnIdle {
+            val web = views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
+            val shadow = shadowOf(web)
+            shadow.webViewClient.onPageFinished(web, "https://www.thingiverse.com/thing:1/files")
+            assertTrue(shadow.lastEvaluatedJavascript.contains("__pandyCanPrint = false"))
+            shadow.downloadListener.onDownloadStart("https://cdn.thingiverse.com/a.stl", "", "", "model/stl", 3)
+            assertFalse(downloads.single().printSheet)
+        }
+    }
     @Test fun thingiverseStlDownloadsAskAndOnlyItsOwnFilesCount() =
         siteDownloadsAsk(ModelSite.Thingiverse,"https://www.thingiverse.com","https://cdn.thingiverse.com/assets/a/benchy.stl","https://files.printables.com/a.stl")
     @Test fun thingiverseBlobDownloadsReachTheBridgeNamedAndAskedButMakerWorldPagesKeepTheirRules() {
@@ -227,6 +239,14 @@ class WebPageTest {
             org.robolectric.shadows.ShadowLooper.idleMainLooper()
             assertEquals(listOf("part.stl", "abc.stl", "photo.png"), downloads.map { it.name })
             assertEquals(listOf(true, true, false), downloads.map { it.printSheet })
+            // Not printable (no slicer or printer) it is a plain save; an unreadable download reaches nobody.
+            state.canPrint = false
+            bridgeCall(bridge, "blob", "plain.stl", android.util.Base64.encodeToString(byteArrayOf(1), android.util.Base64.NO_WRAP), token)
+            bridgeCall(bridge, "blob", "broken.stl", "!!!not base64!!!", token)
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            assertEquals(listOf("part.stl", "abc.stl", "photo.png", "plain.stl"), downloads.map { it.name })
+            assertFalse(downloads.last().printSheet)
+            downloads.removeAt(downloads.lastIndex)
             // Off the site (another host) the bridge is closed.
             shadow.webViewClient.onPageFinished(web, "https://evil.example/")
             bridgeCall(bridge, "blob", "late.stl", android.util.Base64.encodeToString(byteArrayOf(1), android.util.Base64.NO_WRAP), token)
