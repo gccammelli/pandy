@@ -16,6 +16,14 @@ interface PrinterStorage {
     /** [length] -1 reads to the end. */
     suspend fun read(path: String, offset: Long = 0, length: Int = -1): ByteArray
     suspend fun write(path: String, data: ByteArray, progress: (Float) -> Unit = {})
+    /** Deletes one file (not a folder). */
+    suspend fun delete(path: String): Unit = throw ApiException("This storage can't delete files")
+}
+
+/** What the file manager browses: the printer's own storage (the demo has a pretend one). */
+interface PrinterFiles {
+    suspend fun listFiles(dir: String): List<FileEntry>
+    suspend fun deleteFile(path: String)
 }
 
 expect fun printerStorage(c: LanConfig): PrinterStorage

@@ -144,5 +144,7 @@ internal class FtpsStorage(
         if (code !in 200..299) throw ApiException("Printer storage: ${line.drop(4)}")
     }
 
+    override suspend fun delete(path: String) = session { cmd("DELE $path", 200..299); Unit }
+
     companion object { private val locks = mutableMapOf<String, Mutex>() }
 }

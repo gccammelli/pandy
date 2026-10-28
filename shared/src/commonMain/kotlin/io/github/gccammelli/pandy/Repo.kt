@@ -30,6 +30,8 @@ object Repo {
      */
     var extras: HaBackend? = null
         private set
+    /** The printer's own files, for the file manager: in direct mode and in the demo. */
+    val files: PrinterFiles? get() = if (demo) ha as? PrinterFiles else directBackend
     val state = MutableStateFlow(UiState())
     private var liveJob: Job? = null
     /** Shows print alerts; null where the platform can't (iOS). */

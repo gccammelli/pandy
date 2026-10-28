@@ -66,6 +66,7 @@ sealed interface Screen {
     data object LiveviewSettings : Screen
     data object Assistant : Screen
     data object Files : Screen
+    data object PrinterFiles : Screen
     data object Filament : Screen
     data object History : Screen
     data object Settings : Screen
@@ -115,6 +116,7 @@ fun Root() {
         Screen.LiveviewSettings -> LiveviewSettingsScreen()
         Screen.Assistant -> AssistantScreen(p)
         Screen.Files -> FilesScreen(p)
+        Screen.PrinterFiles -> PrinterFilesScreen()
         Screen.Filament -> FilamentScreen(p)
         Screen.History -> HistoryScreen(p)
         Screen.Settings -> SettingsScreen()

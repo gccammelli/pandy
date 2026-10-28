@@ -402,6 +402,11 @@ fun Printer.calibrate(option: Int, err: (String) -> Unit) = Repo.act(err) {
 }
 
 /** Enables one of the printer's XCam modules, when the printer reports it. */
+/** Sets what a tray holds (direct mode and the demo); [color] is "RRGGBB". */
+fun Printer.setFilament(s: Spool, f: FilamentPreset, color: String, err: (String) -> Unit) = Repo.act(err) {
+    call("bambu_lab", "set_filament", buildJsonObject { put("entity_id", s.entityId); put("filament_id", f.id); put("color", color) })
+}
+
 fun Printer.setXcam(module: String, enabled: Boolean, printHalt: Boolean = false, err: (String) -> Unit) = Repo.act(err) {
     bambu("xcam_control_set", this@setXcam, buildJsonObject {
         put("module_name", module); put("control", enabled); put("enable", enabled); put("print_halt", printHalt)
