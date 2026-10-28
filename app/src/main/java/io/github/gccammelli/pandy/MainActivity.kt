@@ -180,7 +180,7 @@ class MainActivity : ComponentActivity(), PlatformUi {
         val screens = mapOf("control" to Screen.Control, "motion" to Screen.Motion, "skip" to Screen.Skip, "live" to Screen.LiveFull,
             "printer" to Screen.PrinterSettings, "calibration" to Screen.Calibration, "print_options" to Screen.PrintOptions,
             "ams_settings" to Screen.AmsSettings, "liveview_settings" to Screen.LiveviewSettings,
-            "assistant" to Screen.Assistant, "files" to Screen.Files, "filament" to Screen.Filament,
+            "assistant" to Screen.Assistant, "files" to Screen.Files, "storage" to Screen.PrinterFiles, "filament" to Screen.Filament,
             "history" to Screen.History, "settings" to Screen.Settings, "about" to Screen.About, "slicer" to Screen.Slicer)
         Nav.stack.clear()
         when (name) { "models" -> Nav.tab = 0; "devices" -> Nav.tab = 1; "me" -> Nav.tab = 2; else -> screens[name]?.let { Nav.go(it) } }

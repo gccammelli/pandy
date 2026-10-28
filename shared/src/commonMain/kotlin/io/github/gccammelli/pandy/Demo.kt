@@ -24,7 +24,7 @@ import kotlin.time.Clock
  * speed, pause, stop, skip), so every screen can be tried without a printer. Also what Pandy is developed against.
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-class FakeHomeAssistant : HaBackend {
+class FakeHomeAssistant : HaBackend, PrinterFiles {
     override val base = "demo"
 
     private val dev = "demo_printer"
@@ -274,6 +274,15 @@ class FakeHomeAssistant : HaBackend {
                 set("number", "target_bed_temperature", 55); set("sensor", "target_bed_temp", 55)
                 set("sensor", "skipped_objects", 0, buildJsonObject { putJsonArray("objects") {} })
             }
+            "bambu_lab/set_filament" -> {
+                val preset = FILAMENT_PRESETS.first { it.id == d.s("filament_id") }
+                val old = states[target!!]!!
+                val hex = d.s("color").orEmpty().uppercase().removePrefix("#").take(6).padEnd(6, '0') + "FF"
+                val attrs = JsonObject(old.attrs + mapOf("name" to JsonPrimitive(preset.name), "type" to JsonPrimitive(preset.type), "empty" to JsonPrimitive(false),
+                    "color" to JsonPrimitive("#$hex"), "cols" to buildJsonArray { add(JsonPrimitive("#$hex")) }, "filament_id" to JsonPrimitive(preset.id),
+                    "nozzle_temp_min" to JsonPrimitive(preset.min.toString()), "nozzle_temp_max" to JsonPrimitive(preset.max.toString())))
+                setById(target, preset.name, attrs)
+            }
             "bambu_lab/calibration" -> set("sensor", "stage", "calibrating")
             "bambu_lab/xcam_control_set" -> d.s("module_name")?.let { module ->
                 rows.firstOrNull { it.device == dev && it.key == module }?.let { setById(id(it), if (d.s("enable") == "true") "on" else "off") }
@@ -290,6 +299,26 @@ class FakeHomeAssistant : HaBackend {
         }
         delay(150)
         return "[]"
+    }
+
+    /** A small pretend SD card for the file manager: name → size, by folder. */
+    private val files = mutableMapOf(
+        "/cache" to mutableMapOf("benchy.3mf" to 2_411_008L, "phone_stand.3mf" to 987_136L, "gridfinity_bin.gcode.3mf" to 5_242_880L),
+        "/timelapse" to mutableMapOf("benchy_20261020.mp4" to 18_874_368L, "phone_stand_20261022.mp4" to 9_437_184L),
+        "/model" to mutableMapOf("calibration_cube.3mf" to 312_320L),
+    )
+
+    override suspend fun listFiles(dir: String): List<FileEntry> {
+        delay(150)
+        val path = "/" + dir.trim('/')
+        if (path == "/") return files.keys.sorted().map { FileEntry(it.removePrefix("/"), 0, "2026-10-01T08:00", true) }
+        return files[path].orEmpty().map { (n, size) -> FileEntry(n, size, "2026-10-22T09:30", false) }.sortedBy { it.name }
+    }
+
+    override suspend fun deleteFile(path: String) {
+        delay(150)
+        val dir = path.substringBeforeLast('/').ifEmpty { "/" }
+        if (files[dir]?.remove(path.substringAfterLast('/')) == null) throw PrinterStorageException(550, "No such file")
     }
 
     override suspend fun bytes(path: String): ByteArray = when {
