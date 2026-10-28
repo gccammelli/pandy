@@ -65,8 +65,7 @@ expect fun VideoPlayer(url: String, muted: Boolean, modifier: androidx.compose.u
  * A file a web page handed over: an address to fetch (with the page's [cookies] for it), or the [bytes] themselves
  * when the page made the file in the browser (a blob).
  */
-class WebDownload(val url: String?, val name: String, val cookies: String?, val bytes: ByteArray? = null, val printSheet: Boolean = false,
-                  /** A model file from Thingiverse or Printables: Pandy asks whether to print or save it. */ val ask: Boolean = false)
+class WebDownload(val url: String?, val name: String, val cookies: String?, val bytes: ByteArray? = null, val printSheet: Boolean = false)
 
 /**
  * A web page (MakerWorld). [onDownload] gets each file the page downloads, and each "open in Bambu Studio" link, instead

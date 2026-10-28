@@ -31,8 +31,9 @@ internal val SITE_HOSTS = listOf("makerworld.com", "bambulab.com", "bblmw.com", 
 fun isPrintableModel(name: String) = name.substringBefore('?').let { '.' in it && it.substringAfterLast('.').lowercase() in setOf("stl", "3mf") }
 
 /**
- * Thingiverse makes its downloads in the page and saves them as an anonymous blob, so the file's name (and whether it is an
- * STL) would be lost. This remembers the name the page gives the download link, for the blob that follows.
+ * Thingiverse and Printables pages. Thingiverse makes its downloads in the page and saves them as an anonymous blob, so this
+ * remembers the name the page gives the download link, for the blob that follows. While Pandy can print (window.__pandyCanPrint,
+ * see [canPrintJs]) the "Download" button of an STL or 3MF file reads "Print": the download then opens Pandy's print sheet.
  */
 const val SITE_DOWNLOAD_JS = """
 (function(){
@@ -41,5 +42,29 @@ const val SITE_DOWNLOAD_JS = """
   document.addEventListener('click', e => remember(e.target && e.target.closest && e.target.closest('a[download]')), true);
   const click = HTMLAnchorElement.prototype.click;
   HTMLAnchorElement.prototype.click = function(){ remember(this); return click.apply(this, arguments); };
+  // A file row names its model file (Thingiverse "3DBenchy.stl", Printables "STL" tag) and has a plain "Download" button.
+  const MODEL = /\.(stl|3mf)\b|\b(stl|3mf)\b/i;
+  const canPrint = () => window.__pandyCanPrint === true;
+  function relabel(){
+    for (const button of document.querySelectorAll('button,a')) {
+      let text = null;
+      const walk = document.createTreeWalker(button, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n && !text; n = walk.nextNode()) if (/^(download|print)$/i.test(n.nodeValue.trim())) text = n;
+      if (!text) continue;
+      if (button.__pandyLabel === undefined) {
+        let row = button, found = false;
+        for (let i = 0; i < 5 && row.parentElement && !found; i++) { row = row.parentElement; found = row.innerText.length < 240 && MODEL.test(row.innerText); }
+        button.__pandyLabel = found && !/gcode|print file/i.test(row.innerText) ? text.nodeValue : null;
+      }
+      if (button.__pandyLabel === null) continue;
+      const want = canPrint() ? 'Print' : button.__pandyLabel;
+      if (text.nodeValue !== want) text.nodeValue = want;
+    }
+  }
+  window.__pandyRepatch = relabel;
+  let queued = false;
+  new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; relabel(); }); } })
+    .observe(document.body || document.documentElement, { childList: true, subtree: true });
+  relabel();
 })();
 """

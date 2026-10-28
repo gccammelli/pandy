@@ -183,15 +183,21 @@ class WebPageTest {
     }
     private fun siteDownloadsAsk(site: ModelSite,start: String,file: String,other: String) {
         val downloads = mutableListOf<WebDownload>()
-        compose.setContent { WebPage(start, Modifier, { downloads += it }, WebState(), "X1C", site) }
+        val state = WebState()
+        compose.setContent { WebPage(start, Modifier, { downloads += it }, state, "X1C", site) }
         compose.runOnIdle {
             val web = views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
             val shadow = shadowOf(web)
             assertEquals(start,shadow.lastLoadedUrl)
             shadow.downloadListener.onDownloadStart(file,"","attachment; filename=\"benchy.stl\"","model/stl",3)
-            assertTrue(downloads.single().ask); assertEquals("benchy.stl",downloads.single().name)
+            assertTrue(downloads.single().printSheet); assertEquals("benchy.stl",downloads.single().name) // Pandy can print: the download is a print
+            state.canPrint=false
+            shadow.downloadListener.onDownloadStart(file,"","attachment; filename=\"benchy.stl\"","model/stl",3)
+            assertFalse(downloads.last().printSheet) // no slicer or printer: a normal save
+            state.canPrint=true
+            downloads.removeAt(downloads.lastIndex)
             shadow.downloadListener.onDownloadStart(file.substringBeforeLast('/')+"/all.zip","","attachment; filename=\"all.zip\"","application/zip",3)
-            assertFalse(downloads.last().ask) // zips are simply saved
+            assertFalse(downloads.last().printSheet) // zips are simply saved
             shadow.downloadListener.onDownloadStart(other,"","","model/stl",3)
             shadow.downloadListener.onDownloadStart("https://evil.example/a.stl","","","model/stl",3)
             assertEquals(2,downloads.size)
@@ -203,14 +209,15 @@ class WebPageTest {
         siteDownloadsAsk(ModelSite.Thingiverse,"https://www.thingiverse.com","https://cdn.thingiverse.com/assets/a/benchy.stl","https://files.printables.com/a.stl")
     @Test fun thingiverseBlobDownloadsReachTheBridgeNamedAndAskedButMakerWorldPagesKeepTheirRules() {
         val downloads = mutableListOf<WebDownload>()
-        compose.setContent { WebPage("https://www.thingiverse.com", Modifier, { downloads += it }, WebState(), "X1C", ModelSite.Thingiverse) }
+        val state = WebState()
+        compose.setContent { WebPage("https://www.thingiverse.com", Modifier, { downloads += it }, state, "X1C", ModelSite.Thingiverse) }
         compose.runOnIdle {
             val web = views(compose.activity.window.decorView).filterIsInstance<WebView>().single()
             val shadow = shadowOf(web)
             val bridge = shadow.getJavascriptInterface("PandyBridge")!!
             val token = bridgeToken(bridge)
             shadow.webViewClient.onPageFinished(web, "https://www.thingiverse.com/thing:1/files")
-            assertTrue(shadow.lastEvaluatedJavascript.contains("__pandyDownloadName"))
+            assertTrue(shadow.lastEvaluatedJavascript.contains("__pandyCanPrint"))
             // The page's own file name is kept; an anonymous ".bin" holding an STL is renamed by its content.
             bridgeCall(bridge, "blob", "part.stl", android.util.Base64.encodeToString(byteArrayOf(1, 2, 3), android.util.Base64.NO_WRAP), token)
             val stl = "solid x\nfacet normal 0 0 0\nendfacet\nendsolid x\n".toByteArray()
@@ -219,7 +226,7 @@ class WebPageTest {
             bridgeCall(bridge, "blob", "bad.stl", android.util.Base64.encodeToString(byteArrayOf(1), android.util.Base64.NO_WRAP), "wrong-token")
             org.robolectric.shadows.ShadowLooper.idleMainLooper()
             assertEquals(listOf("part.stl", "abc.stl", "photo.png"), downloads.map { it.name })
-            assertEquals(listOf(true, true, false), downloads.map { it.ask })
+            assertEquals(listOf(true, true, false), downloads.map { it.printSheet })
             // Off the site (another host) the bridge is closed.
             shadow.webViewClient.onPageFinished(web, "https://evil.example/")
             bridgeCall(bridge, "blob", "late.stl", android.util.Base64.encodeToString(byteArrayOf(1), android.util.Base64.NO_WRAP), token)

@@ -82,7 +82,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                 // A site's blob download has the page's own file name when it set one, else a random ".bin"; an STL is recognised by its content.
                 val fromSite = sitePage.get()
                 val named = if (fromSite && bytes != null && !isPrintableModel(name) && looksLikeStl(bytes)) name.substringBeforeLast('.') + ".stl" else name
-                if (bytes != null) onDownload?.invoke(WebDownload(null, named, null, bytes, printSheet, ask = fromSite && isPrintableModel(named))) else
+                if (bytes != null) onDownload?.invoke(WebDownload(null, named, null, bytes, printSheet || (fromSite && isPrintableModel(named) && state?.canPrint == true))) else
                     android.widget.Toast.makeText(ctx, "Couldn't read that download", android.widget.Toast.LENGTH_LONG).show()
             }
             fun fetchInPage(name: String, url: String): Boolean {
@@ -165,7 +165,11 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                 override fun onPageFinished(v: WebView, u: String?) {
                     pageHost(u)
                     pageChanged(u)
-                    if (sitePage.get()) v.evaluateJavascript("window.__pandyBridgeToken = ${org.json.JSONObject.quote(bridgeToken)};", null).also { v.evaluateJavascript(SITE_DOWNLOAD_JS, null) }
+                    if (sitePage.get()) {
+                        v.evaluateJavascript("window.__pandyBridgeToken = ${org.json.JSONObject.quote(bridgeToken)};", null)
+                        v.evaluateJavascript(SITE_DOWNLOAD_JS, null)
+                        v.evaluateJavascript(canPrintJs(state?.canPrint == true), null)
+                    }
                     if (makerWorld.get()) {
                         v.evaluateJavascript("window.__pandyBridgeToken = ${org.json.JSONObject.quote(bridgeToken)}; window.__pandyPrinter = ${org.json.JSONObject.quote(currentPrinter.value.orEmpty())};", null)
                         v.evaluateJavascript(canPrintJs(state?.canPrint != false), null)
@@ -214,8 +218,8 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                         if (b.size > $MAX_PRINT_BYTES) { PandyBridge.problem('The download is too large to save.',window.__pandyBridgeToken); return; }
                         const r=new FileReader();r.onload=()=>PandyBridge.blob(window.__pandyDownloadName||${org.json.JSONObject.quote(name)},r.result.split(',')[1],window.__pandyBridgeToken);r.readAsDataURL(b);})()""", null)
                 } else if (site != ModelSite.MakerWorld && site.ownsFile(u)) {
-                    // Thingiverse and Printables: an STL or 3MF can be printed with Pandy; anything else (zips, images) is saved.
-                    onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u), ask = isPrintableModel(name)))
+                    // Thingiverse and Printables: while Pandy can print, an STL or 3MF opens the print sheet; anything else (zips, images) is saved.
+                    onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u), printSheet = isPrintableModel(name) && state?.canPrint == true))
                 } else if (trustedFile(u)) onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u)))
                 else toast("Pandy only opens downloads from ${site.label}")
             }
@@ -228,6 +232,8 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
         if (it.url?.let { u -> Uri.parse(u).host?.let { h -> h == "makerworld.com" || h.endsWith(".makerworld.com") } == true } == true) {
             it.evaluateJavascript("window.__pandyPrinter = ${org.json.JSONObject.quote(currentPrinter.value.orEmpty())};", null)
             it.evaluateJavascript(canPrintJs(state?.canPrint != false), null)
+        } else if (site != ModelSite.MakerWorld && site.ownsPage(it.url?.let { u -> Uri.parse(u).host })) {
+            it.evaluateJavascript(canPrintJs(state?.canPrint == true), null)
         }
     })
     if (state != null) BackHandler(enabled = state.overlayBack != null || state.canGoBack) {

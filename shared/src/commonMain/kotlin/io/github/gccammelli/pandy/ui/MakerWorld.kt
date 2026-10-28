@@ -115,43 +115,21 @@ fun MakerWorld(modifier: Modifier, site: io.github.gccammelli.pandy.ModelSite = 
     val web = remember { WebState() }
     var printDownload by debugDownload
     var fileDownload by remember { mutableStateOf<WebDownload?>(null) }
-    var askDownload by remember { mutableStateOf<WebDownload?>(null) }
     var sheetBack by remember { mutableStateOf<(() -> Unit)?>(null) }
     val platform = LocalPlatform.current
     val st by Repo.state.collectAsState()
-    web.canPrint = st.printer()?.let { it.online && !it.controlBlocked } ?: false
+    // Thingiverse and Printables turn their download buttons into Print only once Pandy Slicer is set up.
+    web.canPrint = (st.printer()?.let { it.online && !it.controlBlocked } ?: false) && (site == io.github.gccammelli.pandy.ModelSite.MakerWorld || Repo.slicer != null)
     web.overlayBack = if (printDownload != null) (sheetBack ?: { printDownload = null }) else null
     Box(modifier) {
         WebPage(site.home, Modifier.fillMaxSize(), onDownload = { d ->
-            if (d.ask) {
-                if (askDownload == null && printDownload == null) askDownload = d else platform.toast("Finish or close the current print first")
-            } else if (d.printSheet) {
+            if (d.printSheet) {
                 if (printDownload == null) printDownload = d else platform.toast("Finish or close the current print first")
             } else {
                 if (fileDownload == null) fileDownload = d else platform.toast("A download is already in progress")
             }
         }, state = web, printer = st.printer()?.model?.let(::makerWorldName), site = site)
         printDownload?.let { d -> PrintModelSheet(d, { printDownload = null }) { sheetBack = it } }
-    }
-    askDownload?.let { d ->
-        val canPrint = st.printer() != null
-        AlertDialog(
-            onDismissRequest = { askDownload = null },
-            containerColor = C.Card,
-            title = { T(d.name, weight = FontWeight.Bold) },
-            text = { T(if (canPrint) "Print this model with Pandy, or save the file?" else "Connect a printer in Devices to print it with Pandy. Save the file?", 14.sp, C.Sub) },
-            confirmButton = {
-                TextButton(onClick = { askDownload = null; if (canPrint) printDownload = d else fileDownload = d }) {
-                    T(if (canPrint) "Print" else "Save", color = C.Accent, weight = FontWeight.Medium)
-                }
-            },
-            dismissButton = {
-                Row {
-                    if (canPrint) TextButton(onClick = { askDownload = null; fileDownload = d }) { T("Save file", color = C.Sub) }
-                    TextButton(onClick = { askDownload = null }) { T("Cancel", color = C.Sub) }
-                }
-            },
-        )
     }
     fileDownload?.let { d ->
         LaunchedEffect(d) {
