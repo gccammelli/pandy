@@ -94,7 +94,7 @@ class SlicerClient(
             val r = http.post("$at/slice?$query") { auth(cookie); setBody(data) }
             if (r.status.value != 200) {
                 val o = runCatching { json.parseToJsonElement(r.bodyAsText()).jsonObject }.getOrNull()
-                throw ApiException(o?.s("error") ?: "The slicer answered HTTP ${r.status.value}")
+                throw ApiException(o?.s("error") ?: slicerFailure(r.status.value))
             }
             val sliced = r.readRawBytes()
             val info = runCatching { json.parseToJsonElement(r.headers["X-Pandy-Result"].orEmpty()).jsonObject }.getOrNull()
@@ -108,7 +108,7 @@ class SlicerClient(
             setBody(data)
         }
         val o = runCatching { json.parseToJsonElement(r.bodyAsText()).jsonObject }.getOrNull()
-        if (r.status.value != 200 || o == null) throw ApiException(o?.s("error") ?: "The slicer answered HTTP ${r.status.value}")
+        if (r.status.value != 200 || o == null) throw ApiException(o?.s("error") ?: slicerFailure(r.status.value))
         return (o.s("path") ?: throw ApiException("The slicer didn't say where it put the file")) to firstPlate(o, plate)
     }
 
@@ -116,6 +116,12 @@ class SlicerClient(
         SlicedPlate(it.s("index")?.toIntOrNull() ?: plate, it.s("seconds")?.toIntOrNull() ?: 0, it.s("grams")?.toDoubleOrNull() ?: 0.0,
             (it["filaments"] as? JsonArray).orEmpty().mapNotNull { f -> (f as? JsonObject)?.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull.orEmpty() } })
     }
+}
+
+/** What an error status without the slicer's own message means: a proxy (Home Assistant's ingress, a reverse proxy) found nothing answering. */
+internal fun slicerFailure(status: Int) = when (status) {
+    502, 503, 504 -> "Pandy Slicer isn't answering (HTTP $status). If its add-on was just updated or restarted, give it a minute; otherwise check the add-on's log."
+    else -> "The slicer answered HTTP $status"
 }
 
 /** The sliced file's name from the slicer's Content-Disposition, reduced to a plain name for the printer's /cache. */

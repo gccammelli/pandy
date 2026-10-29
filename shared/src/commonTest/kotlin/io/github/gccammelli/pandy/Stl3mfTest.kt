@@ -77,4 +77,22 @@ class Stl3mfTest {
         val model = zipEntry(zip.size.toLong(), listOf(Regex("3D/3dmodel\\.model"))) { o, l -> zip.copyOfRange(o.toInt(), (o + l).toInt()) }!!.second.decodeToString()
         assertEquals(2, Regex("<triangle ").findAll(model).count())
     }
+
+    @Test fun aSmallStlPreviewKeepsEveryTriangleAndABigOneIsSimplified() {
+        val mesh = stlPreviewMesh(ascii())
+        assertEquals(4, mesh.triangles.size)
+        assertEquals(setOf(100f, 110f), mesh.triangles.flatMap { listOf(it.a.x, it.b.x, it.c.x) }.toSet())
+        // A 60 x 60 grid of squares (7200 triangles) squeezed into 500: simplified, still a model with its overall size.
+        val grid = buildString {
+            append("solid g\n")
+            for (x in 0 until 60) for (y in 0 until 60) {
+                val (a, b, c, d) = listOf("$x $y 0", "${x + 1} $y 0", "${x + 1} ${y + 1} 0", "$x ${y + 1} 0")
+                append("facet\nvertex $a\nvertex $b\nvertex $c\nendfacet\nfacet\nvertex $a\nvertex $c\nvertex $d\nendfacet\n")
+            }
+        }.encodeToByteArray()
+        val simple = stlPreviewMesh(grid, maxTriangles = 500)
+        assertTrue(simple.triangles.size in 1..500, "${simple.triangles.size}")
+        assertTrue(simple.triangles.maxOf { maxOf(it.a.x, it.b.x, it.c.x) } >= 55f)
+        assertTrue(stlPreviewMesh(grid, maxTriangles = 1).triangles.isNotEmpty()) // the coarsest grid is the floor, never an empty preview
+    }
 }

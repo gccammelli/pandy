@@ -12,12 +12,8 @@ private fun u32(d: ByteArray, at: Int): Long =
 
 private fun f32(d: ByteArray, at: Int) = Float.fromBits(u32(d, at).toInt())
 
-/**
- * Wraps an STL into a plain 3MF (millimetres, one object) that Pandy Slicer slices with the printer's own settings. The model
- * is stood on the bed (lowest point at z 0) and centred on [bed] mm; the slicer arranges it again, so this only keeps the
- * preview and a wrong-sized bed from putting it outside the plate.
- */
-fun stlTo3mf(data: ByteArray, bed: Float = 90f): ByteArray {
+/** The corners of every triangle of an STL (x, y, z each) and how many values are used. */
+private fun readStlCorners(data: ByteArray): Pair<FloatArray, Int> {
     val binary = data.size >= 84 && data.size.toLong() == 84L + 50L * u32(data, 80)
     // x, y, z per triangle corner.
     var corners = FloatArray(0)
@@ -40,6 +36,52 @@ fun stlTo3mf(data: ByteArray, bed: Float = 90f): ByteArray {
     }
     if (used == 0 || used % 9 != 0) throw ApiException("That STL file has no model in it")
     for (i in 0 until used) if (!corners[i].isFinite()) throw ApiException("That STL file is damaged")
+    return corners to used
+}
+
+/**
+ * A preview of an STL for the 3D viewer, at most [maxTriangles] triangles: a big model is simplified by merging corners that fall in
+ * the same cell of a grid over the model (the cells shrink until it is small enough), which keeps its overall shape.
+ */
+fun stlPreviewMesh(data: ByteArray, maxTriangles: Int = 20_000): PreviewMesh {
+    val (corners, used) = readStlCorners(data)
+    var minX = Float.MAX_VALUE; var minY = minX; var minZ = minX; var maxX = -Float.MAX_VALUE; var maxY = maxX; var maxZ = maxX
+    for (i in 0 until used step 3) {
+        minX = minOf(minX, corners[i]); maxX = maxOf(maxX, corners[i]); minY = minOf(minY, corners[i + 1]); maxY = maxOf(maxY, corners[i + 1])
+        minZ = minOf(minZ, corners[i + 2]); maxZ = maxOf(maxZ, corners[i + 2])
+    }
+    val range = maxOf(maxX - minX, maxY - minY, maxZ - minZ).coerceAtLeast(0.001f)
+    var cells = if (used / 9 <= maxTriangles) 0 else 160
+    while (true) {
+        val seen = HashSet<Triple<Int, Int, Int>>()
+        val out = ArrayList<PreviewTriangle>()
+        val corner = HashMap<Triple<Int, Int, Int>, PreviewVertex>()
+        fun vertexAt(i: Int): Pair<Triple<Int, Int, Int>, PreviewVertex> {
+            val v = PreviewVertex(corners[i], corners[i + 1], corners[i + 2])
+            if (cells == 0) return Triple(i, 0, 0) to v
+            val key = Triple(((v.x - minX) / range * cells).toInt(), ((v.y - minY) / range * cells).toInt(), ((v.z - minZ) / range * cells).toInt())
+            return key to corner.getOrPut(key) { v }
+        }
+        var index = 0
+        val ids = HashMap<Triple<Int, Int, Int>, Int>()
+        for (t in 0 until used / 9) {
+            val (ka, a) = vertexAt(t * 9); val (kb, b) = vertexAt(t * 9 + 3); val (kc, c) = vertexAt(t * 9 + 6)
+            if (ka == kb || kb == kc || ka == kc) continue // collapsed into a line or point
+            val key = listOf(ka, kb, kc).map { ids.getOrPut(it) { index++ } }.sorted().let { Triple(it[0], it[1], it[2]) }
+            if (cells == 0 || seen.add(key)) out += PreviewTriangle(a, b, c)
+        }
+        if (out.size <= maxTriangles || cells <= 8) return PreviewMesh(out)
+        cells = cells * 4 / 5
+    }
+}
+
+/**
+ * Wraps an STL into a plain 3MF (millimetres, one object) that Pandy Slicer slices with the printer's own settings. The model
+ * is stood on the bed (lowest point at z 0) and centred on [bed] mm; the slicer arranges it again, so this only keeps the
+ * preview and a wrong-sized bed from putting it outside the plate.
+ */
+fun stlTo3mf(data: ByteArray, bed: Float = 90f): ByteArray {
+    val (corners, used) = readStlCorners(data)
     var minX = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE; var minY = minX; var maxY = maxX; var minZ = minX
     for (i in 0 until used step 3) {
         minX = minOf(minX, corners[i]); maxX = maxOf(maxX, corners[i])

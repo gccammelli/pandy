@@ -61,10 +61,28 @@ const val SITE_DOWNLOAD_JS = """
       if (text.nodeValue !== want) text.nodeValue = want;
     }
   }
-  window.__pandyRepatch = relabel;
+  // Printables' cookie notice dims the page and, in a web view, can sit out of sight and out of reach: decline it (the privacy-friendly
+  // choice) so the page can be used. Only a visible Reject button sitting next to an Accept button is pressed (the notice's pair).
+  const REJECT = /^(reject all|reject|decline all|decline|only necessary|necessary only|deny all)$/i;
+  const ACCEPT = /^(accept all|accept|allow all|agree)$/i;
+  const label = e => (e.innerText || e.textContent || '').trim();
+  const shown = e => e.offsetParent !== null || getComputedStyle(e).position === 'fixed';
+  function consent(){
+    const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(shown);
+    for (const button of buttons) {
+      if (!REJECT.test(label(button))) continue;
+      let box = button;
+      for (let i = 0; i < 4 && box.parentElement; i++) {
+        box = box.parentElement;
+        if ([...box.querySelectorAll('button,[role="button"]')].some(other => other !== button && shown(other) && ACCEPT.test(label(other)))) { button.click(); return; }
+      }
+    }
+  }
+  const repatch = () => { try { relabel(); } catch (e) {} try { consent(); } catch (e) {} };
+  window.__pandyRepatch = repatch;
   let queued = false;
-  new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; relabel(); }); } })
+  new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; repatch(); }); } })
     .observe(document.body || document.documentElement, { childList: true, subtree: true });
-  relabel();
+  repatch();
 })();
 """

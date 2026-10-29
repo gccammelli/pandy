@@ -666,6 +666,17 @@ class ScreenTest {
         org.junit.Assert.assertTrue(commands.isEmpty())
     }
 
+    @Test fun anStlHasA3dPreviewInThePickedSpoolsColour() {
+        prepareModel(stlBytes())
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("3D Preview").performScrollTo().performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("3D preview unavailable").fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithText("Show the plate").assertExists()
+        compose.onNodeWithText("Confirm").performClick()
+        compose.onNodeWithText("Prepare to Print").assertExists()
+    }
+
     @Test fun designerProfileNameAndSingleFilamentAreShownBeforePreparation() {
         prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to """{
             "profile_name":"Fine detail","layer_height":0.12,"filament_type":["PLA"],"filament_colour":["#FFFFFF"]}""".toByteArray())))

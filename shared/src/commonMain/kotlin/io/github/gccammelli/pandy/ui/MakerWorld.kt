@@ -184,6 +184,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     val scope = rememberCoroutineScope()
     var step by remember { mutableStateOf(Step.Download) }
     var data by remember { mutableStateOf<ByteArray?>(null) }
+    var stlSource by remember { mutableStateOf<ByteArray?>(null) } // an STL's own bytes: its 3D preview is built from them, not from the wrapped 3MF
     var project by remember { mutableStateOf<Project?>(null) }
     var failed by remember { mutableStateOf<String?>(null) }
     var reading by remember { mutableStateOf(false) }
@@ -228,6 +229,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         reading = false
         previewLoaded = false
         data = null
+        stlSource = null
         project = null
         step = Step.Download
         view = PrepareView.Profile
@@ -237,7 +239,9 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         runCatching {
             val downloaded = d.bytes ?: withContext(Dispatchers.Default) { downloadModel(d.url!!, d.cookies) }
             // Thingiverse and Printables mostly offer STL: wrapped into a plain 3MF, sliced with the printer's own settings.
-            val bytes = if (io.github.gccammelli.pandy.looksLikeStl(downloaded)) withContext(Dispatchers.Default) { io.github.gccammelli.pandy.stlTo3mf(downloaded) } else downloaded
+            val isStl = io.github.gccammelli.pandy.looksLikeStl(downloaded)
+            val bytes = if (isStl) withContext(Dispatchers.Default) { io.github.gccammelli.pandy.stlTo3mf(downloaded) } else downloaded
+            stlSource = downloaded.takeIf { isStl }
             data = bytes
             reading = true
             val loaded = try {
@@ -261,7 +265,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         val bytes = data
         if (view != PrepareView.Preview || previewLoaded || project == null || bytes == null) return@LaunchedEffect
         val meshes = try {
-            withContext(modelDispatcher) { withTimeout(120_000) { loadPreviewMeshes(bytes) } }
+            withContext(modelDispatcher) { withTimeout(120_000) { stlSource?.let { mapOf(1 to io.github.gccammelli.pandy.stlPreviewMesh(it)) } ?: loadPreviewMeshes(bytes) } }
         } catch (e: CancellationException) {
             if (e is TimeoutCancellationException) emptyMap() else throw e // leaving the preview must not publish a half result
         } catch (e: Exception) {
@@ -364,7 +368,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             setCode = { code = it }, modelNotice = shortModel(pr.printerModel)?.takeIf { it != p.model }?.let { "Prepared for ${p.model}; the designer's ${it} profile will be converted by Pandy Slicer." },
             setupNote = setupNote, setupGuide = setupGuide, help = { help = it },
         )
-        PrepareView.Preview -> PreviewView(p, pr, plate, auto, manualMapping, presets, back = { view = PrepareView.Prepare })
+        PrepareView.Preview -> PreviewView(p, pr, plate, auto, manualMapping, presets, plainColor = spools.firstOrNull { it.first == plainTray }?.second?.color, back = { view = PrepareView.Prepare })
     }
 
     if (printerPicker) PrinterPicker(p, buildPlate, close = { printerPicker = false }, plate = { printerPicker = false; platePicker = true })
@@ -626,7 +630,7 @@ private fun HelpSheet(topic: String, close: () -> Unit) = Sheet(close, topic, ce
 }
 
 @Composable
-private fun PreviewView(p: Printer, project: Project, plate: Int, auto: List<Int>?, manualMapping: Map<String, Int>, presets: Boolean, back: () -> Unit) {
+private fun PreviewView(p: Printer, project: Project, plate: Int, auto: List<Int>?, manualMapping: Map<String, Int>, presets: Boolean, plainColor: Long?, back: () -> Unit) {
     var showPlate by remember { mutableStateOf(true) }
     var scheme by remember { mutableStateOf(PreviewScheme.Model) }
     var custom by remember { mutableStateOf<Map<Int, Long>>(emptyMap()) }
@@ -646,7 +650,8 @@ private fun PreviewView(p: Printer, project: Project, plate: Int, auto: List<Int
         spoolColor(slot) ?: hexColor(colour)
     }
     val mesh = project.meshes[plate] ?: project.mesh?.takeIf { project.meshes.isEmpty() }
-    val displayColors = project.filaments.indices.map { i ->
+    // A plain model (an STL) is shown in the colour of the spool picked for it.
+    val displayColors = if (project.filaments.isEmpty()) listOfNotNull(plainColor) else project.filaments.indices.map { i ->
         custom[i] ?: if (scheme == PreviewScheme.Printer) printerColors.getOrNull(i) ?: modelColors.getOrElse(i) { 0xFF888888 } else modelColors.getOrElse(i) { 0xFF888888 }
     }
     val image = remember(project, plate) { project.plates.firstOrNull { it.index == plate }?.picture?.let { decodeImage(it, 700) } }
@@ -742,11 +747,20 @@ private fun PreviewMeshCanvas(mesh: PreviewMesh, colors: List<Long>, showPlate: 
                 val a = project(triangle.a); val b = project(triangle.b); val c = project(triangle.c)
                 Triple((a.third + b.third + c.third) / 3f, index, listOf(a, b, c))
             }.sortedBy { it.first }.forEach { (_, index, points) ->
+                // Lit from the viewer's upper left: faces turned toward it are bright, faces turned away dark, so the shape reads as 3D.
+                val (a, b, c) = points
+                val ux = b.first - a.first; val uy = -(b.second - a.second); val uz = b.third - a.third
+                val vx = c.first - a.first; val vy = -(c.second - a.second); val vz = c.third - a.third
+                val nx = uy * vz - uz * vy; val ny = uz * vx - ux * vz; val nz = ux * vy - uy * vx
+                val length = kotlin.math.sqrt(nx * nx + ny * ny + nz * nz).coerceAtLeast(1e-6f)
+                val light = (kotlin.math.abs(-0.35f * nx + 0.5f * ny + 0.8f * nz) / length).coerceIn(0f, 1f)
+                val shade = .38f + .62f * light
                 val path = Path().apply { moveTo(points[0].first, points[0].second); lineTo(points[1].first, points[1].second); lineTo(points[2].first, points[2].second); close() }
                 val triangle = mesh.triangles[index]
                 val material = triangle.material?.takeIf { it in colors.indices } ?: 0
                 val colour = colors.getOrNull(material) ?: 0xFF888888
-                drawPath(path, Color(colour).copy(alpha = .94f))
+                val base = Color(colour)
+                drawPath(path, Color(base.red * shade, base.green * shade, base.blue * shade, .96f))
             }
         }
     }

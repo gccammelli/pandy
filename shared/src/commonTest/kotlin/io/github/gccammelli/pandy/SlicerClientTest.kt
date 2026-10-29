@@ -136,7 +136,10 @@ class SlicerClientTest {
     @Test fun secureIngressRequiresAnExplicitUploadedPathAndValidResponse() = runTest {
         for ((status, body, message) in listOf(
             Triple(500,"""{"error":"Printer unavailable"}""","Printer unavailable"),
-            Triple(503,"unavailable","The slicer answered HTTP 503"),
+            Triple(503,"unavailable","Pandy Slicer isn't answering (HTTP 503). If its add-on was just updated or restarted, give it a minute; otherwise check the add-on's log."),
+            Triple(502,"<html>Bad Gateway</html>","Pandy Slicer isn't answering (HTTP 502). If its add-on was just updated or restarted, give it a minute; otherwise check the add-on's log."),
+            Triple(502,"""{"error":"Couldn't put the file on the printer: login failed"}""","Couldn't put the file on the printer: login failed"),
+            Triple(418,"teapot","The slicer answered HTTP 418"),
             Triple(200,"not json","The slicer answered HTTP 200"),
             Triple(200,"{}","The slicer didn't say where it put the file"))) {
             HttpClient(MockEngine { respond(body,HttpStatusCode.fromValue(status)) }).use { http ->
