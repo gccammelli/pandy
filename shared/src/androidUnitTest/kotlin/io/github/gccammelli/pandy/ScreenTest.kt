@@ -445,6 +445,8 @@ class ScreenTest {
         compose.onNodeWithText("ABS").performClick()
         compose.onNodeWithText("Nozzle 240–280°C").assertExists()
         compose.onNodeWithText("Hex colour (RRGGBB)").assertExists()
+        compose.onNodeWithContentDescription("Colour C12E1F").performClick()
+        compose.onNodeWithText("C12E1F").assertExists()
         compose.onNode(hasSetTextAction()).performTextReplacement("#c12e1f")
         compose.onNodeWithText("Save").performClick()
         compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("/set_filament") } }

@@ -33,6 +33,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -74,7 +76,7 @@ fun EditFilamentSheet(p: Printer, s: Spool, close: () -> Unit) {
             Gap(6.dp)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SWATCHES.forEach { c ->
-                    Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFF000000 or c.toLong(16)))
+                    Box(Modifier.size(34.dp).semantics { contentDescription = "Colour $c" }.clip(CircleShape).background(Color(0xFF000000 or c.toLong(16)))
                         .border(if (hex.equals(c, true)) 3.dp else 1.dp, if (hex.equals(c, true)) C.Accent else C.Line, CircleShape).clickable { hex = c })
                 }
             }
