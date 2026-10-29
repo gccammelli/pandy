@@ -305,9 +305,11 @@ object Repo {
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: AuthException) {
+                    AppLog.log("ERROR", "connection", "Authentication failed")
                     state.update { it.copy(live = false, error = e.message) }
                     return@launch // a new token is needed; retrying won't help
                 } catch (e: Exception) {
+                    AppLog.log("ERROR", "connection", "Connection failed; retrying")
                     state.update { it.copy(live = false, error = e.message ?: e.toString()) }
                 }
                 state.update { it.copy(live = false) }

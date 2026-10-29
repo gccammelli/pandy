@@ -343,6 +343,25 @@ fun SettingsScreen() {
             }
             if (pl.canNotify && !Repo.demo) T("Tells you when a print finishes, fails or needs attention. Pandy stays connected in the background, with a small ongoing notification.", 12.sp, C.Sub, lh = 17.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp))
             Gap(16.dp)
+            T("Help and feedback", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
+            Group {
+                NavRow("Export diagnostics") {
+                    val printer = Repo.state.value.printers?.firstOrNull()
+                    val info = io.github.gccammelli.pandy.DiagnosticsInfo(
+                        pl.appVersion, "Unknown", null, if (Repo.demo) "demo" else Repo.mode,
+                        Repo.directPrinters.size, printer?.info?.model, printer?.info?.firmware,
+                        printer?.info?.ams?.map { it.model }.orEmpty(), null
+                    )
+                    val report = io.github.gccammelli.pandy.diagnosticsReport(info, io.github.gccammelli.pandy.AppLog.snapshot())
+                    pl.saveFile("pandy-diagnostics.txt", "text/plain", report.encodeToByteArray()) { error ->
+                        pl.toast(error?.message ?: "Diagnostics saved")
+                    }
+                }
+                NavRow("Report a problem") { pl.openUrl("$REPO_URL/issues/new?template=bug.yml") }
+                NavRow("Request a feature") { pl.openUrl("$REPO_URL/issues/new?template=feature.yml") }
+            }
+            T("Review the exported file before sharing it. Reports open in your browser; diagnostics are not attached automatically.", 12.sp, C.Sub, lh = 17.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp))
+            Gap(16.dp)
             T("Connection", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
             Group {
                 if (Repo.direct) Repo.lan?.let { c -> NavRow("Printer", value = "${c.model} · ${c.ip}", chevron = false) }

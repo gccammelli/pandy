@@ -18,6 +18,22 @@ class DiagnosticsTest {
         assertFalse(redact("custom secret", listOf("custom secret")).contains("custom secret"))
     }
 
+    @Test fun masksQuotedAndPrefixedCredentialsAtBothLogAndExport() {
+        val samples = listOf(
+            """{"access_token":"secret-with-\"escape"}""",
+            "ha_token=secret-token", "'password': 'secret phrase'", "ACCESS-TOKEN: secret-value"
+        )
+        val info = DiagnosticsInfo("1", "test", null, "demo", 0, null, null, emptyList(), null)
+        for (sample in samples) {
+            AppLog.clear()
+            AppLog.log("INFO", "test", sample)
+            val log = AppLog.snapshot().single()
+            assertFalse(log.contains("secret"), log)
+            assertFalse(diagnosticsReport(info, listOf(sample)).contains("secret"), sample)
+        }
+        AppLog.clear()
+    }
+
     @Test fun preservesOrdinaryMeasurements() {
         val text = "version 1.2.3, 2026-10-29, 210°C, 42%"
         assertEquals(text, redact(text))

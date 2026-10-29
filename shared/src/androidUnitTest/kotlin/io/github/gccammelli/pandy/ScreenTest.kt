@@ -588,6 +588,20 @@ class ScreenTest {
     @Test fun assistantShowsProblems() = show("Machine Assistant") { AssistantScreen(printer) }
     @Test fun historyShowsPreviousPrints() = show("History") { HistoryScreen(printer) }
     @Test fun filesShowStorage() = show("Files") { FilesScreen(printer) }
+    @Test fun feedbackActionsExportAndOpenIssueTemplates() {
+        AppLog.clear()
+        AppLog.log("INFO", "test", "ha_token=secret-value")
+        show("Settings") { SettingsScreen() }
+        compose.onNodeWithText("Export diagnostics").performScrollTo().performClick()
+        val file = savedFiles.single()
+        assertEquals("pandy-diagnostics.txt", file.first)
+        kotlin.test.assertFalse(file.third.decodeToString().contains("secret-value"))
+        compose.onNodeWithText("Report a problem").performScrollTo().performClick()
+        compose.onNodeWithText("Request a feature").performScrollTo().performClick()
+        assertEquals(listOf("$REPO_URL/issues/new?template=bug.yml", "$REPO_URL/issues/new?template=feature.yml"), openedUrls)
+        AppLog.clear()
+    }
+
     @Test fun preferencesShowSettings() = show("Settings") { SettingsScreen() }
     @Test fun aboutShowsVersion() = show("About Pandy") { AboutScreen() }
     @Test fun slicerShowsConfiguration() = show("Slicer") { SlicerScreen() }

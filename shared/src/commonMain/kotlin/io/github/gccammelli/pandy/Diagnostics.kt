@@ -15,7 +15,7 @@ fun redact(text: String, secrets: List<String> = emptyList()): String {
         "(?i)\\bBearer\\s+[^\\s,;]+",
         "\\beyJ[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+){1,2}\\b",
         "(?i)(?:https?://|rtsp://)[^\\s/@]+@",
-        "(?i)\\b(?:code|password|pass|access(?:[_ -]?code)?|token|ssid|wi[- ]?fi(?:[_ -]?ssid)?)\\s*[:=]\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s,;]+)",
+        "(?i)(?<![a-z0-9])(?:[a-z0-9]+[_-])*(?:code|password|pass|access(?:[_ -]?(?:code|token))?|token|ssid|wi[- ]?fi(?:[_ -]?ssid)?)[\"']?\\s*[:=]\\s*(?:\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|[^\\s,;}]+)",
         "(?i)\\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\\b",
         "(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b",
         "\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b",
