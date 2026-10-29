@@ -221,7 +221,9 @@ data class AmsInfo(val haId: String, val index: Int, val model: String, val ids:
 
 /** A spool in an AMS slot or on the external holder, from the tray sensor's attributes. */
 data class Spool(val entityId: String, val slot: Int, val name: String, val type: String, val color: Long, val colors: List<Long>,
-                 val remain: Int, val active: Boolean, val empty: Boolean, val nozzleMin: Int?, val nozzleMax: Int?, val filamentId: String?) {
+                 val remain: Int, val active: Boolean, val empty: Boolean, val nozzleMin: Int?, val nozzleMax: Int?, val filamentId: String?,
+                 /** A Bambu RFID-tagged spool: the AMS sets its filament itself, and editing it can upset the AMS. */
+                 val rfid: Boolean = false) {
     val known get() = !empty && type.isNotBlank()
 }
 
@@ -230,7 +232,8 @@ fun spoolFrom(e: Entity, slot: Int): Spool {
     return Spool(e.id, slot, a.s("name") ?: e.state, a.s("type").orEmpty(), hexColor(a.s("color")),
         a.a("cols")?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.let(::hexColor) }.orEmpty(),
         a.s("remain")?.toIntOrNull() ?: -1, a.s("active") == "true", a.s("empty") == "true" || e.state == "Empty",
-        a.s("nozzle_temp_min")?.toIntOrNull(), a.s("nozzle_temp_max")?.toIntOrNull(), a.s("filament_id"))
+        a.s("nozzle_temp_min")?.toIntOrNull(), a.s("nozzle_temp_max")?.toIntOrNull(), a.s("filament_id"),
+        rfid = a.s("tag_uid")?.any { it != '0' } == true)
 }
 
 /** "#RRGGBBAA" (the integration's format) or "#RRGGBB" → ARGB. Fully transparent spools show as light grey. */
@@ -402,6 +405,11 @@ fun Printer.calibrate(option: Int, err: (String) -> Unit) = Repo.act(err) {
 }
 
 /** Enables one of the printer's XCam modules, when the printer reports it. */
+/** Sets what a tray holds (direct mode and the demo); [color] is "RRGGBB". */
+fun Printer.setFilament(s: Spool, f: FilamentPreset, color: String, err: (String) -> Unit) = Repo.act(err) {
+    call("bambu_lab", "set_filament", buildJsonObject { put("entity_id", s.entityId); put("filament_id", f.id); put("color", color) })
+}
+
 fun Printer.setXcam(module: String, enabled: Boolean, printHalt: Boolean = false, err: (String) -> Unit) = Repo.act(err) {
     bambu("xcam_control_set", this@setXcam, buildJsonObject {
         put("module_name", module); put("control", enabled); put("enable", enabled); put("print_halt", printHalt)

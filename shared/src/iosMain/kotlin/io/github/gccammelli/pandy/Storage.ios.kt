@@ -212,6 +212,8 @@ private class IosFtpsStorage(private val c: LanConfig) : PrinterStorage {
         if (code !in 200..299) throw PrinterStorageException(code, line.drop(4))
     }
 
+    override suspend fun delete(path: String) = session { cmd("DELE $path", 200..299); Unit }
+
     private fun IosTlsSocket.readAll(): ByteArray {
         val out = GrowingBytes()
         val buffer = ByteArray(64 * 1024)

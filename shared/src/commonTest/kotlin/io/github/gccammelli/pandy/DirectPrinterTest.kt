@@ -22,10 +22,88 @@ class DirectPrinterTest {
         override suspend fun list(dir: String) = files.filterKeys { it.substringBeforeLast('/').ifEmpty { "/" } == dir }.map { (p,b) -> FileEntry(p.substringAfterLast('/'), b.size.toLong(), "2026-10-01T08:00", false) }
         override suspend fun read(path: String, offset: Long, length: Int): ByteArray = files.getValue(path).let { it.copyOfRange(offset.toInt(), if(length < 0) it.size else (offset+length).toInt().coerceAtMost(it.size)) }
         override suspend fun write(path: String, data: ByteArray, progress: (Float) -> Unit) { files[path] = data; progress(1f) }
+        override suspend fun delete(path: String) { files.remove(path) ?: throw PrinterStorageException(550, "No such file") }
     }
     private suspend fun registry(printer: DirectPrinter) = printer.ws(listOf(buildJsonObject { put("type", "config/entity_registry/list") })).single()!!.jsonArray
     private fun report(extra: String = "") = """{"print":{"command":"push_status","gcode_state":"RUNNING","mc_percent":12${extra}},"info":{"module":[{"name":"ota","sw_ver":"1.2.3"}]}}"""
     private suspend fun DirectPrinter.command(service: String, vararg fields: Pair<String, String>) = post("/api/services/$service", buildJsonObject { fields.forEach { (k,v) -> put(k,v) } }.toString())
+
+    @Test fun settingAFilamentAddressesTheTrayLikeBambuStudio() = runBlocking<Unit> {
+        val ams=""","ams":{"ams":[{"id":"0","tray":[{"id":"1","tray_type":"PLA"}]},{"id":"128","tray":[{"id":"0","tray_type":"PETG"}]}]},"vt_tray":{"tray_type":"PLA"},"chamber_target_temper":35"""
+        val link=Link(report(ams));val printer=DirectPrinter(config,true,{link})
+        try {
+            val trays=registry(printer).map { it.jsonObject }.filter { it.s("translation_key") in listOf("tray","external_spool") }
+            val petg=FILAMENT_PRESETS.first { it.id=="GFG99" }
+            // (tray row, AMS unit, slot, tray id) as the printer addresses them; the external spool is unit 255, slot 0, tray 254
+            for ((suffix,expected) in listOf("AMS_1_tray_2" to Triple(0,1,1),"AMS_2_tray_1" to Triple(128,0,0),"external_spool" to Triple(255,0,254))) {
+                val row=trays.first { it.s("unique_id")!!.endsWith(suffix) }
+                printer.command("bambu_lab/set_filament","entity_id" to row.s("entity_id")!!,"filament_id" to petg.id,"color" to "#c12e1f")
+                val sent=link.sent.last().o("print")!!
+                assertEquals("ams_filament_setting",sent.s("command"))
+                assertEquals(expected.first.toString(),sent.s("ams_id")); assertEquals(expected.second.toString(),sent.s("slot_id")); assertEquals(expected.third.toString(),sent.s("tray_id"))
+                assertEquals("GFG99",sent.s("tray_info_idx")); assertEquals("PETG",sent.s("tray_type")); assertEquals("GFSG99",sent.s("setting_id"))
+                assertEquals("C12E1FFF",sent.s("tray_color")); assertEquals("220",sent.s("nozzle_temp_min")); assertEquals("270",sent.s("nozzle_temp_max"))
+            }
+            val row=trays.first().s("entity_id")!!
+            printer.command("bambu_lab/set_filament","entity_id" to row,"filament_id" to petg.id)
+            assertEquals("000000FF",link.sent.last().o("print")!!.s("tray_color"))
+            assertFailsWith<ApiException> { printer.command("bambu_lab/set_filament","entity_id" to row,"filament_id" to "nope","color" to "FFFFFF") }
+            assertFailsWith<ApiException> { printer.command("bambu_lab/set_filament","entity_id" to "missing","filament_id" to petg.id,"color" to "FFFFFF") }
+        } finally { printer.stop() }
+    }
+
+    @Test fun filamentCommandNormalizesShortAndLongColours() {
+        val preset=FILAMENT_PRESETS.first()
+        fun color(input: String) = amsFilamentSettingCommand("1",0,0,0,preset,input).o("print")!!.s("tray_color")
+        assertEquals("AB0000FF",color("#ab"))
+        assertEquals("123456FF",color("123456789"))
+        assertEquals("000000FF",color(""))
+    }
+
+    @Test fun twoHtUnitsUseTheirDistinctFallbackAddresses() = runBlocking<Unit> {
+        val ams=",\"ams\":{\"tray_now\":\"129\",\"ams\":[{\"id\":0,\"model\":\"AMS HT\"},{\"id\":1,\"type\":\"N3S\"}]}"
+        val link=Link(report(ams)); val printer=DirectPrinter(config,true,{link})
+        try {
+            val entities=lanEntities(config,json.parseToJsonElement(report(ams)).jsonObject,true)
+            val trays=entities.filter { it.first.key=="tray" }
+            assertEquals(listOf("false","true"),trays.map { it.second.attrs.s("active") })
+            val rows=registry(printer).map { it.jsonObject }
+            for ((index,address) in listOf(1 to 128,2 to 129)) {
+                val id=rows.first { it.s("unique_id")!!.endsWith("AMS_${index}_tray_1") }.s("entity_id")!!
+                printer.command("bambu_lab/load_filament","entity_id" to id)
+                assertEquals(address.toString(),link.sent.last().o("print")!!.s("target"))
+                printer.command("bambu_lab/set_filament","entity_id" to id,"filament_id" to FILAMENT_PRESETS.first().id,"color" to "FFFFFF")
+                assertEquals(address.toString(),link.sent.last().o("print")!!.s("ams_id"))
+            }
+        } finally { printer.stop() }
+    }
+
+    @Test fun aTaggedSpoolIsMarkedSoItIsNotEdited() {
+        val ams=""","ams":{"ams":[{"id":"0","tray":[{"id":"0","tray_type":"PLA","tag_uid":"A1B2C3D4E5F60718"},{"id":"1","tray_type":"PLA","tag_uid":"0000000000000000"},{"id":"2","tray_type":"PLA"}]}]}"""
+        val trays=lanEntities(config,json.parseToJsonElement(report(ams)).jsonObject,true).map { it.second }.filter { it.attrs.s("slot")!=null }.sortedBy { it.attrs.s("slot") }
+        assertEquals(listOf(true,false,false,false),trays.map { spoolFrom(it,0).rfid })
+    }
+
+    @Test fun storageThatCannotDeleteSaysSo() = runBlocking<Unit> {
+        val storage=object : PrinterStorage {
+            override suspend fun list(dir: String) = emptyList<FileEntry>()
+            override suspend fun read(path: String,offset: Long,length: Int) = byteArrayOf()
+            override suspend fun write(path: String,data: ByteArray,progress: (Float)->Unit) = Unit
+        }
+        assertFailsWith<ApiException> { storage.delete("/cache/x.3mf") }
+    }
+
+    @Test fun theFileManagerListsAndDeletesOnThePrinter() = runBlocking<Unit> {
+        val storage=Storage()
+        val printer=DirectPrinter(config,true,{Link(report())},{storage})
+        try {
+            assertEquals(listOf("test.3mf"),printer.listFiles("/cache").map { it.name })
+            assertTrue(printer.get("/api/bambu_lab/print_history").contains("test.3mf"))
+            printer.deleteFile("/cache/test.3mf")
+            assertEquals(emptyList(),printer.listFiles("/cache"))
+            assertFalse(printer.get("/api/bambu_lab/print_history").contains("test.3mf"))
+        } finally { printer.stop() }
+    }
 
     @Test fun cameraRequestsShareTheLiveStreamAndStopReleasesIt() = runBlocking<Unit> {
         val starts=kotlinx.coroutines.flow.MutableStateFlow(0)

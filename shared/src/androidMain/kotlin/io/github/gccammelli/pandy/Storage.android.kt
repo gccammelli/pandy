@@ -144,5 +144,10 @@ internal class FtpsStorage(
         if (code !in 200..299) throw ApiException("Printer storage: ${line.drop(4)}")
     }
 
+    override suspend fun delete(path: String) {
+        require('\r' !in path && '\n' !in path) { "Invalid file name" }
+        session { cmd("DELE $path", 200..299) }
+    }
+
     companion object { private val locks = mutableMapOf<String, Mutex>() }
 }

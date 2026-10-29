@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.gccammelli.pandy.Printer
+import io.github.gccammelli.pandy.Repo
 import io.github.gccammelli.pandy.extrude
 import io.github.gccammelli.pandy.move
 import io.github.gccammelli.pandy.setFan
@@ -261,7 +262,7 @@ private fun StepButton(icon: androidx.compose.ui.graphics.vector.ImageVector, en
 fun MotionScreen(p: Printer) {
     val err = errorToast()
     Page("XYZ", { Nav.back() }) {
-        if (p.camera != null) LiveView(p, Modifier.fillMaxWidth().aspectRatio(16 / 9f))
+        if (p.camera != null || Repo.customStream != null) LiveView(p, Modifier.fillMaxWidth().aspectRatio(16 / 9f))
         if (p.printing) T("Motion is unavailable while printing.", 13.sp, C.Orange, modifier = Modifier.padding(16.dp))
         Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {

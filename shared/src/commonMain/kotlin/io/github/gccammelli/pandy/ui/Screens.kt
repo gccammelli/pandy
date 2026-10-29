@@ -166,6 +166,7 @@ fun CheckDot(on: Boolean, disabled: Boolean = false) =
 fun FilamentScreen(p: Printer) {
     val err = errorToast()
     var open by remember { mutableStateOf<io.github.gccammelli.pandy.Spool?>(null) }
+    var edit by remember { mutableStateOf<io.github.gccammelli.pandy.Spool?>(null) }
     Page("Filament", { Nav.back() }) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
             p.ams.forEach { (a, trays) ->
@@ -210,6 +211,7 @@ fun FilamentScreen(p: Printer) {
             }
         }
     }
+    edit?.let { s -> EditFilamentSheet(p, s) { edit = null } }
     open?.let { s ->
         Sheet({ open = null }, s.name.ifBlank { "Empty slot" }, centeredTitle = true, confirm = if (p.printing || !s.known) null else "Load", onConfirm = { p.load(s, err); open = null }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -222,6 +224,11 @@ fun FilamentScreen(p: Printer) {
                 }
             }
             if (s.active) { Gap(10.dp); T("This filament is loaded in the nozzle.", 13.sp, C.Accent) }
+            if ((Repo.direct || Repo.demo) && !p.printing) {
+                Gap(14.dp)
+                if (s.rfid) T("This spool has a Bambu tag, so the AMS reads its filament itself. Only spools without a tag can be edited.", 12.sp, C.Sub, lh = 17.sp)
+                else OutlineButton("Edit filament", C.Accent, Modifier.fillMaxWidth()) { edit = s; open = null }
+            }
             Gap(8.dp)
         }
     }
@@ -252,7 +259,10 @@ fun PrinterSettingsScreen(p: Printer) {
                 NavRow("Liveview Settings") { Nav.go(Screen.LiveviewSettings) }
             }
             Gap(12.dp)
-            Group { NavRow("Files") { Nav.go(Screen.Files) } }
+            Group {
+                NavRow("Files") { Nav.go(Screen.Files) }
+                if (Repo.files != null) NavRow("Printer storage") { Nav.go(Screen.PrinterFiles) }
+            }
             Gap(12.dp)
             Group {
                 NavRow("Device Name", value = p.name, chevron = false)
@@ -418,6 +428,13 @@ fun LiveviewSettingsScreen() {
                 Radio(mode == "wifi", "Autoplay on Wi-Fi only") { choose("wifi") }
                 Radio(mode == "off", "Autoplay off") { choose("off") }
             }
+            Gap(16.dp)
+            T("Custom stream", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
+            var custom by remember { mutableStateOf(Repo.customStream.orEmpty()) }
+            androidx.compose.material3.OutlinedTextField(custom, { custom = it.trim(); Repo.setCustomStream(custom) }, Modifier.fillMaxWidth(), singleLine = true,
+                label = { T("Stream URL (rtsp:// or http://)", 14.sp, C.Sub) }, placeholder = { T("rtsp://user:pass@camera.local/stream", 14.sp, C.Sub) })
+            Gap(6.dp)
+            T("Shows this stream in the live view instead of the printer's camera, for a camera you added yourself. Leave empty to use the printer's camera. iPhone can't play RTSP.", 12.sp, C.Sub, lh = 17.sp, modifier = Modifier.padding(horizontal = 6.dp))
             Gap(12.dp)
             T("Autoplay controls whether Pandy starts the live view when it appears. The printer's camera remains available from the Devices screen.", 12.sp, C.Sub, lh = 17.sp, modifier = Modifier.padding(horizontal = 6.dp))
         }

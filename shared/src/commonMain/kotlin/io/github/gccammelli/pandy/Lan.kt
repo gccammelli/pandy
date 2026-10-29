@@ -153,9 +153,9 @@ fun hmsCode(attr: Long, code: Long): String {
 fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = null): List<Pair<LanRow, Entity>> {
     val p = r.o("print") ?: JsonObject(emptyMap())
     val out = mutableListOf<Pair<LanRow, Entity>>()
-    fun add(domain: String, key: String, state: Any?, attrs: JsonObject = JsonObject(emptyMap()), device: String = "printer", uid: String = key, deviceModel: String = "") {
+    fun add(domain: String, key: String, state: Any?, attrs: JsonObject = JsonObject(emptyMap()), device: String = "printer", uid: String = key, deviceModel: String = "", trayAmsId: Int? = null) {
         val id = "$domain.pandy_${c.serial.lowercase()}_${uid.lowercase()}"
-        out += LanRow(device, domain, key, uid, id, deviceModel) to Entity(id, state?.toString() ?: "unknown", attrs)
+        out += LanRow(device, domain, key, uid, id, deviceModel, trayAmsId) to Entity(id, state?.toString() ?: "unknown", attrs)
     }
     val connected = if (online) "on" else "off"
     add("binary_sensor", "online", connected)
@@ -267,7 +267,7 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
             val type = t.str("tray_type").orEmpty()
             val name = t.str("tray_sub_brands")?.takeIf { it.isNotBlank() }?.let { if (it.startsWith(type)) "Bambu $it" else it } ?: type
             val trayId = if (isHt) htId else ai * 4 + ti
-            add("sensor", "tray", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayId.toString() == trayNow, ti + 1), dev, "AMS_${amsIndex + 1}_tray_${ti + 1}", deviceModel)
+            add("sensor", "tray", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayId.toString() == trayNow, ti + 1), dev, "AMS_${amsIndex + 1}_tray_${ti + 1}", deviceModel, htId)
         }
     }
     p.o("vt_tray")?.let { t ->
@@ -284,19 +284,50 @@ private fun trayAttrs(t: JsonObject, name: String, active: Boolean, slot: Int) =
     put("active", active); put("color", "#$color"); putJsonArray("cols") { add(JsonPrimitive("#$color")) }
     put("empty", t.str("tray_type").isNullOrEmpty()); put("name", name); put("type", t.str("tray_type").orEmpty())
     put("remain", t.int("remain") ?: -1); put("nozzle_temp_min", t.str("nozzle_temp_min")); put("nozzle_temp_max", t.str("nozzle_temp_max"))
-    put("filament_id", t.str("tray_info_idx"))
+    put("filament_id", t.str("tray_info_idx")); put("tag_uid", t.str("tag_uid"))
 }
 
 /** The current job's 3MF, read from the printer's storage: plate picture, pick map and parts. */
 class LanJob(val key: String, val cover: ByteArray?, val pick: ByteArray?, val objects: Map<Int, String>)
 
-data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String, val deviceModel: String = "")
+data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String, val deviceModel: String = "", val trayAmsId: Int? = null)
 
 private fun printCommand(sequenceId: String, command: String, fields: JsonObject = JsonObject(emptyMap())) = buildJsonObject {
     put("print", JsonObject(buildJsonObject { put("sequence_id", sequenceId); put("command", command) } + fields))
 }
 
 fun calibrationCommand(sequenceId: String, option: Int) = printCommand(sequenceId, "calibration", buildJsonObject { put("option", option) })
+
+/**
+ * Sets what an AMS tray (or the external spool) holds, as Bambu Studio does. [amsId] is the unit (0-3, 128+ for AMS HT,
+ * 255 for the external spool); [slot] the tray in it (0 for an AMS HT and the external spool); [trayId] is the slot
+ * again, except the external spool's 254. [color] is "RRGGBB".
+ */
+fun amsFilamentSettingCommand(sequenceId: String, amsId: Int, slot: Int, trayId: Int, f: FilamentPreset, color: String) =
+    printCommand(sequenceId, "ams_filament_setting", buildJsonObject {
+        put("ams_id", amsId); put("slot_id", slot); put("tray_id", trayId)
+        put("tray_info_idx", f.id); put("tray_type", f.type); put("tray_color", color.uppercase().removePrefix("#").take(6).padEnd(6, '0') + "FF")
+        put("nozzle_temp_min", f.min); put("nozzle_temp_max", f.max); put("setting_id", f.settingId)
+    })
+
+/** Bambu filament profiles (ids as in Bambu Studio), what Pandy offers when editing a tray. */
+data class FilamentPreset(val name: String, val type: String, val id: String, val settingId: String, val min: Int, val max: Int)
+
+val FILAMENT_PRESETS = listOf(
+    FilamentPreset("Generic PLA", "PLA", "GFL99", "GFSL99_00", 190, 240),
+    FilamentPreset("Generic PLA Silk", "PLA", "GFL96", "GFSL99_01", 190, 240),
+    FilamentPreset("Generic PLA-CF", "PLA-CF", "GFL98", "GFSL98", 190, 240),
+    FilamentPreset("Generic PETG", "PETG", "GFG99", "GFSG99", 220, 270),
+    FilamentPreset("Generic PETG-CF", "PETG-CF", "GFG98", "GFSG50", 240, 270),
+    FilamentPreset("Generic ABS", "ABS", "GFB99", "GFSB99", 240, 280),
+    FilamentPreset("Generic ASA", "ASA", "GFB98", "GFSB98_00", 240, 280),
+    FilamentPreset("Generic PC", "PC", "GFC99", "GFSC99_01", 260, 290),
+    FilamentPreset("Generic PVA", "PVA", "GFS99", "GFSS99_00", 190, 240),
+    FilamentPreset("Generic HIPS", "HIPS", "GFS98", "GFSS98_00", 220, 270),
+    FilamentPreset("Bambu TPU 95A", "TPU", "GFU01", "GFSU00", 200, 250),
+    FilamentPreset("Bambu PA-CF", "PA-CF", "GFN03", "GFSN00", 260, 300),
+    FilamentPreset("Generic PPA-CF", "PPA-CF", "GFN97", "GFSN97_00", 280, 320),
+)
 
 fun xcamCommand(sequenceId: String, module: String, enabled: Boolean, printHalt: Boolean) = buildJsonObject {
     putJsonObject("xcam") {
@@ -326,7 +357,7 @@ class DirectPrinter(
     private val linkFactory: (LanConfig) -> LanLink = ::lanLink,
     private val storageFactory: (LanConfig) -> PrinterStorage = ::printerStorage,
     private val jpegStream: suspend (LanConfig, (ByteArray) -> Unit) -> Unit = ::lanJpegStream,
-) : HaBackend {
+) : HaBackend, PrinterFiles {
     override val base = "lan://${config.ip}"
     private var report = JsonObject(emptyMap())
     private var rows: List<LanRow> = emptyList()
@@ -637,18 +668,18 @@ class DirectPrinter(
                     "curr_temp" to JsonPrimitive(0), "tar_temp" to JsonPrimitive(0)))
             })
             "bambu_lab/load_filament" -> {
-                val r = rowOf(target) ?: throw ApiException("Unknown tray")
-                val (ams, slot) = if (r.device == "ext") 254 to 0 else Regex("""AMS_(\d+)_tray_(\d+)""").find(r.uid)!!.destructured.let { (a, t) ->
-                    val unit = r.device.removePrefix("ams").toInt() // tray rows belong to an "ams<N>" device
-                    val physicalSlot = t.toInt() - 1
-                    val amsId = if (r.deviceModel.contains("HT", ignoreCase = true)) unit.takeIf { it >= 128 } ?: 128 else unit
-                    amsId to physicalSlot
-                }
+                val (ams, slot) = trayAddress(target)
                 val global = if (ams == 254 || ams >= 128) ams else ams * 4 + slot
                 publish(printCmd("ams_change_filament") {
                     JsonObject(this + mapOf("ams_id" to JsonPrimitive(ams), "slot_id" to JsonPrimitive(slot), "target" to JsonPrimitive(global),
                         "curr_temp" to JsonPrimitive(215), "tar_temp" to JsonPrimitive(215)))
                 })
+            }
+            "bambu_lab/set_filament" -> {
+                val preset = FILAMENT_PRESETS.firstOrNull { it.id == d.s("filament_id") } ?: throw ApiException("Unknown filament")
+                val (ams, slot) = trayAddress(target)
+                val external = ams == 254
+                publish(amsFilamentSettingCommand(nextSeq(), if (external) 255 else ams, if (external) 0 else slot, if (external) 254 else slot, preset, d.s("color").orEmpty()))
             }
             "bambu_lab/print_project_file" -> {
                 val file = d.s("filepath") ?: throw ApiException("No file")
@@ -687,6 +718,20 @@ class DirectPrinter(
         }
         return "[]"
     }
+
+    /** A tray row's (AMS unit, slot) as the printer addresses it: the external spool is (254, 0). */
+    private fun trayAddress(entityId: String?): Pair<Int, Int> {
+        val r = rowOf(entityId) ?: throw ApiException("Unknown tray")
+        if (r.device == "ext") return 254 to 0
+        val (_, t) = Regex("""AMS_(\d+)_tray_(\d+)""").find(r.uid)!!.destructured
+        return r.trayAmsId!! to t.toInt() - 1
+    }
+
+    // ---------- The printer's files, for the file manager ----------
+
+    override suspend fun listFiles(dir: String): List<FileEntry> = storage.list(dir)
+
+    override suspend fun deleteFile(path: String) { storage.delete(path); listings.clear(); thumbs.clear() }
 
     override suspend fun get(path: String): String = when {
         path.startsWith("/api/bambu_lab/print_history") -> historyJson()

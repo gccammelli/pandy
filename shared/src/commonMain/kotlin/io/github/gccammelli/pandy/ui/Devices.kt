@@ -123,7 +123,7 @@ fun errorToast(): (String) -> Unit { val pl = LocalPlatform.current; return { pl
 private fun TopBar(st: UiState, p: Printer) {
     var pick by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).clickable(enabled = (st.printers?.size ?: 0) > 1) { pick = true }) {
+        Column(Modifier.weight(1f).clickable { pick = true }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 T(p.name, 20.sp, weight = FontWeight.Bold)
                 Icon(Icons.Default.ArrowDropDown, null, Modifier.size(22.dp), tint = C.Text)
@@ -143,12 +143,23 @@ private fun TopBar(st: UiState, p: Printer) {
         IconBox(Icons.Outlined.Settings) { Nav.go(Screen.PrinterSettings) }
     }
     if (pick) Sheet({ pick = false }, "Printers", centeredTitle = true, confirm = null) {
-        st.printers.orEmpty().forEach { o ->
-            Row(Modifier.fillMaxWidth().clickable { Repo.selected = o.serial; pick = false; Repo.restart() }.padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                T(o.name, 16.sp, if (o.serial == p.serial) C.Accent else C.Text, FontWeight.Medium, Modifier.weight(1f))
-                T(if (o.online) o.status.replaceFirstChar { it.uppercase() } else "Offline", 13.sp, C.Sub)
+        if (Repo.direct && Repo.directPrinters.isNotEmpty()) {
+            Repo.directPrinters.forEach { c ->
+                val active = c.serial == Repo.lan?.serial
+                Row(Modifier.fillMaxWidth().clickable { pick = false; Repo.switchDirectPrinter(c.serial) }.padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    T(c.name.ifBlank { c.model }, 16.sp, if (active) C.Accent else C.Text, FontWeight.Medium, Modifier.weight(1f))
+                    T(if (!active) "Unknown" else if (!st.live) "Connecting…" else if (p.online) p.status.replaceFirstChar { it.uppercase() } else "Offline", 13.sp, C.Sub)
+                }
+            }
+        } else {
+            st.printers.orEmpty().forEach { o ->
+                Row(Modifier.fillMaxWidth().clickable { Repo.selected = o.serial; pick = false; Repo.restart() }.padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    T(o.name, 16.sp, if (o.serial == p.serial) C.Accent else C.Text, FontWeight.Medium, Modifier.weight(1f))
+                    T(if (o.online) o.status.replaceFirstChar { it.uppercase() } else "Offline", 13.sp, C.Sub)
+                }
             }
         }
+        if (Repo.direct) T("Add printer", 16.sp, C.Accent, modifier = Modifier.fillMaxWidth().clickable { pick = false; Nav.go(Screen.AddDirect) }.padding(vertical = 14.dp))
         Gap(16.dp)
     }
 }

@@ -75,6 +75,7 @@ class FtpsStorageTest {
                                     data.close(); data = null
                                     reply("$completion Transfer finished")
                                 }
+                                "DELE" -> reply(if (command.contains("missing")) "550 No such file" else "250 Deleted")
                                 "QUIT" -> break
                                 else -> error("Unexpected command: $command")
                             }
@@ -123,6 +124,24 @@ class FtpsStorageTest {
         Peer(completion = 451).use { peer ->
             val error = assertFailsWith<ApiException> { peer.storage().write("/full", byteArrayOf(1)) {} }
             assertTrue(error.message!!.contains("Transfer finished"))
+        }
+    }
+
+    @Test fun deletesAFileAndReportsARefusal() = runBlocking {
+        Peer().use { peer ->
+            peer.storage().delete("/cache/old.3mf")
+            assertTrue(peer.commands.contains("DELE /cache/old.3mf"))
+        }
+        Peer().use { peer ->
+            assertEquals(550, assertFailsWith<PrinterStorageException> { peer.storage().delete("/cache/missing.3mf") }.code)
+        }
+    }
+
+    @Test fun deleteRefusesFileNamesThatCouldSmuggleAnotherCommand() = runBlocking {
+        Peer().use { peer ->
+            assertFailsWith<IllegalArgumentException> { peer.storage().delete("/cache/a.3mf\r\nDELE /cache/b.3mf") }
+            assertFailsWith<IllegalArgumentException> { peer.storage().delete("/cache/a.3mf\nDELE /cache/b.3mf") }
+            assertFalse(peer.commands.any { it.startsWith("DELE") })
         }
     }
 

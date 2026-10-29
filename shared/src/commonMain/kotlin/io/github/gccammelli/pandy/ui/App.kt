@@ -66,6 +66,7 @@ sealed interface Screen {
     data object LiveviewSettings : Screen
     data object Assistant : Screen
     data object Files : Screen
+    data object PrinterFiles : Screen
     data object Filament : Screen
     data object History : Screen
     data object Settings : Screen
@@ -115,6 +116,7 @@ fun Root() {
         Screen.LiveviewSettings -> LiveviewSettingsScreen()
         Screen.Assistant -> AssistantScreen(p)
         Screen.Files -> FilesScreen(p)
+        Screen.PrinterFiles -> PrinterFilesScreen()
         Screen.Filament -> FilamentScreen(p)
         Screen.History -> HistoryScreen(p)
         Screen.Settings -> SettingsScreen()
@@ -385,7 +387,7 @@ fun AddHaScreen() = Page("Home Assistant", { Nav.back() }) {
 @Composable
 fun AddDirectScreen() = Page("Direct LAN connection", { Nav.back() }) {
     Column(Modifier.verticalScroll(rememberScrollState()).imePadding().padding(20.dp)) {
-        T("Pandy is using Home Assistant for this printer. A direct LAN connection adds every printer command and the live view, and keeps working when Home Assistant is down.", 14.sp, C.Sub, lh = 20.sp)
+        T(if (Repo.direct) "Add a printer on your local network." else "Pandy is using Home Assistant for this printer. A direct LAN connection adds every printer command and the live view, and keeps working when Home Assistant is down.", 14.sp, C.Sub, lh = 20.sp)
         Gap(20.dp)
         PrinterForm { Nav.back() }
     }

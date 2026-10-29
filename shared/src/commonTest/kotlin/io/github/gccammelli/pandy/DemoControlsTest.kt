@@ -113,4 +113,37 @@ class DemoControlsTest {
         assertEquals(count, events.size)
         job.cancel()
     }
+
+    @Test fun unfilteredDemoStreamIncludesChangesFromEveryEntity() = runTest {
+        val ha = FakeHomeAssistant()
+        val events = mutableListOf<JsonObject>()
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            ha.stream(buildJsonObject {}) { events += it }
+        }
+        assertTrue(events.first().getValue("a").jsonObject.size > 1)
+        ha.command("light/turn_off")
+        assertTrue(events.last().getValue("c").jsonObject.containsKey("light.x1c_demo_chamber_light"))
+        job.cancel()
+    }
+
+    @Test fun demoFilamentCanBeEditedAndItsFilesBrowsedAndDeleted() = runTest {
+        val ha = FakeHomeAssistant()
+        val id = ha.ws(listOf(buildJsonObject { put("type", "config/entity_registry/list") })).single()!!.jsonArray
+            .map { it.jsonObject }.first { it.s("unique_id")!!.endsWith("AMS_1_tray_3") }.s("entity_id")!!
+        ha.command("bambu_lab/set_filament", "entity_id" to id, "filament_id" to "GFB99", "color" to "00AE42")
+        val after = json.parseToJsonElement(ha.get("/api/states/$id")).jsonObject
+        assertEquals("Generic ABS", after.s("state"))
+        assertEquals("ABS", after.o("attributes")!!.s("type")); assertEquals("#00AE42FF", after.o("attributes")!!.s("color"))
+        ha.command("bambu_lab/set_filament", "entity_id" to id, "filament_id" to "GFB99")
+        assertEquals("#000000FF",json.parseToJsonElement(ha.get("/api/states/$id")).jsonObject.o("attributes")!!.s("color"))
+
+        assertTrue(ha.listFiles("/").any { it.name == "cache" && it.dir })
+        val before = ha.listFiles("/cache")
+        ha.deleteFile("/cache/${before.first().name}")
+        assertEquals(before.size - 1, ha.listFiles("/cache").size)
+        assertEquals(550, assertFailsWith<PrinterStorageException> { ha.deleteFile("/cache/nope.3mf") }.code)
+        assertTrue(ha.listFiles("/missing/").isEmpty())
+        assertEquals(550, assertFailsWith<PrinterStorageException> { ha.deleteFile("missing.3mf") }.code)
+        assertEquals(550, assertFailsWith<PrinterStorageException> { ha.deleteFile("/missing.3mf") }.code)
+    }
 }
