@@ -63,6 +63,7 @@ class ScreenTest {
     private var saveImageError: Throwable?=null
     private var saveFileError: Throwable?=null
     private var commandFailure: String?=null
+    private var filesFailure: String?=null
     private val openedUrls=mutableListOf<String>()
     private val messages = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private val testHttpClients = mutableListOf<io.ktor.client.HttpClient>()
@@ -107,7 +108,9 @@ class ScreenTest {
         }))
         st = runBlocking {
             val demo = FakeHomeAssistant()
-            val backend = object : HaBackend by demo {
+            val backend = object : HaBackend by demo, PrinterFiles {
+                override suspend fun listFiles(dir: String): List<FileEntry> { filesFailure?.let { throw ApiException(it) }; return demo.listFiles(dir) }
+                override suspend fun deleteFile(path: String) { filesFailure?.let { throw ApiException(it) }; demo.deleteFile(path) }
                 override suspend fun post(path: String,body: String): String {
                     commands += path to body
                     commandFailure?.let { throw ApiException(it) }
@@ -319,6 +322,119 @@ class ScreenTest {
         compose.onAllNodesWithText("Not available").onFirst().assertExists()
         compose.onAllNodes(isToggleable()).assertCountEquals(0)
     }
+    @Test fun printerStorageBrowsesFoldersAndDeletesAfterConfirmation() {
+        show("Printer storage") { PrinterFilesScreen() }
+        compose.onNodeWithText("cache").performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("benchy.3mf").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("/cache").assertExists()
+        compose.onNodeWithContentDescription("Delete benchy.3mf").performClick()
+        compose.onNodeWithText("Delete benchy.3mf?").assertExists()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithText("benchy.3mf").assertExists()
+        compose.onNodeWithContentDescription("Delete benchy.3mf").performClick()
+        compose.onNodeWithText("Delete").performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("benchy.3mf").fetchSemanticsNodes().isEmpty() && compose.onAllNodesWithText("phone_stand.3mf").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Back").performClick() // up from /cache to the root
+        compose.waitUntil(5000) { compose.onAllNodesWithText("timelapse").fetchSemanticsNodes().isNotEmpty() }
+        kotlin.test.assertTrue(Nav.stack.none { it is Screen.PrinterFiles })
+    }
+
+    @Test fun printerStorageShowsReadAndDeleteFailures() {
+        filesFailure="No route to the printer"
+        show("Printer storage") { PrinterFilesScreen() }
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Couldn't read the printer's storage").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("No route to the printer").assertExists()
+        filesFailure=null
+        compose.onNodeWithText("Try again").performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("cache").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("cache").performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("phone_stand.3mf").fetchSemanticsNodes().isNotEmpty() }
+        filesFailure="Printer busy"
+        compose.onNodeWithContentDescription("Delete phone_stand.3mf").performClick()
+        compose.onNodeWithText("Delete").performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); messages.contains("Printer busy") }
+        compose.onNodeWithText("phone_stand.3mf").assertExists()
+    }
+
+    @Test fun printerStorageShowsEmptyFolders() {
+        show("Printer storage") { PrinterFilesScreen() }
+        compose.onNodeWithText("model").performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("calibration_cube.3mf").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Delete calibration_cube.3mf").performClick()
+        compose.onNodeWithText("Delete").performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithText("This folder is empty").fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test fun printerStorageIsOfferedOnlyWhereThePrinterCanBeBrowsed() {
+        show("Settings") { PrinterSettingsScreen(printer) }
+        compose.onNodeWithText("Printer storage").performScrollTo().performClick()
+        kotlin.test.assertIs<Screen.PrinterFiles>(Nav.stack.last())
+    }
+
+    @Test fun editingATraySendsTheChosenFilamentAndColour() {
+        show("Filament") { FilamentScreen(changed("sensor.print_status" to "finish")) }
+        compose.onNodeWithText("A3").performClick()
+        compose.onNodeWithText("Edit filament").performClick()
+        compose.onNodeWithText("Nozzle 220–270°C").assertExists() // the tray's current PETG profile is preselected
+        compose.onNodeWithText("ABS").performClick()
+        compose.onNodeWithText("Nozzle 240–280°C").assertExists()
+        compose.onNodeWithText("Hex colour (RRGGBB)").assertExists()
+        compose.onNode(hasSetTextAction()).performTextReplacement("#c12e1f")
+        compose.onNodeWithText("Save").performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("/set_filament") } }
+        val sent=json.parseToJsonElement(commands.last { it.first.endsWith("/set_filament") }.second).jsonObject
+        assertEquals("GFB99",sent.s("filament_id")); assertEquals("C12E1F",sent.s("color"))
+    }
+
+    @Test fun editingNeedsAProfileAndAValidColourAndReportsErrors() {
+        show("Filament") { FilamentScreen(changed("sensor.print_status" to "finish")) }
+        compose.onNodeWithText("A4").performClick() // an empty slot: no profile chosen yet
+        compose.onNodeWithText("Edit filament").performClick()
+        compose.onNodeWithText("Save").assertIsNotEnabled()
+        compose.onNodeWithText("ASA").performClick()
+        compose.onNode(hasSetTextAction()).performTextReplacement("zzz")
+        compose.onNodeWithText("Save").assertIsNotEnabled()
+        compose.onNode(hasSetTextAction()).performTextReplacement("00ae42")
+        commandFailure="Printer refused"
+        compose.onNodeWithText("Save").performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); messages.contains("Printer refused") }
+    }
+
+    @Test fun editingIsNotOfferedWhilePrintingOrOutsideDirectMode() {
+        show("Filament") { FilamentScreen(printer) }
+        compose.onNodeWithText("A3").performClick()
+        compose.onAllNodesWithText("Edit filament").assertCountEquals(0)
+    }
+
+    @Test fun anExternalSpoolCanBeEdited() {
+        show("Filament") { FilamentScreen(changed("sensor.print_status" to "finish")) }
+        compose.onNodeWithText("Ext").performClick()
+        compose.onNodeWithText("Edit filament").performClick()
+        compose.onNodeWithText("Save").performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("/set_filament") } }
+    }
+
+    @Test fun theCustomStreamUrlIsSavedAndCleared() {
+        Repo.setSetting(CUSTOM_STREAM_KEY,null)
+        show("Liveview Settings") { LiveviewSettingsScreen() }
+        compose.onNodeWithText("Stream URL (rtsp:// or http://)").performTextInput("rtsp://camera.local/stream")
+        assertEquals("rtsp://camera.local/stream",Repo.setting(CUSTOM_STREAM_KEY))
+        compose.onNode(hasSetTextAction()).performTextReplacement("")
+        assertEquals(null,Repo.setting(CUSTOM_STREAM_KEY))
+    }
+
+    @Test fun aCustomStreamReplacesThePrintersCameraAndReportsFailure() {
+        val server=com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1",0),0)
+        server.createContext("/") { exchange -> exchange.sendResponseHeaders(404,-1); exchange.close() }
+        server.start()
+        try {
+            Repo.setSetting(CUSTOM_STREAM_KEY,"http://127.0.0.1:${server.address.port}/live.m3u8")
+            compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { LiveView(printer,androidx.compose.ui.Modifier.size(320.dp,180.dp),zoom=true) } } }
+            compose.waitUntil(15000) { compose.waitForIdle(); compose.onAllNodesWithText("Try again",substring=true).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Try again").performClick()
+        } finally { Repo.setSetting(CUSTOM_STREAM_KEY,null); server.stop(0) }
+    }
+
     @Test fun liveViewShowsSettings() = show("Liveview Settings") { LiveviewSettingsScreen() }
     @Test fun assistantShowsProblems() = show("Machine Assistant") { AssistantScreen(printer) }
     @Test fun historyShowsPreviousPrints() = show("History") { HistoryScreen(printer) }
