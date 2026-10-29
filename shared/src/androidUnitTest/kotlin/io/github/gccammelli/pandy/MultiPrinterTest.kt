@@ -47,15 +47,29 @@ class MultiPrinterTest {
     @Test fun ignoresIncompleteOrInvalidSavedPrinterEntries() {
         try {
             boot()
-            settings.putString("lan_printers", """[{"ip":"10.20.0.1"},{"serial":"missing-ip"},{"serial":"missing-code","ip":"10.20.0.2"},{"serial":"saved","ip":"10.20.0.3"}]""")
+            settings.putString("lan_printers", """[{"ip":"10.20.0.1"},{"serial":"missing-ip"},{"serial":"missing-code","ip":"10.20.0.2"},{"serial":"saved","ip":"10.20.0.3"},{"serial":"named","ip":"10.20.0.4","model":"P1S","name":"Workshop"}]""")
             secrets.set("lan_code_saved", "code")
-            val saved = Repo.directPrinters.single()
+            secrets.set("lan_code_named", "other-code")
+            val saved = Repo.directPrinters.first()
             assertEquals("saved", saved.serial)
             assertEquals("", saved.name)
+            assertEquals("Workshop", Repo.directPrinters.last().name)
             Repo.switchDirectPrinter("unknown")
             assertNull(Repo.lan)
             settings.putString("lan_printers", "not json")
             assertTrue(Repo.directPrinters.isEmpty())
+        } finally { Repo.logout() }
+    }
+
+    @Test fun retainsIncompleteLegacySettingsUntilTheSecretIsAvailable() {
+        settings.data.putAll(mapOf("lan_serial" to "DEMO-ONE", "lan_ip" to "10.20.0.1"))
+        try {
+            boot()
+            assertNull(Repo.lan)
+            assertNull(settings.getString("lan_printers"))
+            secrets.set("lan_code", "demo-code")
+            assertEquals("DEMO-ONE", Repo.lan?.serial)
+            assertNull(secrets.get("lan_code"))
         } finally { Repo.logout() }
     }
 
@@ -77,6 +91,8 @@ class MultiPrinterTest {
         try {
             boot()
             Repo.connectPrinter(a, ::printer); live(a.serial)
+            Repo.switchDirectPrinter(a.serial, ::printer)
+            assertTrue(synchronized(closed) { a.serial !in closed })
             Repo.connectPrinter(b, ::printer); live(b.serial)
             assertEquals(2, Repo.directPrinters.size)
             Repo.switchDirectPrinter(a.serial, ::printer)
