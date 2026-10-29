@@ -244,7 +244,8 @@ class ScreenTest {
             Repo.saveLan(LanConfig("10.20.0.2", "TEST-TWO", "code", "X1C", ""))
             backendField.set(Repo, DirectPrinter(Repo.lan!!))
             val live = androidx.compose.runtime.mutableStateOf(false)
-            show(printer.name) { DevicesTab(st.copy(live = live.value), printer) }
+            val displayed = androidx.compose.runtime.mutableStateOf(printer)
+            show(printer.name) { DevicesTab(st.copy(live = live.value), displayed.value) }
             compose.onNodeWithText(printer.name).performClick()
             compose.onNodeWithText("Workshop").assertExists()
             compose.onNodeWithText("X1C").assertExists()
@@ -255,6 +256,8 @@ class ScreenTest {
             compose.runOnIdle { live.value = true }
             compose.onNodeWithText(printer.name).performClick()
             compose.onNodeWithText("Unknown").assertExists()
+            compose.runOnIdle { displayed.value = variant(set = arrayOf("binary_sensor.online" to entity("off"))) }
+            compose.onAllNodesWithText("Offline").assertCountEquals(2)
         } finally {
             backendField.set(Repo, previousBackend)
             previous.forEach { (key, value) -> store.settings.putString(key, value) }
@@ -437,6 +440,12 @@ class ScreenTest {
         kotlin.test.assertIs<Screen.PrinterFiles>(Nav.stack.last())
     }
 
+    @Test fun rootRoutesToPrinterStorage() {
+        Nav.go(Screen.PrinterFiles)
+        show("Printer storage") { Root() }
+        compose.onNodeWithText("cache").assertExists()
+    }
+
     @Test fun editingATraySendsTheChosenFilamentAndColour() {
         show("Filament") { FilamentScreen(changed("sensor.print_status" to "finish")) }
         compose.onNodeWithText("A3").performClick()
@@ -481,6 +490,16 @@ class ScreenTest {
             show("Filament") { FilamentScreen(changed("sensor.print_status" to "finish")) }
             compose.onNodeWithText("A3").performClick()
             compose.onAllNodesWithText("Edit filament").assertCountEquals(0)
+        } finally { Repo.setSetting("demo", demo); Repo.setSetting("mode", mode) }
+    }
+
+    @Test fun editingIsOfferedForAnIdleDirectPrinter() {
+        val demo = Repo.setting("demo"); val mode = Repo.setting("mode")
+        try {
+            Repo.setSetting("demo", "false"); Repo.setSetting("mode", "lan")
+            show("Filament") { FilamentScreen(changed("sensor.print_status" to "finish")) }
+            compose.onNodeWithText("A3").performClick()
+            compose.onNodeWithText("Edit filament").assertExists()
         } finally { Repo.setSetting("demo", demo); Repo.setSetting("mode", mode) }
     }
 
