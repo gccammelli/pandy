@@ -144,5 +144,6 @@ class DemoControlsTest {
         assertEquals(550, assertFailsWith<PrinterStorageException> { ha.deleteFile("/cache/nope.3mf") }.code)
         assertTrue(ha.listFiles("/missing/").isEmpty())
         assertEquals(550, assertFailsWith<PrinterStorageException> { ha.deleteFile("missing.3mf") }.code)
+        assertEquals(550, assertFailsWith<PrinterStorageException> { ha.deleteFile("/missing.3mf") }.code)
     }
 }

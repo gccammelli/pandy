@@ -472,6 +472,23 @@ class ScreenTest {
         compose.onAllNodesWithText("Edit filament").assertCountEquals(0)
     }
 
+    @Test fun editingIsNotOfferedForHomeAssistantEvenWhenIdle() {
+        val demo = Repo.setting("demo"); val mode = Repo.setting("mode")
+        try {
+            Repo.setSetting("demo", "false"); Repo.setSetting("mode", "ha")
+            show("Filament") { FilamentScreen(changed("sensor.print_status" to "finish")) }
+            compose.onNodeWithText("A3").performClick()
+            compose.onAllNodesWithText("Edit filament").assertCountEquals(0)
+        } finally { Repo.setSetting("demo", demo); Repo.setSetting("mode", mode) }
+    }
+
+    @Test fun filamentEditorFallsBackToTheSpoolType() {
+        val spool = Spool("sensor.test", 1, "Unknown profile", "PETG", 0x00AE42, emptyList(), 50, false, false, null, null, "missing-profile")
+        show("Edit filament") { EditFilamentSheet(printer, spool) {} }
+        compose.onNodeWithText("Nozzle 220–270°C").assertExists()
+        compose.onNodeWithText("Save").assertIsEnabled()
+    }
+
     @Test fun anExternalSpoolCanBeEdited() {
         show("Filament") { FilamentScreen(changed("sensor.print_status" to "finish")) }
         compose.onNodeWithText("Ext").performClick()
