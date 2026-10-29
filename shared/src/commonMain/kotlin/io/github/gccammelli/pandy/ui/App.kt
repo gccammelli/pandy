@@ -387,7 +387,7 @@ fun AddHaScreen() = Page("Home Assistant", { Nav.back() }) {
 @Composable
 fun AddDirectScreen() = Page("Direct LAN connection", { Nav.back() }) {
     Column(Modifier.verticalScroll(rememberScrollState()).imePadding().padding(20.dp)) {
-        T("Pandy is using Home Assistant for this printer. A direct LAN connection adds every printer command and the live view, and keeps working when Home Assistant is down.", 14.sp, C.Sub, lh = 20.sp)
+        T(if (Repo.direct) "Add a printer on your local network." else "Pandy is using Home Assistant for this printer. A direct LAN connection adds every printer command and the live view, and keeps working when Home Assistant is down.", 14.sp, C.Sub, lh = 20.sp)
         Gap(20.dp)
         PrinterForm { Nav.back() }
     }

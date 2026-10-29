@@ -12,6 +12,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -49,13 +53,47 @@ object Repo {
     /** "lan" (direct) or "ha". */
     val mode get() = store.settings.getString("mode") ?: if (haUrl != null) "ha" else "lan"
     val direct get() = !demo && mode == "lan"
-    val lan: LanConfig? get() = store.settings.getString("lan_serial")?.let { sn ->
-        LanConfig(store.settings.getString("lan_ip") ?: return null, sn, store.secrets.get("lan_code") ?: return null, store.settings.getString("lan_model") ?: modelName(null, sn), store.settings.getString("lan_name") ?: "")
+    val directPrinters: List<LanConfig> get() = runCatching {
+        json.parseToJsonElement(store.settings.getString("lan_printers") ?: "[]").jsonArray.mapNotNull { item ->
+            val o = item.jsonObject
+            val sn = o["serial"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val ip = o["ip"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val code = store.secrets.get("lan_code_$sn") ?: return@mapNotNull null
+            LanConfig(ip, sn, code, o["model"]?.jsonPrimitive?.contentOrNull ?: modelName(null, sn), o["name"]?.jsonPrimitive?.contentOrNull ?: "")
+        }
+    }.getOrDefault(emptyList())
+    val lan: LanConfig? get() {
+        val serial = store.settings.getString("lan_serial") ?: return null
+        migrateLan()
+        return directPrinters.firstOrNull { it.serial == serial }
+    }
+
+    private fun savePrinters(printers: List<LanConfig>) {
+        store.settings.putString("lan_printers", JsonArray(printers.map { c -> buildJsonObject {
+            put("serial", c.serial); put("ip", c.ip); put("model", c.model); put("name", c.name)
+        } }).toString())
+    }
+
+    private fun saveActive(c: LanConfig) {
+        store.secrets.set("lan_code_${c.serial}", c.code)
+        savePrinters(directPrinters.filterNot { it.serial == c.serial } + c)
+        store.settings.putString("lan_ip", c.ip); store.settings.putString("lan_serial", c.serial)
+        store.settings.putString("lan_model", c.model); store.settings.putString("lan_name", c.name)
+    }
+
+    private fun migrateLan() {
+        if (store.settings.getString("lan_printers") != null) return
+        val sn = store.settings.getString("lan_serial") ?: return
+        val ip = store.settings.getString("lan_ip") ?: return
+        val code = store.secrets.get("lan_code") ?: return
+        saveActive(LanConfig(ip, sn, code, store.settings.getString("lan_model") ?: modelName(null, sn), store.settings.getString("lan_name") ?: ""))
+        store.secrets.set("lan_code", null)
     }
 
     fun init(s: PlatformStorage) {
         if (::store.isInitialized) return
         store = s
+        migrateLan()
         io.github.gccammelli.pandy.ui.ThemeMode.mode = s.settings.getString("theme") ?: "system"
         token = s.secrets.get("ha_token")
         val url = haUrl
@@ -86,8 +124,7 @@ object Repo {
         directBackend?.stop()
         directBackend = d
         store.settings.putString("mode", "lan")
-        store.settings.putString("lan_ip", c.ip); store.settings.putString("lan_serial", c.serial); store.settings.putString("lan_model", c.model); store.settings.putString("lan_name", c.name)
-        store.secrets.set("lan_code", c.code)
+        saveActive(c)
         ha = remote?.let { PreferPrimaryBackend(d, it) } ?: d
         if (extras == null || extras is DirectPrinter) extras = d
         state.value = UiState(on = true)
@@ -137,9 +174,21 @@ object Repo {
     }
 
     /** The printer's LAN details without switching modes: Home Assistant mode needs them to print MakerWorld models. */
-    fun saveLan(c: LanConfig) {
-        store.settings.putString("lan_ip", c.ip); store.settings.putString("lan_serial", c.serial); store.settings.putString("lan_model", c.model)
-        store.secrets.set("lan_code", c.code)
+    fun saveLan(c: LanConfig) { saveActive(c) }
+
+    fun switchDirectPrinter(serial: String, createPrinter: (LanConfig) -> DirectPrinter = { DirectPrinter(it, strict = haApi != null) }) {
+        val c = directPrinters.firstOrNull { it.serial == serial } ?: return
+        if (directBackend != null && lan?.serial == serial) return
+        val remote = haApi
+        stop(); directBackend?.stop()
+        val d = createPrinter(c)
+        directBackend = d
+        saveActive(c)
+        selected = serial
+        ha = remote?.let { PreferPrimaryBackend(d, it) } ?: d
+        extras = remote ?: d
+        state.value = UiState(on = true)
+        start()
     }
 
     /** Forgets Home Assistant (direct mode keeps working). */
@@ -156,8 +205,11 @@ object Repo {
 
     /** Removes only the saved direct printer; Home Assistant and slicer settings remain available. */
     fun removeDirectPrinter() {
-        stop()
-        directBackend?.stop(); directBackend = null
+        val current = lan
+        val remaining = directPrinters.filterNot { it.serial == current?.serial }
+        stop(); directBackend?.stop(); directBackend = null
+        current?.let { store.secrets.set("lan_code_${it.serial}", null) }
+        savePrinters(remaining)
         store.settings.putString("lan_ip", null); store.settings.putString("lan_serial", null)
         store.settings.putString("lan_model", null); store.settings.putString("lan_name", null)
         store.secrets.set("lan_code", null)
@@ -165,6 +217,7 @@ object Repo {
         extras = extras?.takeUnless { it is DirectPrinter }
         ha = null
         state.value = UiState()
+        remaining.firstOrNull()?.let { switchDirectPrinter(it.serial) }
     }
 
     fun startDemo() {
@@ -177,6 +230,7 @@ object Repo {
     fun logout() {
         stop()
         directBackend?.stop(); directBackend = null
+        directPrinters.forEach { store.secrets.set("lan_code_${it.serial}", null) }
         store.secrets.set("ha_token", null); store.secrets.set("lan_code", null); store.secrets.set("custom_stream_url", null)
         token = null
         store.settings.clear()

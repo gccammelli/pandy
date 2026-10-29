@@ -218,6 +218,18 @@ class ScreenTest {
         compose.onNodeWithText("Log out").performClick()
         org.junit.Assert.assertFalse(Repo.state.value.on)
     }
+    @Test fun directPrinterSelectorOpensAddPrinter() {
+        val demo = Repo.setting("demo")
+        val mode = Repo.setting("mode")
+        try {
+            Repo.setSetting("demo", "false"); Repo.setSetting("mode", "lan")
+            show(printer.name) { DevicesTab(st, printer) }
+            compose.onNodeWithText(printer.name).performClick()
+            compose.onNodeWithText("Add printer").performClick()
+            kotlin.test.assertIs<Screen.AddDirect>(Nav.stack.last())
+        } finally { Repo.setSetting("demo", demo); Repo.setSetting("mode", mode); Nav.stack.clear() }
+    }
+
     @Test fun devicesShowPrinter() = show(printer.name) { DevicesTab(st, printer) }
     @Test fun controlsShowTemperatures() = show("Device Control") { ControlScreen(printer) }
     @Test fun motionShowsAxes() = show("XYZ") { MotionScreen(printer) }
@@ -1444,7 +1456,7 @@ class ScreenTest {
     private fun savedDirectConnection() {
         val field=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }
         val original=field.get(Repo) as PlatformStorage
-        val keys=listOf("demo","mode","lan_serial","lan_ip","lan_model","ha_url","slicer_url")
+        val keys=listOf("demo","mode","lan_serial","lan_ip","lan_model","lan_name","lan_printers","ha_url","slicer_url")
         val before=keys.associateWith { original.settings.getString(it) }
         val secrets=mutableMapOf<String,String>()
         field.set(Repo,PlatformStorage(original.settings,object : SecretStore {
