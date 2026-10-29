@@ -84,6 +84,7 @@ import io.github.gccammelli.pandy.readProject
 import io.github.gccammelli.pandy.shortModel
 import io.github.gccammelli.pandy.startPrint
 import io.github.gccammelli.pandy.loadedTrayIds
+import io.github.gccammelli.pandy.loadedSpools
 import io.github.gccammelli.pandy.slotForTrayId
 import io.github.gccammelli.pandy.trayId
 import kotlinx.coroutines.Dispatchers
@@ -203,6 +204,10 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     var manualMapping by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var presets by remember { mutableStateOf(false) }
     var confirmPrint by remember { mutableStateOf(false) }
+    // A plain model (an STL) has no filament of its own: the user picks one of the printer's loaded spools to print it in.
+    val spools = p.loadedSpools()
+    var chosenTray by remember { mutableStateOf<Int?>(null) }
+    val plainTray = (chosenTray ?: spools.firstOrNull()?.first)?.takeIf { t -> spools.any { it.first == t } }
     val name = d.name.replace(Regex("(?i)\\.(3mf|stl|gcode)$"), "")
 
     DisposableEffect(view, step) {
@@ -282,10 +287,12 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         val selectedFlow = flow
         val selectedBuildPlate = buildPlate
         val selectedPresets = presets
+        val plainSpool = spools.firstOrNull { projectNow.filaments.isEmpty() && it.first == plainTray }
         step = Step.Slicing
         scope.launch {
             runCatching {
-                val (path, sliced) = withContext(Dispatchers.Default) { slicer!!.sliceAndUpload(bytes, selectedPlate, name, to, io.github.gccammelli.pandy.printerPreset(p.model, p.state("sensor.nozzle_diameter")), buildPlateCode(selectedBuildPlate)) }
+                val (path, sliced) = withContext(Dispatchers.Default) { slicer!!.sliceAndUpload(bytes, selectedPlate, name, to, io.github.gccammelli.pandy.printerPreset(p.model, p.state("sensor.nozzle_diameter")), buildPlateCode(selectedBuildPlate),
+                    plainSpool?.second?.type, plainSpool?.second?.let { io.github.gccammelli.pandy.colorHex(it.color) }) }
                 step = Step.Starting
                 val mapping = if (sliced == null) {
                     if (p.ams.isNotEmpty() && projectNow.filaments.isNotEmpty()) throw ApiException("The slicer returned no filament mapping; refusing to print")
@@ -295,7 +302,8 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
                     val auto = autoMapping(p, sliced.filaments)
                     val ids = sliced.filaments.mapIndexed { i, filament -> filament["id"]?.toIntOrNull() ?: i + 1 }
                     val valid = p.loadedTrayIds()
-                    val chosen = sliced.filaments.mapIndexed { i, filament ->
+                    // A plain model prints in the spool the user picked; a project's filaments are matched to the loaded ones.
+                    val chosen = if (plainSpool != null) listOf(plainSpool.first) else sliced.filaments.mapIndexed { i, filament ->
                         (if (selectedPresets) manualMapping[filamentKey(filament["type"].orEmpty(), filament["color"].orEmpty())]?.takeIf { slot -> slot in valid } else null) ?: auto?.getOrNull(i) ?: if (p.ams.isEmpty()) 254 else -1
                     }
                     if (chosen.any { it < 0 }) throw ApiException("Load a matching filament before printing")
@@ -346,6 +354,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             }, buildPlate = buildPlate,
             auto = auto, manualMapping = manualMapping,
             presets = presets, setPresets = { presets = it }, preview = { view = PrepareView.Preview },
+            spools = spools, plainTray = plainTray, pickTray = { chosenTray = it },
             printer = { printerPicker = true }, filament = { filamentIndex = it; filamentPicker = true },
             leveling = leveling, setLeveling = { leveling = it }, flow = flow, setFlow = { flow = it }, timelapse = timelapse,
             setTimelapse = { timelapse = it }, back = { view = PrepareView.Profile },
@@ -426,6 +435,7 @@ private fun PrepareView(
     p: Printer, project: Project, plate: Int, setPlate: (Int) -> Unit, buildPlate: String,
     auto: List<Int>?, manualMapping: Map<String, Int>,
     presets: Boolean, setPresets: (Boolean) -> Unit, preview: () -> Unit, printer: () -> Unit, filament: (Int) -> Unit,
+    spools: List<Pair<Int, io.github.gccammelli.pandy.Spool>>, plainTray: Int?, pickTray: (Int) -> Unit,
     leveling: Boolean, setLeveling: (Boolean) -> Unit, flow: Boolean, setFlow: (Boolean) -> Unit, timelapse: Boolean,
     setTimelapse: (Boolean) -> Unit, back: () -> Unit, print: () -> Unit, step: Step,
     canPrint: Boolean, needsAccessCode: Boolean, code: String, setCode: (String) -> Unit, modelNotice: String?,
@@ -459,15 +469,26 @@ private fun PrepareView(
         Card(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), radius = 16.dp, padding = androidx.compose.foundation.layout.PaddingValues(16.dp)) {
             SectionTitle("Match my filament") { help("Filament matching") }
             Gap(10.dp)
-            if (project.filaments.isEmpty()) T("No filament metadata was provided by the model.", 13.sp, C.Sub)
-            else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (project.filaments.isEmpty()) {
+                // A plain model (an STL): print it in one of the loaded spools.
+                if (spools.isEmpty()) T("Load a filament in the printer to choose it here.", 13.sp, C.Sub)
+                else {
+                    T("This model has no filament of its own: it prints in the one you pick.", 13.sp, C.Sub)
+                    Gap(8.dp)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        spools.forEach { (tray, spool) ->
+                            FilamentChip(spool.type, io.github.gccammelli.pandy.colorHex(spool.color), tray, p, editable, selected = tray == plainTray) { pickTray(tray) }
+                        }
+                    }
+                }
+            } else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 project.filaments.forEachIndexed { i, (type, colour) ->
                 val slot = (if (presets) manualMapping[filamentKey(type, colour)]?.takeIf { it in p.loadedTrayIds() } else null) ?: auto?.getOrNull(i) ?: if (p.ams.isEmpty()) 254 else -1
                     FilamentChip(type, colour, slot, p, editable) { filament(i) }
                 }
             }
             Gap(5.dp)
-            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (project.filaments.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 T("Use my filament presets", 14.sp, if (editable) C.Text else C.Sub)
                 Spacer(Modifier.width(4.dp)); HelpQuestion { help("Filament presets") }; Spacer(Modifier.weight(1f))
                 Toggle(presets, editable, setPresets)
@@ -563,7 +584,7 @@ private fun HelpQuestion(onClick: () -> Unit) = Box(Modifier.size(30.dp).clickab
 }
 
 @Composable
-private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, enabled: Boolean, onClick: () -> Unit) {
+private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, enabled: Boolean, selected: Boolean = false, onClick: () -> Unit) {
     val loadedAms = if (slot >= 0) p.ams.asSequence().mapNotNull { (ams, spools) ->
         ams.slotForTrayId(slot)?.let { ams to spools.getOrNull(it) }
     }.firstOrNull() else null
@@ -577,7 +598,7 @@ private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, en
         loadedAms.first.isSingleSlot() -> "HT"
         else -> "${'A' + loadedAms.first.index - 1}${loadedAms.first.slotForTrayId(slot)!! + 1}"
     }
-    Column(Modifier.width(112.dp).clip(RoundedCornerShape(10.dp)).border(1.dp, C.Line, RoundedCornerShape(10.dp))
+    Column(Modifier.width(112.dp).clip(RoundedCornerShape(10.dp)).border(if (selected) 2.dp else 1.dp, if (selected) C.Accent else C.Line, RoundedCornerShape(10.dp))
         .clickable(enabled = enabled, onClick = onClick)) {
         Box(Modifier.fillMaxWidth().height(31.dp).background(C.Sub).padding(horizontal = 9.dp), contentAlignment = Alignment.CenterStart) {
             T(type, 14.sp, Color.White, maxLines = 1)

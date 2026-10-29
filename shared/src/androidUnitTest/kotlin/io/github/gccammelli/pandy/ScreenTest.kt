@@ -389,7 +389,7 @@ class ScreenTest {
             }
         }.toByteArray()
 
-    private fun prepareRealPrint(filaments: String?, failSlice: Boolean = false, keepAms: Boolean = false): Pair<java.util.concurrent.ConcurrentLinkedQueue<String>, java.util.concurrent.atomic.AtomicBoolean> {
+    private fun prepareRealPrint(filaments: String?, failSlice: Boolean = false, keepAms: Boolean = false, model: ByteArray? = null, requests: MutableList<io.ktor.http.Url>? = null, beforePrint: () -> Unit = {}, noSpools: Boolean = false): Pair<java.util.concurrent.ConcurrentLinkedQueue<String>, java.util.concurrent.atomic.AtomicBoolean> {
         val store = Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
         val keys = listOf("demo","mode","lan_serial","lan_ip","lan_model")
         val before = keys.associateWith { store.settings.getString(it) }
@@ -400,10 +400,11 @@ class ScreenTest {
             val id = printer.info.ids.getValue(role)
             values[id] = Entity(id,state,JsonObject(emptyMap()))
         }
-        Repo.state.value = st.copy(printers=listOf(Printer(if(keepAms) printer.info else printer.info.copy(ams=emptyList()),values)))
+        Repo.state.value = st.copy(printers=listOf(Printer((if(keepAms) printer.info else printer.info.copy(ams=emptyList())).let { if(noSpools) it.copy(external=emptyList()) else it },values)))
         val uploads = java.util.concurrent.ConcurrentLinkedQueue<String>()
         val http = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { request ->
             org.junit.Assert.assertNull(request.headers["X-Printer-Code"])
+            requests?.add(request.url)
             if(failSlice) respond("""{"error":"Slicing failed in test"}""",io.ktor.http.HttpStatusCode.ServiceUnavailable)
             else respond(byteArrayOf(1,2,3),headers=io.ktor.http.headersOf(
                 "Content-Disposition" to listOf("attachment; filename=\"test.gcode.3mf\""),
@@ -421,14 +422,42 @@ class ScreenTest {
         })
         val closed = java.util.concurrent.atomic.AtomicBoolean(false)
         compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
-            PrintModelSheet(WebDownload(null,"Test model.3mf",null,modelBytes(),true),{closed.set(true)},slicerClient=slicer)
+            PrintModelSheet(WebDownload(null,if(model==null) "Test model.3mf" else "Test model.stl",null,model ?: modelBytes(),true),{closed.set(true)},slicerClient=slicer)
         } } }
         compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Next").performClick()
         compose.onNodeWithText("Printer access code").performScrollTo().performTextInput("12345678")
+        beforePrint()
         compose.onNodeWithText("Print current plate",substring=false).performClick()
         compose.onNodeWithText("Start print?").assertExists()
         return uploads to closed
+    }
+
+    @Test fun aPlainStlPrintsInTheSpoolThePickedFromThePrintersLoadedFilament() {
+        val requests = mutableListOf<io.ktor.http.Url>()
+        val loaded = printer.loadedSpools()
+        org.junit.Assert.assertTrue("the test printer needs two loaded spools", loaded.size >= 2)
+        val (second, spool) = loaded[1]
+        val (uploads,closed) = prepareRealPrint("""[{"id":"1","type":"${spool.type}","color":"${colorHex(spool.color)}"}]""", keepAms = true, model = stlBytes(), requests = requests, beforePrint = {
+            compose.onNodeWithText("This model has no filament of its own",substring=true).performScrollTo().assertExists()
+            compose.onNodeWithText("Use my filament presets").assertDoesNotExist() // nothing to match for a plain model
+            val tray = printer.ams.first().let { (ams,_) -> "A${ams.slotForTrayId(second)!! + 1}" }
+            compose.onNodeWithText(tray).performScrollTo().performClick() // the second loaded spool
+        })
+        compose.onNodeWithText("Start",substring=false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); closed.get() }
+        val sliced = requests.single { it.encodedPath.endsWith("/slice") }
+        assertEquals(spool.type,sliced.parameters["filament_type"]); assertEquals(colorHex(spool.color),sliced.parameters["filament_color"])
+        assertEquals(1,uploads.size)
+        org.junit.Assert.assertTrue(commands.any { it.first.endsWith("/print_project_file") })
+    }
+
+    @Test fun aPlainStlWithNothingLoadedSaysSoInsteadOfOfferingFilament() {
+        prepareRealPrint(null, model = stlBytes(), noSpools = true, beforePrint = {
+            // No AMS and no external spool loaded in the test printer's state.
+            compose.onNodeWithText("Load a filament in the printer to choose it here.").performScrollTo().assertExists()
+            compose.onNodeWithText("This model has no filament of its own",substring=true).assertDoesNotExist()
+        })
     }
 
     @Test fun longPressingMakerWorldOffersThingiverseAndPrintables() {
@@ -625,7 +654,7 @@ class ScreenTest {
             "Metadata/plate_1.png" to picture)))
         compose.onNodeWithText("1 plate · 0 colors").assertExists()
         compose.onNodeWithText("Next").performClick()
-        compose.onNodeWithText("No filament metadata was provided by the model.").performScrollTo().assertExists()
+        compose.onNodeWithText("This model has no filament of its own",substring=true).performScrollTo().assertExists() // a model without filaments: pick one of the printer's spools
         compose.onNodeWithText("Ready",substring=false).assertExists()
         compose.onNodeWithText("3D Preview").performScrollTo().performClick()
         compose.mainClock.advanceTimeBy(500)

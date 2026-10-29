@@ -48,6 +48,20 @@ class SlicerClientTest {
         }
     }
 
+    @Test fun aPlainModelsFilamentTypeAndColourReachTheSlicerOnlyWhenChosen() = runTest {
+        val seen = mutableListOf<io.ktor.http.Parameters>()
+        HttpClient(MockEngine { request ->
+            seen += request.url.parameters
+            respond(byteArrayOf(1), headers = headersOf("Content-Disposition" to listOf("attachment; filename=\"r.gcode.3mf\"")))
+        }).use { http ->
+            val client = SlicerClient("slicer.local", null, http = http, storageFactory = { Storage() })
+            client.sliceAndUpload(byteArrayOf(9), 1, "m.stl", printer, "X1C", "textured_plate", "PETG", "#D32F2F")
+            client.sliceAndUpload(byteArrayOf(9), 1, "m.3mf", printer, "X1C", "auto", " ", null)
+        }
+        assertEquals("PETG", seen[0]["filament_type"]); assertEquals("#D32F2F", seen[0]["filament_color"]); assertEquals("textured_plate", seen[0]["bed_type"])
+        assertNull(seen[1]["filament_type"]); assertNull(seen[1]["filament_color"])
+    }
+
     @Test fun onlyHttpsHomeAssistantIngressCanReceivePrinterCredentials() = runTest {
         for (secure in listOf(true,false)) {
             val storage = Storage()

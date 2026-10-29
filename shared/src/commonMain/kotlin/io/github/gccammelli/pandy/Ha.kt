@@ -540,6 +540,14 @@ fun Printer.loadedTrayIds(): Set<Int> = ams.flatMap { (a, spools) ->
     spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) } }
 }.toSet() + external.filter { it.known }.map { 254 }
 
+/** The loaded spools with their absolute tray IDs (254 for the external spool), in AMS order. */
+fun Printer.loadedSpools(): List<Pair<Int, Spool>> =
+    ams.flatMap { (a, spools) -> spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) to it } } } +
+        external.filter { it.known }.map { 254 to it }
+
+/** A colour as "#RRGGBB". */
+fun colorHex(c: Long) = "#" + (c and 0xFFFFFF).toString(16).padStart(6, '0').uppercase()
+
 /** For each filament of a print, the loaded tray that matches best: same type and nearest colour; null if none fits. */
 fun autoMapping(p: Printer, filaments: List<Map<String, String>>): List<Int>? {
     val trays = p.ams.flatMap { (a, spools) -> spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) to it } } } +

@@ -77,15 +77,19 @@ class SlicerClient(
     }
 
     /**
-     * Slices [plate] of a 3MF and puts it on the printer [to]; returns its path there and the plate's details. The
+     * Slices [plate] of a 3MF (a plain model prints in [filamentType] and [filamentColor]) and puts it on the printer [to]; returns its path there and the plate's details. The
      * printer's access code goes to the slicer only through Home Assistant over HTTPS; otherwise Pandy downloads the
      * sliced file and sends it to the printer itself, over FTPS.
      */
-    suspend fun sliceAndUpload(data: ByteArray, plate: Int, name: String, to: LanConfig, printer: String? = null, bedType: String = "auto"): Pair<String, SlicedPlate?> {
+    suspend fun sliceAndUpload(data: ByteArray, plate: Int, name: String, to: LanConfig, printer: String? = null, bedType: String = "auto",
+                                filamentType: String? = null, filamentColor: String? = null): Pair<String, SlicedPlate?> {
         val printerParam = printer?.let { "&printer=${it.encodeURLParam()}" }.orEmpty()
         val bed = "&bed_type=${bedType.encodeURLParam()}"
         val (at, cookie) = target()
-        val query = "plate=$plate&name=${name.encodeURLParam()}$printerParam$bed"
+        // A plain model (an STL) has no filament of its own: the slicer prints it in the chosen type and colour.
+        fun optional(key: String, value: String?) = if (value.isNullOrBlank()) "" else "&$key=${value.encodeURLParam()}"
+        val filament = optional("filament_type", filamentType) + optional("filament_color", filamentColor)
+        val query = "plate=$plate&name=${name.encodeURLParam()}$printerParam$bed$filament"
         if (cookie == null || !at.startsWith("https://", ignoreCase = true)) {
             val r = http.post("$at/slice?$query") { auth(cookie); setBody(data) }
             if (r.status.value != 200) {
