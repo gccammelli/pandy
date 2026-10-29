@@ -64,6 +64,7 @@ class ScreenTest {
     private var saveFileError: Throwable?=null
     private var commandFailure: String?=null
     private var filesFailure: String?=null
+    private var filesFailureWithoutMessage=false
     private val openedUrls=mutableListOf<String>()
     private val messages = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private val testHttpClients = mutableListOf<io.ktor.client.HttpClient>()
@@ -110,7 +111,7 @@ class ScreenTest {
         st = runBlocking {
             val demo = FakeHomeAssistant()
             val backend = object : HaBackend by demo, PrinterFiles {
-                override suspend fun listFiles(dir: String): List<FileEntry> { filesFailure?.let { throw ApiException(it) }; return demo.listFiles(dir) }
+                override suspend fun listFiles(dir: String): List<FileEntry> { if (filesFailureWithoutMessage) throw Exception(); filesFailure?.let { throw ApiException(it) }; return demo.listFiles(dir) }
                 override suspend fun deleteFile(path: String) { filesFailure?.let { throw ApiException(it) }; demo.deleteFile(path) }
                 override suspend fun post(path: String,body: String): String {
                     commands += path to body
@@ -369,6 +370,23 @@ class ScreenTest {
         compose.onNodeWithText("phone_stand.3mf").assertExists()
     }
 
+    @Test fun printerStorageExplainsAnErrorWithoutDetails() {
+        filesFailureWithoutMessage=true
+        show("Printer storage") { PrinterFilesScreen() }
+        compose.waitUntil(5000) { compose.onAllNodesWithText("The connection failed.").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("The connection failed.").assertExists()
+    }
+
+    @Test fun printerStorageWithoutABackendIsEmpty() {
+        val field=Repo::class.java.getDeclaredField("ha").apply { isAccessible=true }
+        val previous=field.get(Repo)
+        try {
+            field.set(Repo,null)
+            show("Printer storage") { PrinterFilesScreen() }
+            compose.waitUntil(5000) { compose.onAllNodesWithText("This folder is empty").fetchSemanticsNodes().isNotEmpty() }
+        } finally { field.set(Repo,previous) }
+    }
+
     @Test fun printerStorageShowsEmptyFolders() {
         show("Printer storage") { PrinterFilesScreen() }
         compose.onNodeWithText("model").performClick()
@@ -452,6 +470,24 @@ class ScreenTest {
         Repo.setCustomStream("rtsp://camera.local/stream"); Repo.setSetting("liveview_autoplay","off")
         compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { LiveView(printer,androidx.compose.ui.Modifier.size(320.dp,180.dp)) } } }
         try { compose.onNodeWithText("Tap to view").assertExists() } finally { Repo.setCustomStream(null); Repo.setSetting("liveview_autoplay",null) }
+    }
+
+    @Test fun blankCustomStreamIsClearedAndManualPlaybackStarts() {
+        val server=com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1",0),0)
+        server.createContext("/") { exchange -> exchange.sendResponseHeaders(404,-1); exchange.close() }
+        server.start()
+        try {
+            Repo.setCustomStream("   ")
+            kotlin.test.assertNull(Repo.customStream)
+            val storage=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }.get(Repo) as PlatformStorage
+            storage.secrets.set("custom_stream_url"," ")
+            kotlin.test.assertNull(Repo.customStream)
+            Repo.setCustomStream("http://127.0.0.1:${server.address.port}/stream")
+            Repo.setSetting("liveview_autoplay","off")
+            compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { LiveView(printer,androidx.compose.ui.Modifier.size(320.dp,180.dp)) } } }
+            compose.onNodeWithText("Tap to view").performClick()
+            compose.onAllNodesWithText("Tap to view").assertCountEquals(0)
+        } finally { Repo.setCustomStream(null); Repo.setSetting("liveview_autoplay",null); server.stop(0) }
     }
 
     @Test fun aTaggedBambuSpoolIsNotOfferedForEditing() {

@@ -140,6 +140,7 @@ class FtpsStorageTest {
     @Test fun deleteRefusesFileNamesThatCouldSmuggleAnotherCommand() = runBlocking {
         Peer().use { peer ->
             assertFailsWith<IllegalArgumentException> { peer.storage().delete("/cache/a.3mf\r\nDELE /cache/b.3mf") }
+            assertFailsWith<IllegalArgumentException> { peer.storage().delete("/cache/a.3mf\nDELE /cache/b.3mf") }
             assertFalse(peer.commands.any { it.startsWith("DELE") })
         }
     }

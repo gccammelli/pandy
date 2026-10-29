@@ -45,8 +45,36 @@ class DirectPrinterTest {
                 assertEquals("C12E1FFF",sent.s("tray_color")); assertEquals("220",sent.s("nozzle_temp_min")); assertEquals("270",sent.s("nozzle_temp_max"))
             }
             val row=trays.first().s("entity_id")!!
+            printer.command("bambu_lab/set_filament","entity_id" to row,"filament_id" to petg.id)
+            assertEquals("000000FF",link.sent.last().o("print")!!.s("tray_color"))
             assertFailsWith<ApiException> { printer.command("bambu_lab/set_filament","entity_id" to row,"filament_id" to "nope","color" to "FFFFFF") }
             assertFailsWith<ApiException> { printer.command("bambu_lab/set_filament","entity_id" to "missing","filament_id" to petg.id,"color" to "FFFFFF") }
+        } finally { printer.stop() }
+    }
+
+    @Test fun filamentCommandNormalizesShortAndLongColours() {
+        val preset=FILAMENT_PRESETS.first()
+        fun color(input: String) = amsFilamentSettingCommand("1",0,0,0,preset,input).o("print")!!.s("tray_color")
+        assertEquals("AB0000FF",color("#ab"))
+        assertEquals("123456FF",color("123456789"))
+        assertEquals("000000FF",color(""))
+    }
+
+    @Test fun twoHtUnitsUseTheirDistinctFallbackAddresses() = runBlocking<Unit> {
+        val ams=",\"ams\":{\"tray_now\":\"129\",\"ams\":[{\"id\":0,\"model\":\"AMS HT\"},{\"id\":1,\"type\":\"N3S\"}]}"
+        val link=Link(report(ams)); val printer=DirectPrinter(config,true,{link})
+        try {
+            val entities=lanEntities(config,json.parseToJsonElement(report(ams)).jsonObject,true)
+            val trays=entities.filter { it.first.key=="tray" }
+            assertEquals(listOf("false","true"),trays.map { it.second.attrs.s("active") })
+            val rows=registry(printer).map { it.jsonObject }
+            for ((index,address) in listOf(1 to 128,2 to 129)) {
+                val id=rows.first { it.s("unique_id")!!.endsWith("AMS_${index}_tray_1") }.s("entity_id")!!
+                printer.command("bambu_lab/load_filament","entity_id" to id)
+                assertEquals(address.toString(),link.sent.last().o("print")!!.s("target"))
+                printer.command("bambu_lab/set_filament","entity_id" to id,"filament_id" to FILAMENT_PRESETS.first().id,"color" to "FFFFFF")
+                assertEquals(address.toString(),link.sent.last().o("print")!!.s("ams_id"))
+            }
         } finally { printer.stop() }
     }
 
@@ -70,8 +98,10 @@ class DirectPrinterTest {
         val printer=DirectPrinter(config,true,{Link(report())},{storage})
         try {
             assertEquals(listOf("test.3mf"),printer.listFiles("/cache").map { it.name })
+            assertTrue(printer.get("/api/bambu_lab/print_history").contains("test.3mf"))
             printer.deleteFile("/cache/test.3mf")
             assertEquals(emptyList(),printer.listFiles("/cache"))
+            assertFalse(printer.get("/api/bambu_lab/print_history").contains("test.3mf"))
         } finally { printer.stop() }
     }
 

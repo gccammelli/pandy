@@ -153,9 +153,9 @@ fun hmsCode(attr: Long, code: Long): String {
 fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = null): List<Pair<LanRow, Entity>> {
     val p = r.o("print") ?: JsonObject(emptyMap())
     val out = mutableListOf<Pair<LanRow, Entity>>()
-    fun add(domain: String, key: String, state: Any?, attrs: JsonObject = JsonObject(emptyMap()), device: String = "printer", uid: String = key, deviceModel: String = "") {
+    fun add(domain: String, key: String, state: Any?, attrs: JsonObject = JsonObject(emptyMap()), device: String = "printer", uid: String = key, deviceModel: String = "", trayAmsId: Int? = null) {
         val id = "$domain.pandy_${c.serial.lowercase()}_${uid.lowercase()}"
-        out += LanRow(device, domain, key, uid, id, deviceModel) to Entity(id, state?.toString() ?: "unknown", attrs)
+        out += LanRow(device, domain, key, uid, id, deviceModel, trayAmsId) to Entity(id, state?.toString() ?: "unknown", attrs)
     }
     val connected = if (online) "on" else "off"
     add("binary_sensor", "online", connected)
@@ -267,7 +267,7 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
             val type = t.str("tray_type").orEmpty()
             val name = t.str("tray_sub_brands")?.takeIf { it.isNotBlank() }?.let { if (it.startsWith(type)) "Bambu $it" else it } ?: type
             val trayId = if (isHt) htId else ai * 4 + ti
-            add("sensor", "tray", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayId.toString() == trayNow, ti + 1), dev, "AMS_${amsIndex + 1}_tray_${ti + 1}", deviceModel)
+            add("sensor", "tray", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayId.toString() == trayNow, ti + 1), dev, "AMS_${amsIndex + 1}_tray_${ti + 1}", deviceModel, htId)
         }
     }
     p.o("vt_tray")?.let { t ->
@@ -290,7 +290,7 @@ private fun trayAttrs(t: JsonObject, name: String, active: Boolean, slot: Int) =
 /** The current job's 3MF, read from the printer's storage: plate picture, pick map and parts. */
 class LanJob(val key: String, val cover: ByteArray?, val pick: ByteArray?, val objects: Map<Int, String>)
 
-data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String, val deviceModel: String = "")
+data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String, val deviceModel: String = "", val trayAmsId: Int? = null)
 
 private fun printCommand(sequenceId: String, command: String, fields: JsonObject = JsonObject(emptyMap())) = buildJsonObject {
     put("print", JsonObject(buildJsonObject { put("sequence_id", sequenceId); put("command", command) } + fields))
@@ -724,9 +724,7 @@ class DirectPrinter(
         val r = rowOf(entityId) ?: throw ApiException("Unknown tray")
         if (r.device == "ext") return 254 to 0
         val (_, t) = Regex("""AMS_(\d+)_tray_(\d+)""").find(r.uid)!!.destructured
-        val unit = r.device.removePrefix("ams").toInt() // tray rows belong to an "ams<N>" device
-        val amsId = if (r.deviceModel.contains("HT", ignoreCase = true)) unit.takeIf { it >= 128 } ?: 128 else unit
-        return amsId to t.toInt() - 1
+        return r.trayAmsId!! to t.toInt() - 1
     }
 
     // ---------- The printer's files, for the file manager ----------
