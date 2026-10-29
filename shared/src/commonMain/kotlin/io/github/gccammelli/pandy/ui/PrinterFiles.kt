@@ -54,7 +54,7 @@ private val SWATCHES = listOf("FFFFFF", "161616", "9D9D9D", "C12E1F", "F98C36", 
 fun EditFilamentSheet(p: Printer, s: Spool, close: () -> Unit) {
     val err = errorToast()
     var preset by remember(s) { mutableStateOf(FILAMENT_PRESETS.firstOrNull { it.id == s.filamentId } ?: FILAMENT_PRESETS.firstOrNull { it.type == s.type }) }
-    var hex by remember(s) { mutableStateOf(if (s.known) "%06X".format(s.color and 0xFFFFFF) else "FFFFFF") }
+    var hex by remember(s) { mutableStateOf(if (s.known) (s.color and 0xFFFFFF).toString(16).uppercase().padStart(6, '0') else "FFFFFF") }
     val valid = Regex("[0-9A-Fa-f]{6}").matches(hex)
     Sheet(close, "Edit filament", centeredTitle = true, confirm = "Save", confirmEnabled = preset != null && valid, onConfirm = { p.setFilament(s, preset!!, hex, err); close() }) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
