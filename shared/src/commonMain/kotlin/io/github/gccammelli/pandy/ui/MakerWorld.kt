@@ -208,7 +208,8 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     // A plain model (an STL) has no filament of its own: the user picks one of the printer's loaded spools to print it in.
     val spools = p.loadedSpools()
     var chosenTray by remember { mutableStateOf<Int?>(null) }
-    val plainTray = (chosenTray ?: spools.firstOrNull()?.first)?.takeIf { t -> spools.any { it.first == t } }
+    val pickedSpool = spools.firstOrNull { it.first == chosenTray } ?: spools.firstOrNull()
+    val plainTray = pickedSpool?.first
     val name = d.name.replace(Regex("(?i)\\.(3mf|stl|gcode)$"), "")
 
     DisposableEffect(view, step) {
@@ -291,7 +292,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         val selectedFlow = flow
         val selectedBuildPlate = buildPlate
         val selectedPresets = presets
-        val plainSpool = spools.firstOrNull { projectNow.filaments.isEmpty() && it.first == plainTray }
+        val plainSpool = pickedSpool.takeIf { projectNow.filaments.isEmpty() }
         step = Step.Slicing
         scope.launch {
             runCatching {
@@ -368,7 +369,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             setCode = { code = it }, modelNotice = shortModel(pr.printerModel)?.takeIf { it != p.model }?.let { "Prepared for ${p.model}; the designer's ${it} profile will be converted by Pandy Slicer." },
             setupNote = setupNote, setupGuide = setupGuide, help = { help = it },
         )
-        PrepareView.Preview -> PreviewView(p, pr, plate, auto, manualMapping, presets, plainColor = spools.firstOrNull { it.first == plainTray }?.second?.color, back = { view = PrepareView.Prepare })
+        PrepareView.Preview -> PreviewView(p, pr, plate, auto, manualMapping, presets, plainColor = pickedSpool?.second?.color, back = { view = PrepareView.Prepare })
     }
 
     if (printerPicker) PrinterPicker(p, buildPlate, close = { printerPicker = false }, plate = { printerPicker = false; platePicker = true })

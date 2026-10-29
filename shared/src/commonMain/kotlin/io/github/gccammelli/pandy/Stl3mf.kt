@@ -68,7 +68,7 @@ fun stlPreviewMesh(data: ByteArray, maxTriangles: Int = 20_000): PreviewMesh {
             val (ka, a) = vertexAt(t * 9); val (kb, b) = vertexAt(t * 9 + 3); val (kc, c) = vertexAt(t * 9 + 6)
             if (ka == kb || kb == kc || ka == kc) continue // collapsed into a line or point
             val key = listOf(ka, kb, kc).map { ids.getOrPut(it) { index++ } }.sorted().let { Triple(it[0], it[1], it[2]) }
-            if (cells == 0 || seen.add(key)) out += PreviewTriangle(a, b, c)
+            if (seen.add(key)) out += PreviewTriangle(a, b, c) // (a model's own repeated triangles are drawn once)
         }
         if (out.size <= maxTriangles || cells <= 8) return PreviewMesh(out)
         cells = cells * 4 / 5
