@@ -99,8 +99,9 @@ class ScreenTest {
             override fun putString(key: String, value: String?) { if (value == null) values.remove(key) else values[key] = value }
             override fun clear() = values.clear()
         }, object : SecretStore {
-            override fun get(key: String): String? = null
-            override fun set(key: String, value: String?) = Unit
+            private val secrets = mutableMapOf<String,String>()
+            override fun get(key: String): String? = secrets[key]
+            override fun set(key: String, value: String?) { if (value == null) secrets.remove(key) else secrets[key] = value }
         }, object : AppFiles {
             override fun read(name: String): ByteArray? = null
             override fun write(name: String, bytes: ByteArray) = Unit
@@ -415,12 +416,12 @@ class ScreenTest {
     }
 
     @Test fun theCustomStreamUrlIsSavedAndCleared() {
-        Repo.setSetting(CUSTOM_STREAM_KEY,null)
         show("Liveview Settings") { LiveviewSettingsScreen() }
         compose.onNodeWithText("Stream URL (rtsp:// or http://)").performTextInput("rtsp://camera.local/stream")
-        assertEquals("rtsp://camera.local/stream",Repo.setting(CUSTOM_STREAM_KEY))
+        assertEquals("rtsp://camera.local/stream",Repo.customStream)
+        kotlin.test.assertNull(Repo.setting("custom_stream_url")) // never in the settings that are backed up
         compose.onNode(hasSetTextAction()).performTextReplacement("")
-        assertEquals(null,Repo.setting(CUSTOM_STREAM_KEY))
+        assertEquals(null,Repo.customStream)
     }
 
     @Test fun aCustomStreamReplacesThePrintersCameraAndReportsFailure() {
@@ -428,11 +429,28 @@ class ScreenTest {
         server.createContext("/") { exchange -> exchange.sendResponseHeaders(404,-1); exchange.close() }
         server.start()
         try {
-            Repo.setSetting(CUSTOM_STREAM_KEY,"http://127.0.0.1:${server.address.port}/live.m3u8")
+            Repo.setCustomStream("http://127.0.0.1:${server.address.port}/live.m3u8"); Repo.setSetting("liveview_autoplay","always")
             compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { LiveView(printer,androidx.compose.ui.Modifier.size(320.dp,180.dp),zoom=true) } } }
             compose.waitUntil(15000) { compose.waitForIdle(); compose.onAllNodesWithText("Try again",substring=true).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Try again").performClick()
-        } finally { Repo.setSetting(CUSTOM_STREAM_KEY,null); server.stop(0) }
+        } finally { Repo.setCustomStream(null); Repo.setSetting("liveview_autoplay",null); server.stop(0) }
+    }
+
+    @Test fun aCustomStreamWaitsForATapWhenAutoplayIsOff() {
+        Repo.setCustomStream("rtsp://camera.local/stream"); Repo.setSetting("liveview_autoplay","off")
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { LiveView(printer,androidx.compose.ui.Modifier.size(320.dp,180.dp)) } } }
+        try { compose.onNodeWithText("Tap to view").assertExists() } finally { Repo.setCustomStream(null); Repo.setSetting("liveview_autoplay",null) }
+    }
+
+    @Test fun aTaggedBambuSpoolIsNotOfferedForEditing() {
+        val id=snapshot.keys.first { snapshot.getValue(it).attrs.s("name")=="Bambu PETG HF" }
+        val states=snapshot.toMutableMap()
+        states[id]=Entity(id,states.getValue(id).state,JsonObject(states.getValue(id).attrs+("tag_uid" to JsonPrimitive("A1B2C3D4E5F60718"))))
+        val finished=Printer(printer.info,states+(printer.info.ids.getValue("sensor.print_status") to Entity(printer.info.ids.getValue("sensor.print_status"),"finish",states.getValue(printer.info.ids.getValue("sensor.print_status")).attrs)))
+        show("Filament") { FilamentScreen(finished) }
+        compose.onNodeWithText("A3").performClick()
+        compose.onAllNodesWithText("Edit filament").assertCountEquals(0)
+        compose.onNodeWithText("This spool has a Bambu tag, so the AMS reads its filament itself. Only spools without a tag can be edited.").assertExists()
     }
 
     @Test fun liveViewShowsSettings() = show("Liveview Settings") { LiveviewSettingsScreen() }

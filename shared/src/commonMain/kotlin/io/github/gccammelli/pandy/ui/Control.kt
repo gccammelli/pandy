@@ -262,7 +262,7 @@ private fun StepButton(icon: androidx.compose.ui.graphics.vector.ImageVector, en
 fun MotionScreen(p: Printer) {
     val err = errorToast()
     Page("XYZ", { Nav.back() }) {
-        if (p.camera != null || !Repo.setting(CUSTOM_STREAM_KEY).isNullOrBlank()) LiveView(p, Modifier.fillMaxWidth().aspectRatio(16 / 9f))
+        if (p.camera != null || Repo.customStream != null) LiveView(p, Modifier.fillMaxWidth().aspectRatio(16 / 9f))
         if (p.printing) T("Motion is unavailable while printing.", 13.sp, C.Orange, modifier = Modifier.padding(16.dp))
         Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {

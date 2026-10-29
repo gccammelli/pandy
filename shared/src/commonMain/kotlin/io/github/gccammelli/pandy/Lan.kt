@@ -284,7 +284,7 @@ private fun trayAttrs(t: JsonObject, name: String, active: Boolean, slot: Int) =
     put("active", active); put("color", "#$color"); putJsonArray("cols") { add(JsonPrimitive("#$color")) }
     put("empty", t.str("tray_type").isNullOrEmpty()); put("name", name); put("type", t.str("tray_type").orEmpty())
     put("remain", t.int("remain") ?: -1); put("nozzle_temp_min", t.str("nozzle_temp_min")); put("nozzle_temp_max", t.str("nozzle_temp_max"))
-    put("filament_id", t.str("tray_info_idx"))
+    put("filament_id", t.str("tray_info_idx")); put("tag_uid", t.str("tag_uid"))
 }
 
 /** The current job's 3MF, read from the printer's storage: plate picture, pick map and parts. */
@@ -300,11 +300,12 @@ fun calibrationCommand(sequenceId: String, option: Int) = printCommand(sequenceI
 
 /**
  * Sets what an AMS tray (or the external spool) holds, as Bambu Studio does. [amsId] is the unit (0-3, 128+ for AMS HT,
- * 255 for the external spool); [slot] the tray in it (0 for an AMS HT, 254 for the external spool). [color] is "RRGGBB".
+ * 255 for the external spool); [slot] the tray in it (0 for an AMS HT and the external spool); [trayId] is the slot
+ * again, except the external spool's 254. [color] is "RRGGBB".
  */
-fun amsFilamentSettingCommand(sequenceId: String, amsId: Int, slot: Int, f: FilamentPreset, color: String) =
+fun amsFilamentSettingCommand(sequenceId: String, amsId: Int, slot: Int, trayId: Int, f: FilamentPreset, color: String) =
     printCommand(sequenceId, "ams_filament_setting", buildJsonObject {
-        put("ams_id", amsId); put("slot_id", slot); put("tray_id", slot)
+        put("ams_id", amsId); put("slot_id", slot); put("tray_id", trayId)
         put("tray_info_idx", f.id); put("tray_type", f.type); put("tray_color", color.uppercase().removePrefix("#").take(6).padEnd(6, '0') + "FF")
         put("nozzle_temp_min", f.min); put("nozzle_temp_max", f.max); put("setting_id", f.settingId)
     })
@@ -677,8 +678,8 @@ class DirectPrinter(
             "bambu_lab/set_filament" -> {
                 val preset = FILAMENT_PRESETS.firstOrNull { it.id == d.s("filament_id") } ?: throw ApiException("Unknown filament")
                 val (ams, slot) = trayAddress(target)
-                val (unit, tray) = if (ams == 254) 255 to 254 else ams to slot
-                publish(amsFilamentSettingCommand(nextSeq(), unit, tray, preset, d.s("color").orEmpty()))
+                val external = ams == 254
+                publish(amsFilamentSettingCommand(nextSeq(), if (external) 255 else ams, if (external) 0 else slot, if (external) 254 else slot, preset, d.s("color").orEmpty()))
             }
             "bambu_lab/print_project_file" -> {
                 val file = d.s("filepath") ?: throw ApiException("No file")

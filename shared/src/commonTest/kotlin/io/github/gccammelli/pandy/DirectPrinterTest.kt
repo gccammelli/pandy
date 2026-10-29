@@ -34,13 +34,13 @@ class DirectPrinterTest {
         try {
             val trays=registry(printer).map { it.jsonObject }.filter { it.s("translation_key") in listOf("tray","external_spool") }
             val petg=FILAMENT_PRESETS.first { it.id=="GFG99" }
-            // (tray row, AMS unit, slot) as the printer addresses them
-            for ((suffix,expected) in listOf("AMS_1_tray_2" to (0 to 1),"AMS_2_tray_1" to (128 to 0),"external_spool" to (255 to 254))) {
+            // (tray row, AMS unit, slot, tray id) as the printer addresses them; the external spool is unit 255, slot 0, tray 254
+            for ((suffix,expected) in listOf("AMS_1_tray_2" to Triple(0,1,1),"AMS_2_tray_1" to Triple(128,0,0),"external_spool" to Triple(255,0,254))) {
                 val row=trays.first { it.s("unique_id")!!.endsWith(suffix) }
                 printer.command("bambu_lab/set_filament","entity_id" to row.s("entity_id")!!,"filament_id" to petg.id,"color" to "#c12e1f")
                 val sent=link.sent.last().o("print")!!
                 assertEquals("ams_filament_setting",sent.s("command"))
-                assertEquals(expected.first.toString(),sent.s("ams_id")); assertEquals(expected.second.toString(),sent.s("slot_id")); assertEquals(expected.second.toString(),sent.s("tray_id"))
+                assertEquals(expected.first.toString(),sent.s("ams_id")); assertEquals(expected.second.toString(),sent.s("slot_id")); assertEquals(expected.third.toString(),sent.s("tray_id"))
                 assertEquals("GFG99",sent.s("tray_info_idx")); assertEquals("PETG",sent.s("tray_type")); assertEquals("GFSG99",sent.s("setting_id"))
                 assertEquals("C12E1FFF",sent.s("tray_color")); assertEquals("220",sent.s("nozzle_temp_min")); assertEquals("270",sent.s("nozzle_temp_max"))
             }
@@ -48,6 +48,12 @@ class DirectPrinterTest {
             assertFailsWith<ApiException> { printer.command("bambu_lab/set_filament","entity_id" to row,"filament_id" to "nope","color" to "FFFFFF") }
             assertFailsWith<ApiException> { printer.command("bambu_lab/set_filament","entity_id" to "missing","filament_id" to petg.id,"color" to "FFFFFF") }
         } finally { printer.stop() }
+    }
+
+    @Test fun aTaggedSpoolIsMarkedSoItIsNotEdited() {
+        val ams=""","ams":{"ams":[{"id":"0","tray":[{"id":"0","tray_type":"PLA","tag_uid":"A1B2C3D4E5F60718"},{"id":"1","tray_type":"PLA","tag_uid":"0000000000000000"},{"id":"2","tray_type":"PLA"}]}]}"""
+        val trays=lanEntities(config,json.parseToJsonElement(report(ams)).jsonObject,true).map { it.second }.filter { it.attrs.s("slot")!=null }.sortedBy { it.attrs.s("slot") }
+        assertEquals(listOf(true,false,false,false),trays.map { spoolFrom(it,0).rfid })
     }
 
     @Test fun storageThatCannotDeleteSaysSo() = runBlocking<Unit> {

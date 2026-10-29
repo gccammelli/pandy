@@ -177,7 +177,7 @@ object Repo {
     fun logout() {
         stop()
         directBackend?.stop(); directBackend = null
-        store.secrets.set("ha_token", null); store.secrets.set("lan_code", null)
+        store.secrets.set("ha_token", null); store.secrets.set("lan_code", null); store.secrets.set("custom_stream_url", null)
         token = null
         store.settings.clear()
         store.settings.putString("theme", io.github.gccammelli.pandy.ui.ThemeMode.mode)
@@ -191,6 +191,10 @@ object Repo {
         set(v) = store.settings.putString("printer", v)
 
     fun setTheme(mode: String) { io.github.gccammelli.pandy.ui.ThemeMode.mode = mode; store.settings.putString("theme", mode) }
+
+    /** A camera stream the user added (RTSP or HTTP); it can carry a password, so it lives with the secrets, not the settings backed up with the app. */
+    val customStream get() = store.secrets.get("custom_stream_url")?.takeIf { it.isNotBlank() }
+    fun setCustomStream(url: String?) = store.secrets.set("custom_stream_url", url?.ifBlank { null })
 
     fun setting(key: String) = store.settings.getString(key)
     fun setSetting(key: String, value: String?) = store.settings.putString(key, value)

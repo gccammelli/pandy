@@ -55,21 +55,15 @@ import kotlin.time.Clock
  * that isn't offered (P1 and A1 cameras, the demo) it shows the camera picture, refreshed every second, which is what
  * those cameras send anyway.
  */
-const val CUSTOM_STREAM_KEY = "custom_stream_url"
-
 @Composable
 fun LiveView(p: Printer, modifier: Modifier, onFull: (() -> Unit)? = null, zoom: Boolean = false) {
-    val custom = Repo.setting(CUSTOM_STREAM_KEY)?.takeIf { it.isNotBlank() }
-    if (custom != null) return CustomStream(custom, modifier, zoom)
+    val custom = Repo.customStream
+    if (custom != null) return CustomStream(custom, modifier, zoom, liveAutoplay(Repo.setting("liveview_autoplay") ?: "wifi"))
     val cam = p.camera ?: return Box(modifier.background(Color.Black))
     val err = errorToast()
     val camOn = p["switch.camera"]?.on != false
     val autoplay = Repo.setting("liveview_autoplay") ?: "wifi"
-    val autoplayAllowed = when (autoplay) {
-        "always" -> true
-        "wifi" -> Repo.direct || Repo.demo
-        else -> false
-    }
+    val autoplayAllowed = liveAutoplay(autoplay)
     var started by remember(cam, autoplayAllowed) { mutableStateOf(autoplayAllowed) }
     var hls by remember(cam) { mutableStateOf<String?>(null) }
     var stills by remember(cam) { mutableStateOf(false) }
@@ -128,15 +122,20 @@ fun LiveView(p: Printer, modifier: Modifier, onFull: (() -> Unit)? = null, zoom:
 
 /** A camera the user added themselves (RTSP, or an HTTP stream the player can open), shown in place of the printer's. */
 @Composable
-private fun CustomStream(url: String, modifier: Modifier, zoom: Boolean) {
+private fun CustomStream(url: String, modifier: Modifier, zoom: Boolean, autoplay: Boolean) {
     var failed by remember(url) { mutableStateOf<String?>(null) }
+    var started by remember(url, autoplay) { mutableStateOf(autoplay) }
     var scale by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     Box(modifier.background(Color.Black).let {
         if (zoom) it.pointerInput(Unit) { detectTransformGestures { _, move, z, _ -> scale = (scale * z).coerceIn(1f, 5f); pan = if (scale == 1f) Offset.Zero else pan + move } } else it
     }) {
         val msg = failed
-        if (msg != null) Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (!started) Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Outlined.Videocam, null, Modifier.size(32.dp), tint = Color.White.copy(alpha = .7f))
+            Gap(8.dp)
+            T("Tap to view", 13.sp, C.Accent, modifier = Modifier.clickable { started = true }.padding(8.dp))
+        } else if (msg != null) Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Outlined.VideocamOff, null, Modifier.size(32.dp), tint = Color.White.copy(alpha = .7f))
             Gap(8.dp)
             T("Couldn't play the custom stream ($msg)", 13.sp, Color.White.copy(alpha = .8f))
@@ -144,6 +143,13 @@ private fun CustomStream(url: String, modifier: Modifier, zoom: Boolean) {
             T("Try again", 13.sp, C.Accent, modifier = Modifier.clickable { failed = null }.padding(8.dp))
         } else VideoPlayer(url, muted = true, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = pan.x; translationY = pan.y }, onError = { failed = it })
     }
+}
+
+/** Handy's live-view autoplay choice: "always", "wifi" (the direct LAN and the demo count as Wi-Fi) or "off". */
+private fun liveAutoplay(mode: String) = when (mode) {
+    "always" -> true
+    "wifi" -> Repo.direct || Repo.demo
+    else -> false
 }
 
 @Composable
