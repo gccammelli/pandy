@@ -44,6 +44,21 @@ class MultiPrinterTest {
         } finally { Repo.logout() }
     }
 
+    @Test fun ignoresIncompleteOrInvalidSavedPrinterEntries() {
+        try {
+            boot()
+            settings.putString("lan_printers", """[{"ip":"10.20.0.1"},{"serial":"missing-ip"},{"serial":"missing-code","ip":"10.20.0.2"},{"serial":"saved","ip":"10.20.0.3"}]""")
+            secrets.set("lan_code_saved", "code")
+            val saved = Repo.directPrinters.single()
+            assertEquals("saved", saved.serial)
+            assertEquals("", saved.name)
+            Repo.switchDirectPrinter("unknown")
+            assertNull(Repo.lan)
+            settings.putString("lan_printers", "not json")
+            assertTrue(Repo.directPrinters.isEmpty())
+        } finally { Repo.logout() }
+    }
+
     @Test fun addsSwitchesPersistsAndRemovesPrinters() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         val published = mutableListOf<String>()
