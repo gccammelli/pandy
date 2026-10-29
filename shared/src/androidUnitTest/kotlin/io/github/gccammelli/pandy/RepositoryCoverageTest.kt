@@ -171,6 +171,10 @@ class RepositoryCoverageTest {
             assertEquals(config.serial, Repo.lan!!.serial)
             assertTrue(Repo.ha is PreferPrimaryBackend)
             assertTrue(Repo.extras is HaHttp)
+            Repo.saveLan(second.copy(ip = "127.0.0.1"))
+            Repo.switchDirectPrinter(config.serial) // the default factory retains Home Assistant fallback
+            assertTrue(Repo.ha is PreferPrimaryBackend)
+            Repo.stop()
         } finally { Repo.logout(); Dispatchers.resetMain() }
     }
 

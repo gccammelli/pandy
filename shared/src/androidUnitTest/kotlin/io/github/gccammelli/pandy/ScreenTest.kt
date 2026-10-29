@@ -1476,6 +1476,12 @@ class ScreenTest {
         compose.onNodeWithText("Printers").assertDoesNotExist()
     }
 
+    @Test fun printerSelectorHandlesAnEmptyPrinterList() {
+        show(printer.name) { DevicesTab(st.copy(printers = null), printer) }
+        compose.onNodeWithText(printer.name).performClick()
+        compose.onNodeWithText("Printers").assertExists()
+    }
+
     @Test fun failedOrUnmatchedCachedPrintSettingsKeepTheSendActionDisabled() {
         val demo=FakeHomeAssistant()
         var failure=true
