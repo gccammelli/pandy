@@ -436,6 +436,8 @@ class ScreenTest {
 
     @Test fun printerStorageIsOfferedOnlyWhereThePrinterCanBeBrowsed() {
         show("Settings") { PrinterSettingsScreen(printer) }
+        compose.onNodeWithText("Files", substring = false).performScrollTo().performClick()
+        kotlin.test.assertIs<Screen.Files>(Nav.stack.last())
         compose.onNodeWithText("Printer storage").performScrollTo().performClick()
         kotlin.test.assertIs<Screen.PrinterFiles>(Nav.stack.last())
     }
@@ -525,6 +527,14 @@ class ScreenTest {
         kotlin.test.assertNull(Repo.setting("custom_stream_url")) // never in the settings that are backed up
         compose.onNode(hasSetTextAction()).performTextReplacement("")
         assertEquals(null,Repo.customStream)
+    }
+
+    @Test fun liveviewSettingsShowsTheSavedStream() {
+        try {
+            Repo.setCustomStream("rtsp://camera.local/stream")
+            show("Liveview Settings") { LiveviewSettingsScreen() }
+            compose.onNodeWithText("rtsp://camera.local/stream").assertExists()
+        } finally { Repo.setCustomStream(null) }
     }
 
     @Test fun aCustomStreamReplacesThePrintersCameraAndReportsFailure() {
