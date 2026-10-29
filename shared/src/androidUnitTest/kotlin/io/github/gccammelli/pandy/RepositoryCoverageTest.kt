@@ -165,6 +165,12 @@ class RepositoryCoverageTest {
             assertTrue(Repo.ha is PreferPrimaryBackend); assertTrue(Repo.extras is HaHttp)
             Repo.connectPrinter(config.copy(name = "Renamed")) { idleLink() } // replaces the first direct printer
             assertEquals("Renamed", Repo.lan!!.name)
+            val second = config.copy(serial = "SECOND-PRINTER", name = "Second")
+            Repo.connectPrinter(second) { idleLink() }
+            Repo.switchDirectPrinter(config.serial) { idleLink() }
+            assertEquals(config.serial, Repo.lan!!.serial)
+            assertTrue(Repo.ha is PreferPrimaryBackend)
+            assertTrue(Repo.extras is HaHttp)
         } finally { Repo.logout(); Dispatchers.resetMain() }
     }
 

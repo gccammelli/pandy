@@ -231,6 +231,38 @@ class ScreenTest {
         } finally { Repo.setSetting("demo", demo); Repo.setSetting("mode", mode); Nav.stack.clear() }
     }
 
+    @Test fun directPrinterSelectorDistinguishesActiveAndSavedPrinters() {
+        val store = Repo::class.java.getDeclaredField("store").apply { isAccessible = true }.get(Repo) as PlatformStorage
+        val keys = listOf("demo", "mode", "lan_printers", "lan_serial", "lan_ip", "lan_model", "lan_name")
+        val previous = keys.associateWith { store.settings.getString(it) }
+        val backendField = Repo::class.java.getDeclaredField("directBackend").apply { isAccessible = true }
+        val previousBackend = backendField.get(Repo)
+        try {
+            Repo.setSetting("demo", "false"); Repo.setSetting("mode", "lan")
+            Repo.setSetting("lan_printers", "[]"); Repo.setSetting("lan_serial", null)
+            Repo.saveLan(LanConfig("10.20.0.1", "TEST-ONE", "code", "P1S", "Workshop"))
+            Repo.saveLan(LanConfig("10.20.0.2", "TEST-TWO", "code", "X1C", ""))
+            backendField.set(Repo, DirectPrinter(Repo.lan!!))
+            val live = androidx.compose.runtime.mutableStateOf(false)
+            show(printer.name) { DevicesTab(st.copy(live = live.value), printer) }
+            compose.onNodeWithText(printer.name).performClick()
+            compose.onNodeWithText("Workshop").assertExists()
+            compose.onNodeWithText("X1C").assertExists()
+            compose.onNodeWithText("Unknown").assertExists()
+            compose.onAllNodesWithText("Connecting…").assertCountEquals(2)
+            compose.onNodeWithText("X1C").performClick()
+            compose.onNodeWithText("Printers").assertDoesNotExist()
+            compose.runOnIdle { live.value = true }
+            compose.onNodeWithText(printer.name).performClick()
+            compose.onNodeWithText("Unknown").assertExists()
+        } finally {
+            backendField.set(Repo, previousBackend)
+            previous.forEach { (key, value) -> store.settings.putString(key, value) }
+            store.secrets.set("lan_code_TEST-ONE", null); store.secrets.set("lan_code_TEST-TWO", null)
+            Nav.stack.clear()
+        }
+    }
+
     @Test fun devicesShowPrinter() = show(printer.name) { DevicesTab(st, printer) }
     @Test fun controlsShowTemperatures() = show("Device Control") { ControlScreen(printer) }
     @Test fun motionShowsAxes() = show("XYZ") { MotionScreen(printer) }
@@ -350,6 +382,9 @@ class ScreenTest {
         compose.waitUntil(5000) { compose.onAllNodesWithText("benchy.3mf").fetchSemanticsNodes().isEmpty() && compose.onAllNodesWithText("phone_stand.3mf").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("Back").performClick() // up from /cache to the root
         compose.waitUntil(5000) { compose.onAllNodesWithText("timelapse").fetchSemanticsNodes().isNotEmpty() }
+        kotlin.test.assertTrue(Nav.stack.none { it is Screen.PrinterFiles })
+        Nav.go(Screen.PrinterFiles)
+        compose.onNodeWithContentDescription("Back").performClick() // back at the root leaves storage
         kotlin.test.assertTrue(Nav.stack.none { it is Screen.PrinterFiles })
     }
 
