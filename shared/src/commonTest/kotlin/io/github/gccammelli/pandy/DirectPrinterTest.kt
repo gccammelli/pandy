@@ -50,6 +50,15 @@ class DirectPrinterTest {
         } finally { printer.stop() }
     }
 
+    @Test fun storageThatCannotDeleteSaysSo() = runBlocking<Unit> {
+        val storage=object : PrinterStorage {
+            override suspend fun list(dir: String) = emptyList<FileEntry>()
+            override suspend fun read(path: String,offset: Long,length: Int) = byteArrayOf()
+            override suspend fun write(path: String,data: ByteArray,progress: (Float)->Unit) = Unit
+        }
+        assertFailsWith<ApiException> { storage.delete("/cache/x.3mf") }
+    }
+
     @Test fun theFileManagerListsAndDeletesOnThePrinter() = runBlocking<Unit> {
         val storage=Storage()
         val printer=DirectPrinter(config,true,{Link(report())},{storage})
