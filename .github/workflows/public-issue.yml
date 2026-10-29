@@ -37,18 +37,25 @@ jobs:
       - id: gate
         env:
           GH_TOKEN: ${{ github.token }}
-          ENABLED: ${{ secrets.PUBLIC_ISSUE_AGENT_ENABLED }}
+          ENABLED: ${{ vars.PUBLIC_ISSUE_AGENT_ENABLED }}
           ISSUE: ${{ inputs.issue_number }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          echo "run=false" >> "$GITHUB_OUTPUT"
+          echo "run=stop" >> "$GITHUB_OUTPUT"
           [[ "$ENABLED" == "true" ]] || exit 0
           # At most two agent runs per UTC day, however they were started; a third goes back in the queue.
           today=$(gh api "repos/$REPOSITORY/actions/workflows/public-issue.yml/runs?created=>=$(date -u +%F)&per_page=100" \
             --jq "[.workflow_runs[] | select(.id != $GITHUB_RUN_ID)] | length")
           if (( today >= 2 )); then
             gh issue edit "$ISSUE" --repo "$REPOSITORY" --remove-label agent-attempted,agent-working --add-label agent-backlog
-            echo "over-budget=true" >> "$GITHUB_OUTPUT"
+            status_body=$(printf "<!-- cammelli-bot-status -->\n%s" "Queued for restricted assessment; the daily limit has been reached.")
+            comment_id=$(gh api --paginate "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- cammelli-bot-status -->"))) | .id] | .[]' | head -n 1)
+            if [[ -n "$comment_id" ]]; then
+              gh api --method PATCH "repos/$REPOSITORY/issues/comments/$comment_id" -f body="$status_body" >/dev/null
+            else
+              gh api --method POST "repos/$REPOSITORY/issues/$ISSUE/comments" -f body="$status_body" >/dev/null
+            fi
+            echo "over-budget=go" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           issue_json=$(gh issue view "$ISSUE" --repo "$REPOSITORY" --json body,labels,state)
@@ -59,11 +66,11 @@ jobs:
           (( body_length >= 40 && body_length <= 60000 )) || exit 0
           base=$(gh api "repos/$REPOSITORY/git/ref/heads/$BASE_BRANCH" --jq .object.sha)
           echo "base=$base" >> "$GITHUB_OUTPUT"
-          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "run=go" >> "$GITHUB_OUTPUT"
 
   intake-declined:
     needs: intake
-    if: always() && needs.intake.outputs.run != 'true' && needs.intake.outputs.over-budget != 'true'
+    if: always() && needs.intake.outputs.run != 'go' && needs.intake.outputs.over-budget != 'go'
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -74,11 +81,17 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           gh issue edit "$ISSUE" --repo "$REPOSITORY" --remove-label agent-attempted,agent-working --add-label agent-needs-review
-          gh issue comment "$ISSUE" --repo "$REPOSITORY" --body "The queued request changed or no longer meets the guarded automation boundary. No agent ran; maintainer review is required."
+          status_body=$(printf "<!-- cammelli-bot-status -->\n%s" "Needs review: the request no longer meets the intake gate. https://github.com/$REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+          comment_id=$(gh api --paginate "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- cammelli-bot-status -->"))) | .id] | .[]' | head -n 1)
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/$REPOSITORY/issues/comments/$comment_id" -f body="$status_body" >/dev/null
+          else
+            gh api --method POST "repos/$REPOSITORY/issues/$ISSUE/comments" -f body="$status_body" >/dev/null
+          fi
 
   repair:
     needs: intake
-    if: needs.intake.outputs.run == 'true'
+    if: needs.intake.outputs.run == 'go'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -194,7 +207,13 @@ jobs:
           pr=$(gh pr create --repo "$REPOSITORY" --base "$BASE_BRANCH" --head "$branch" --draft --title "Agent proposal for issue #$ISSUE" --body-file pr-body.md)
           gh pr edit "$pr" --repo "$REPOSITORY" --add-label agent-generated,needs-maintainer-approval
           gh issue edit "$ISSUE" --repo "$REPOSITORY" --remove-label agent-working --add-label agent-pr
-          gh issue comment "$ISSUE" --repo "$REPOSITORY" --body "A tested draft proposal is ready for maintainer review: $pr. It will not merge without explicit approval."
+          status_body=$(printf "<!-- cammelli-bot-status -->\n%s" "Draft PR ready for maintainer review: $pr")
+          comment_id=$(gh api --paginate "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- cammelli-bot-status -->"))) | .id] | .[]' | head -n 1)
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/$REPOSITORY/issues/comments/$comment_id" -f body="$status_body" >/dev/null
+          else
+            gh api --method POST "repos/$REPOSITORY/issues/$ISSUE/comments" -f body="$status_body" >/dev/null
+          fi
           echo "Draft pull request: $pr" >> "$GITHUB_STEP_SUMMARY"
           echo "PR_URL=$pr" >> "$GITHUB_ENV"
       - name: Notify Discord
@@ -221,11 +240,17 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           gh issue edit "$ISSUE" --repo "$REPOSITORY" --remove-label agent-working --add-label agent-needs-review
-          gh issue comment "$ISSUE" --repo "$REPOSITORY" --body "The restricted agent did not consider this safe and bounded enough for autonomous work. It remains open for maintainer triage."
+          status_body=$(printf "<!-- cammelli-bot-status -->\n%s" "Needs review: the agent could not prepare a safe, bounded change. https://github.com/$REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+          comment_id=$(gh api --paginate "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- cammelli-bot-status -->"))) | .id] | .[]' | head -n 1)
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/$REPOSITORY/issues/comments/$comment_id" -f body="$status_body" >/dev/null
+          else
+            gh api --method POST "repos/$REPOSITORY/issues/$ISSUE/comments" -f body="$status_body" >/dev/null
+          fi
 
   failed:
     needs: [intake, repair, validate, publish]
-    if: always() && needs.intake.outputs.run == 'true' && (needs.repair.result == 'failure' || needs.validate.result == 'failure' || needs.publish.result == 'failure')
+    if: always() && needs.intake.outputs.run == 'go' && (needs.repair.result == 'failure' || needs.validate.result == 'failure' || needs.publish.result == 'failure')
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -236,4 +261,10 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           gh issue edit "$ISSUE" --repo "$REPOSITORY" --remove-label agent-working --add-label agent-needs-review
-          gh issue comment "$ISSUE" --repo "$REPOSITORY" --body "The automated attempt stopped at a safety or test gate and needs maintainer attention: https://github.com/$REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          status_body=$(printf "<!-- cammelli-bot-status -->\n%s" "Stopped at a safety or test gate: https://github.com/$REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+          comment_id=$(gh api --paginate "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- cammelli-bot-status -->"))) | .id] | .[]' | head -n 1)
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/$REPOSITORY/issues/comments/$comment_id" -f body="$status_body" >/dev/null
+          else
+            gh api --method POST "repos/$REPOSITORY/issues/$ISSUE/comments" -f body="$status_body" >/dev/null
+          fi

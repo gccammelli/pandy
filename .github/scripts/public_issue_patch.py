@@ -25,12 +25,13 @@ def allowed(path, status, kind, existed):
     if kind == "mobile":
         test = (path.startswith("shared/src/commonTest/") or
                 path.startswith("shared/src/androidUnitTest/")) and path.endswith(".kt")
-        # Kotlin/Java code the Android tests exercise. Not manifests, resources or network security config (.xml),
-        # and not iOS code, which the validation job can't build or test.
+        # Ordinary source only; platform configuration and resources remain protected.
         source = any(path.startswith(prefix) for prefix in (
             "shared/src/commonMain/kotlin/", "shared/src/androidMain/kotlin/",
+            "shared/src/iosMain/kotlin/",
             "app/src/main/java/", "app/src/main/kotlin/",
         )) and Path(path).suffix in {".kt", ".java"}
+        source = source or (path.startswith("iosApp/iosApp/") and path.endswith(".swift"))
     else:
         test = path.startswith("tests/") and path.endswith(".py")
         source = path.startswith("pandy_slicer/") and path.endswith(".py") and path.count("/") == 1
@@ -99,8 +100,12 @@ def self_test():
     assert not allowed(".github/workflows/build.yml", "M", "mobile", True)[0]
     assert not allowed("app/src/main/AndroidManifest.xml", "M", "mobile", True)[0]
     assert not allowed("app/src/main/res/xml/network_security_config.xml", "A", "mobile", False)[0]
-    assert not allowed("shared/src/iosMain/kotlin/example/Fix.kt", "M", "mobile", True)[0]
-    assert not allowed("iosApp/iosApp/ContentView.swift", "M", "mobile", True)[0]
+    assert allowed("shared/src/iosMain/kotlin/example/Fix.kt", "M", "mobile", True)[1]
+    assert allowed("iosApp/iosApp/ContentView.swift", "M", "mobile", True)[1]
+    for path in ("iosApp/iosApp/Info.plist", "iosApp/iosApp/App.entitlements",
+                 "iosApp/iosApp/Config.xcconfig", "iosApp/iosApp/App.xcscheme",
+                 "iosApp/iosApp.xcodeproj/project.pbxproj"):
+        assert not allowed(path, "M", "mobile", True)[0]
     assert allowed("app/src/main/java/example/Fix.kt", "M", "mobile", True)[1]
     for text in ("see https://example.com", "[docs](x)", "host 10.20.30.41", "<a href=x>", "ftp://h", "www.example.com"):
         assert ADDED_URL.search(text), text
