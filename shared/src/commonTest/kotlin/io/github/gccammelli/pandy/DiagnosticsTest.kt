@@ -34,6 +34,30 @@ class DiagnosticsTest {
         AppLog.clear()
     }
 
+    @Test fun masksCredentialUrlsForAnyScheme() {
+        val samples = listOf(
+            "rtsps://user:ACCESSCODE@host:322/streaming/live/1#SERIAL",
+            "rtsp://user:pass@172.20.1.2/live#serial",
+            "custom+camera://user:pass@printer:123/path?key=value#fragment",
+            "HTTPS://user:pass@example.com"
+        )
+        samples.forEach { assertEquals("[redacted]", redact(it), it) }
+        assertEquals("camera://host/path", redact("camera://host/path"))
+    }
+
+    @Test fun masksIpv6AddressesAndPreservesNearMisses() {
+        val addresses = listOf(
+            "2001:db8:1234:5678:9abc:def0:1234:5678", "2001:db8::1",
+            "::1", "::", "fe80::1%wlan0",
+            "aa:bb:cc:dd:ee:ff:11:22"
+        )
+        addresses.forEach { assertEquals("[redacted]", redact(it), it) }
+        assertEquals("[[redacted]]:322", redact("[fe80::1%wlan0]:322"))
+        val unchanged = listOf("12:30:45", "1:2:3:4:5:6:7", "1:2:3:4:5:6:7:8:9", "version 1.2.3", "12345::1")
+        unchanged.forEach { assertEquals(it, redact(it), it) }
+        assertEquals("[redacted]", redact("aa:bb:cc:dd:ee:ff"))
+    }
+
     @Test fun preservesOrdinaryMeasurements() {
         val text = "version 1.2.3, 2026-10-29, 210°C, 42%"
         assertEquals(text, redact(text))
