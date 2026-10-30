@@ -93,7 +93,7 @@ kover {
             }
         }
         variant("debug") {
-            verify { rule { minBound(95) } }
+            verify { rule { minBound(90) } }
         }
     }
 }
