@@ -59,7 +59,7 @@ class ScreenTest {
 
     private val commands = java.util.concurrent.ConcurrentLinkedQueue<Pair<String,String>>()
     private val savedImages = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
-    private val savedFiles = mutableListOf<Triple<String,String,ByteArray>>()
+    private val savedFiles = java.util.concurrent.CopyOnWriteArrayList<Triple<String,String,ByteArray>>()
     private var saveImageError: Throwable?=null
     private var saveFileError: Throwable?=null
     private var commandFailure: String?=null
