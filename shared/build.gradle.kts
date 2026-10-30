@@ -13,7 +13,7 @@ kotlin {
     }
     // iOS only where it's used: macOS (CI) or on request (-Ppandy.ios, to type-check the iOS code on Linux).
     val ios = System.getProperty("os.name").startsWith("Mac") || providers.gradleProperty("pandy.ios").isPresent
-    if (ios) listOf(iosArm64(), iosX64(), iosSimulatorArm64()).forEach {
+    if (ios) listOf(iosArm64(), iosSimulatorArm64()).forEach {
         it.binaries.framework {
             baseName = "Shared"
             isStatic = true
