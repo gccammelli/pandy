@@ -9,6 +9,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -41,6 +43,14 @@ class KitTest {
         override fun saveFile(name: String, mime: String, bytes: ByteArray, done: (Throwable?) -> Unit) = Unit
         override fun openApp(androidPackage: String, storeUrl: String) = Unit
         override fun landscape(on: Boolean) = Unit
+    }
+
+    @Test fun fallbackPandaMarkRendersItsArtwork() {
+        compose.setContent { PandaMarkFallback(Modifier.size(100.dp).testTag("fallback")) }
+        val pixels = compose.onNodeWithTag("fallback").captureToImage().toPixelMap()
+        val centre = pixels[pixels.width / 2, pixels.height / 2]
+        val corner = pixels[0, 0]
+        kotlin.test.assertNotEquals(corner, centre)
     }
 
     @Test fun everySharedComponentAcceptsEachOptionalParameterOnAndOff() {
