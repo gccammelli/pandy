@@ -131,6 +131,7 @@ class HomeAssistantBoundaryTest {
             "number.target_nozzle_temperature" to e("number.hot", "482", """{"unit_of_measurement":"°F"}"""),
             "number.target_bed_temperature" to e("number.bed", "60", """{"min":0,"max":248}"""),
         ))
+        assertEquals(28.0, printer(mapOf("sensor.chamber_temp" to e("c", "82", """{"unit_of_measurement":"°F"}"""))).chamber) // 27.78 rounds to the printer's 28
         assertEquals(100.0, p.nozzle)                            // a 212 °F reading is 100 °C on the printer
         assertEquals(60.0, p.bedTarget); assertEquals(77.0, p.chamber) // no or Celsius attribute: taken as Celsius
         assertEquals(482.0, p.setpoint("number.target_nozzle_temperature", 250)) // a Fahrenheit setpoint wants a Fahrenheit value

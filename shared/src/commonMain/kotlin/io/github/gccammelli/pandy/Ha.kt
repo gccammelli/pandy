@@ -209,8 +209,8 @@ class Entity(val id: String, val state: String, val attrs: JsonObject) {
     val ok get() = state != "unavailable" && state != "unknown"
     /** Home Assistant converts values to its unit system; an imperial install, or a user who picked °F, reports Fahrenheit. */
     val fahrenheit get() = attrs.s("unit_of_measurement")?.lowercase() == "°f"
-    /** A temperature entity's value as Celsius, which is what the printer and Pandy's screens work in. */
-    val celsius get() = num?.let { if (fahrenheit) (it - 32) * 5 / 9 else it }
+    /** A temperature entity's value as Celsius, which is what the printer and Pandy's screens work in. A Fahrenheit reading is whole degrees, so it is rounded back (82 °F is 28 °C, not 27.8 shown as 27). */
+    val celsius get() = num?.let { if (fahrenheit) kotlin.math.round((it - 32) * 5 / 9) else it }
 }
 
 /**
