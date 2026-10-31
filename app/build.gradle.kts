@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "io.github.gccammelli.pandy"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "io.github.gccammelli.pandy" + if (providers.gradleProperty("pandy.testbed").isPresent) ".testbed" else ""

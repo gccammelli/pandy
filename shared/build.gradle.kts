@@ -13,7 +13,7 @@ kotlin {
     }
     // iOS only where it's used: macOS (CI) or on request (-Ppandy.ios, to type-check the iOS code on Linux).
     val ios = System.getProperty("os.name").startsWith("Mac") || providers.gradleProperty("pandy.ios").isPresent
-    if (ios) listOf(iosArm64(), iosX64(), iosSimulatorArm64()).forEach {
+    if (ios) listOf(iosArm64(), iosSimulatorArm64()).forEach {
         it.binaries.framework {
             baseName = "Shared"
             isStatic = true
@@ -55,7 +55,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
         }
         androidUnitTest.dependencies {
-            implementation("org.robolectric:robolectric:4.16.1")
+            implementation("org.robolectric:robolectric:4.17")
             implementation("androidx.compose.ui:ui-test-junit4:1.9.3")
             implementation("androidx.compose.ui:ui-test-manifest:1.9.3")
         }
@@ -64,7 +64,7 @@ kotlin {
 
 android {
     namespace = "io.github.gccammelli.pandy.shared"
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig { minSdk = 26 }
     testOptions.unitTests.isIncludeAndroidResources = true
     compileOptions {

@@ -37,7 +37,7 @@ fun PandaMark(modifier: Modifier) {
 }
 
 @Composable
-private fun PandaMarkFallback(modifier: Modifier) = Canvas(modifier) {
+internal fun PandaMarkFallback(modifier: Modifier) = Canvas(modifier) {
     val unit = size.minDimension
     val left = (size.width - unit) / 2f
     val top = (size.height - unit) / 2f
