@@ -408,7 +408,7 @@ private fun FilamentCard(p: Printer, onClick: () -> Unit) = Card(padding = andro
                 Icon(Icons.Outlined.WaterDrop, null, Modifier.size(14.dp), tint = humidityColor(h.toInt()))
                 T(" ${h.toInt()}", 12.sp, C.Sub)
             }
-            p.amsNum(a, "sensor.ams_temp")?.let { T("   ${it.toInt()}°C", 12.sp, C.Sub) }
+            p.amsTemp(a)?.let { T("   ${it.toInt()}°C", 12.sp, C.Sub) }
         }
         Gap(8.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

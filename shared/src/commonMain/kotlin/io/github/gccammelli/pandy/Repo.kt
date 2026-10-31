@@ -355,8 +355,9 @@ fun Printer.setSpeed(option: String, err: (String) -> Unit) = Repo.act(err) {
 
 /** [which]: "nozzle", "bed" or "chamber". */
 fun Printer.setTarget(which: String, celsius: Int, err: (String) -> Unit) = Repo.act(err) {
-    val id = info.ids["number.target_${which}_temperature"] ?: throw ApiException("Home Assistant can't set the $which temperature")
-    setNumber(id, celsius.toDouble())
+    val key = "number.target_${which}_temperature"
+    val id = info.ids[key] ?: throw ApiException("Home Assistant can't set the $which temperature")
+    setNumber(id, setpoint(key, celsius))
 }
 
 fun Printer.setFan(entityId: String, percent: Int, err: (String) -> Unit) = Repo.act(err) {

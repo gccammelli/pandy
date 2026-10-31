@@ -84,6 +84,29 @@ class RepositoryLiveTest {
         } finally { Repo.stop(); Dispatchers.resetMain() }
     }
 
+    @Test fun setpointTargetsAreSentInUnitsTheirEntitiesAdvertise() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            val demo = FakeHomeAssistant()
+            val posted = mutableListOf<Pair<String,JsonObject>>()
+            init(object : HaBackend by demo {
+                override suspend fun post(path: String,body: String): String {
+                    posted += path to json.parseToJsonElement(body).jsonObject
+                    return demo.post(path,body)
+                }
+            })
+            Repo.start()
+            val live = withContext(Dispatchers.Default) { withTimeout(5000) { Repo.state.first { it.live && !it.printers.isNullOrEmpty() } } }
+            val printer = live.printers!!.single()
+            printer.setTarget("nozzle",250,{ fail(it) }).join()
+            assertTrue(posted.any { it.first.endsWith("/number/set_value") && it.second.s("value")=="250.0" }) // Celsius install: sent as typed
+            val key = "number.target_nozzle_temperature"
+            val hot = Entity("number.hot","482",json.parseToJsonElement("""{"unit_of_measurement":"°F"}""").jsonObject)
+            Printer(printer.info.copy(ids=printer.info.ids+(key to hot.id)),mapOf(hot.id to hot)).setTarget("nozzle",250,{ fail(it) }).join()
+            assertEquals("482.0",posted.last().second.s("value")) // Fahrenheit install: the same 250 °C goes out as 482 °F
+        } finally { Repo.stop(); Dispatchers.resetMain() }
+    }
+
     @Test fun authenticationAndConnectionFailuresKeepStateExplicit() = runTest {
         for (failure in listOf(AuthException("Expired token"),ApiException("Printer unavailable"))) {
             val demo = FakeHomeAssistant()

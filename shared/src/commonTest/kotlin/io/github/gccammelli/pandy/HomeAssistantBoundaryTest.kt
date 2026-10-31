@@ -109,6 +109,38 @@ class HomeAssistantBoundaryTest {
         assertEquals(0,printer(mapOf("fan.aux_fan" to e("fan.aux"))).fans.last().third)
     }
 
+    @Test fun firmwareWithoutDeveloperModeStillTakesUnsignedCommands() {
+        fun p(dev: String?, enc: String?, hybrid: String = "off") = printer(buildMap {
+            dev?.let { put("binary_sensor.developer_lan_mode", e("dev", it)) }
+            enc?.let { put("binary_sensor.mqtt_encryption", e("enc", it)) }
+            put("binary_sensor.hybrid_mode_blocks_control", e("hybrid", hybrid))
+        })
+        assertFalse(p("off", "off").controlBlocked)              // old firmware has no Developer Mode: unsigned commands are fine
+        assertTrue(p("off", "on").controlBlocked)                // newer firmware taking only signed commands
+        assertFalse(p("on", "on").controlBlocked)
+        assertTrue(p("off", null).controlBlocked)                // support unknown: stay explicit rather than silently assume safe
+        assertFalse(p("on", null).controlBlocked)
+        assertTrue(p("on", "on", hybrid = "on").controlBlocked)
+    }
+
+    @Test fun temperaturesAreReadAndSetInCelsiusEvenWhenHomeAssistantUsesFahrenheit() {
+        val p = printer(mapOf(
+            "sensor.nozzle_temp" to e("n", "212", """{"unit_of_measurement":"°F"}"""),
+            "sensor.target_bed_temp" to e("t", "60", """{"unit_of_measurement":"°C"}"""),
+            "sensor.chamber_temp" to e("c", "77"),
+            "number.target_nozzle_temperature" to e("number.hot", "482", """{"unit_of_measurement":"°F"}"""),
+            "number.target_bed_temperature" to e("number.bed", "60", """{"min":0,"max":248}"""),
+        ))
+        assertEquals(100.0, p.nozzle)                            // a 212 °F reading is 100 °C on the printer
+        assertEquals(60.0, p.bedTarget); assertEquals(77.0, p.chamber) // no or Celsius attribute: taken as Celsius
+        assertEquals(482.0, p.setpoint("number.target_nozzle_temperature", 250)) // a Fahrenheit setpoint wants a Fahrenheit value
+        assertEquals(-40.0, p.setpoint("number.target_nozzle_temperature", -40))
+        assertEquals(60.0, p.setpoint("number.target_bed_temperature", 60))       // a Celsius setpoint passes through
+        assertEquals(250.0, printer().setpoint("number.target_nozzle_temperature", 250)) // entity unseen yet: pass through
+        val ams = AmsInfo("ams", 1, "AMS", mapOf("sensor.ams_temp" to "a"), emptyMap())
+        assertEquals(30.0, printer(mapOf("sensor.ams_temp" to e("a", "86", """{"unit_of_measurement":"°F"}""")), ams = listOf(ams)).amsTemp(ams))
+    }
+
     @Test fun registryNamesAndAmsProtocolIdsSurviveMissingOptionalMetadata() {
         val devices=arr("""[
             {"id":"p","identifiers":[["other","ignore"],["bambu_lab","SERIAL"]]},

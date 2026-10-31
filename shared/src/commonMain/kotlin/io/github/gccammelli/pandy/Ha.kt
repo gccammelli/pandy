@@ -207,6 +207,10 @@ class Entity(val id: String, val state: String, val attrs: JsonObject) {
     val num get() = state.toDoubleOrNull()
     val on get() = state == "on"
     val ok get() = state != "unavailable" && state != "unknown"
+    /** Home Assistant converts values to its unit system; an imperial install, or a user who picked °F, reports Fahrenheit. */
+    val fahrenheit get() = attrs.s("unit_of_measurement")?.lowercase() == "°f"
+    /** A temperature entity's value as Celsius, which is what the printer and Pandy's screens work in. */
+    val celsius get() = num?.let { if (fahrenheit) (it - 32) * 5 / 9 else it }
 }
 
 /**
@@ -293,9 +297,12 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val online get() = get("binary_sensor.online")?.on ?: false
     /**
      * The printer only takes commands signed by Bambu's apps (Developer Mode off), or Home Assistant's cloud connection
-     * is blocked from controlling it: Pandy can watch but not control or print.
+     * is blocked from controlling it: Pandy can watch but not control or print. Firmware without Developer Mode at all
+     * (older than the P1S's 01.08.02.00, the X1's 01.08.50.32 or the A1's 01.05.00.00) reports developer_lan_mode "off"
+     * yet takes unsigned commands; the integration's mqtt_encryption sensor says whether the firmware has the feature.
      */
-    val controlBlocked get() = get("binary_sensor.developer_lan_mode")?.state == "off" || get("binary_sensor.hybrid_mode_blocks_control")?.on == true
+    val controlBlocked get() = get("binary_sensor.developer_lan_mode")?.state == "off" && get("binary_sensor.mqtt_encryption")?.state != "off" ||
+        get("binary_sensor.hybrid_mode_blocks_control")?.on == true
     /** "printing", "idle", "finish", "failed", "pause", "prepare", "offline"… (the integration's print_status). */
     val status get() = state("sensor.print_status") ?: if (online) "idle" else "offline"
     val printing get() = status in setOf("running", "printing", "pause", "prepare", "slicing")
@@ -309,12 +316,17 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val stage get() = state("sensor.stage")
     val lightOn get() = get("light.chamber_light")?.on ?: false
     val speed get() = state("select.printing_speed") ?: state("sensor.speed_profile")
-    val nozzle get() = num("sensor.nozzle_temp")
-    val nozzleTarget get() = num("sensor.target_nozzle_temp")
-    val bed get() = num("sensor.bed_temp")
-    val bedTarget get() = num("sensor.target_bed_temp")
-    val chamber get() = num("sensor.chamber_temp")
-    val chamberTarget get() = num("sensor.target_chamber_temp")
+    val nozzle get() = get("sensor.nozzle_temp")?.celsius
+    val nozzleTarget get() = get("sensor.target_nozzle_temp")?.celsius
+    val bed get() = get("sensor.bed_temp")?.celsius
+    val bedTarget get() = get("sensor.target_bed_temp")?.celsius
+    val chamber get() = get("sensor.chamber_temp")?.celsius
+    val chamberTarget get() = get("sensor.target_chamber_temp")?.celsius
+    /**
+     * A set temperature for the number entity behind [key], in the unit Home Assistant wants there: its set_value takes
+     * the unit it displays, so an imperial install would otherwise heat to (and read back) a Fahrenheit number typed as Celsius.
+     */
+    fun setpoint(key: String, celsius: Int): Double = get(key)?.let { if (it.fahrenheit) celsius * 9 / 5.0 + 32 else null } ?: celsius.toDouble()
     val hasChamberHeater get() = info.ids.containsKey("number.target_chamber_temperature")
     val doorOpen get() = get("binary_sensor.door_open")?.on
     val camera get() = info.ids["camera.camera"]
@@ -331,6 +343,8 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     }
     val external: List<Spool> get() = info.external.mapIndexedNotNull { i, id -> states[id]?.let { spoolFrom(it, i) } }
     fun amsNum(a: AmsInfo, key: String) = a.ids[key]?.let { states[it] }?.num
+    /** An AMS unit's temperature in Celsius, whatever unit Home Assistant displays it in. */
+    fun amsTemp(a: AmsInfo) = a.ids["sensor.ams_temp"]?.let { states[it] }?.celsius
     /** A boolean setting exposed by an AMS; null means this firmware/integration did not report it. */
     fun amsFlag(a: AmsInfo, key: String): Boolean? = a.ids["switch.$key"]?.let { id -> states[id]?.flag }
     fun flag(key: String): Boolean? = get("switch.$key")?.flag

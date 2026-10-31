@@ -11,7 +11,8 @@ Pandy connects to the printer itself, on your local network.
 | X1, X1E, H2D, H2S, P2S | Settings › Network: **LAN Only Mode** on, **Developer Mode** on, note the **Access Code** |
 | P1P, P1S, A1, A1 mini | Settings › WLAN: **LAN Only Mode** on, **Developer Mode** on, note the **Access Code** |
 
-Developer Mode lets apps other than Bambu's control the printer (Bambu added this switch in 2025 firmware). The access
+Developer Mode lets apps other than Bambu's control the printer (Bambu added this switch in 2025 firmware). Printers on
+older firmware have no such switch: LAN Only Mode and the access code are all they need. The access
 code changes when you switch LAN mode off and on again; enter the new one in Pandy (Me › Settings › Disconnect, then
 connect again).
 

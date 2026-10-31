@@ -178,7 +178,7 @@ fun FilamentScreen(p: Printer) {
                             T(" ${h.toInt()}", 13.sp, C.Sub)
                         }
                         p.amsNum(a, "sensor.humidity")?.let { T("  ${it.toInt()}%", 13.sp, C.Sub) }
-                        p.amsNum(a, "sensor.ams_temp")?.let { T("  ${it.toInt()}°C", 13.sp, C.Sub) }
+                        p.amsTemp(a)?.let { T("  ${it.toInt()}°C", 13.sp, C.Sub) }
                     }
                     Gap(12.dp)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
