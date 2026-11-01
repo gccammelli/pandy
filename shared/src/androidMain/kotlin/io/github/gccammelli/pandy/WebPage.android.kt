@@ -214,7 +214,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
             }
             setDownloadListener { u, _, disposition, mime, _ ->
                 // Some MakerWorld responses append the RFC 5987 filename parameter to the guessed name.
-                val name = URLUtil.guessFileName(u, disposition, mime).substringBefore(';')
+                val name = downloadName(URLUtil.guessFileName(u, disposition, mime))
                 debugLog("download $name (${u.take(40)}…)")
                 if (u.startsWith("blob:")) {
                     // Made in the page: read it there and pass the bytes back.

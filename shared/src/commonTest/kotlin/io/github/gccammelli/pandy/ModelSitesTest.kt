@@ -43,6 +43,7 @@ class ModelSitesTest {
         assertTrue(SITE_DOWNLOAD_JS.contains("window.__pandyPrintUntil = Date.now()")) // it presses the site's Download and says so for the next few seconds
         assertFalse(SITE_DOWNLOAD_JS.contains("nodeValue = want")) // the site's own Download is no longer relabelled to Print
         assertTrue(PRINT_INTENT_JS.contains("__pandyPrintUntil")) // the platform asks the page the same thing when that download arrives
+        assertTrue(PRINT_INTENT_JS.contains("__pandyPrintUntil = 0")) // and asking uses the mark up: a cancelled Print does not turn the next plain Download into a print
     }
 
     @Test fun aDownloadAsksIfPrintWasPressedOnlyWhenItCouldBecomeAPrint() {
@@ -51,5 +52,14 @@ class ModelSitesTest {
         assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = false, name = "a.stl", canPrint = true))
         assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = true, name = "a.zip", canPrint = true))
         assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = true, name = "a.stl", canPrint = false))
+    }
+
+    @Test fun downloadNamesAreDecodedAndStayPlainFileNames() {
+        assertEquals("Calibration Cube.stl", downloadName("Calibration%20Cube.stl"))
+        assertEquals("a.stl", downloadName("a.stl;filename*=UTF-8''a.stl"))
+        assertEquals("W\u00fcrfel.stl", downloadName("W%C3%BCrfel.stl"))
+        assertEquals("100%.stl", downloadName("100%.stl")) // not an escape: kept
+        assertEquals("evil.stl", downloadName("..%2F..%2Fevil.stl")) // no folder parts, even encoded
+        assertEquals("model", downloadName(""))
     }
 }

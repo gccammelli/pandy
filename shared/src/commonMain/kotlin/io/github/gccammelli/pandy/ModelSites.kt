@@ -27,11 +27,30 @@ enum class ModelSite(val label: String, val home: String, private val hosts: Lis
 internal val SITE_HOSTS = listOf("makerworld.com", "bambulab.com", "bblmw.com", "thingiverse.com", "printables.com", "prusa3d.com",
     "appleid.apple.com", "accounts.google.com", "facebook.com")
 
-/** Whether the site's Download button was pressed by Pandy's Print button just now: "1" or "0" (a string, the same on every platform). */
-const val PRINT_INTENT_JS = "(Date.now() < (window.__pandyPrintUntil || 0)) ? '1' : '0'"
+/**
+ * Whether the site's Download button was pressed by Pandy's Print button just now: "1" or "0" (a string, the same on every platform).
+ * Asking uses the mark up, so a later download of the site's own (a Print cancelled, then Download) is a plain save.
+ */
+const val PRINT_INTENT_JS = "(function(){ var on = Date.now() < (window.__pandyPrintUntil || 0); window.__pandyPrintUntil = 0; return on ? '1' : '0'; })()"
 
 /** Whether a site download that arrived should ask the page if Pandy's Print button pressed it: only a printable file Pandy can print, not already a print. */
 fun asksPrintIntent(alreadyPrint: Boolean, fromSite: Boolean, name: String, canPrint: Boolean) = !alreadyPrint && fromSite && isPrintableModel(name) && canPrint
+
+/** A download's file name as the person should see it: percent escapes decoded ("Calibration%20Cube.stl"), no folder parts, no ";" parameters. */
+fun downloadName(guessed: String): String {
+    val plain = guessed.substringBefore(';')
+    val decoded = if ('%' in plain) {
+        val bytes = ArrayList<Byte>()
+        var i = 0
+        while (i < plain.length) {
+            val pair = if (plain[i] == '%' && i + 2 < plain.length) plain.substring(i + 1, i + 3) else null
+            val hex = pair?.takeIf { p -> p.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } }?.toInt(16)
+            if (hex != null) { bytes.add(hex.toByte()); i += 3 } else { bytes.addAll(plain[i].toString().encodeToByteArray().toList()); i++ }
+        }
+        bytes.toByteArray().decodeToString()
+    } else plain
+    return decoded.substringAfterLast('/').substringAfterLast('\\').ifBlank { "model" }
+}
 
 /** Files Pandy can slice: STL and 3MF. [name] may carry a query string. */
 fun isPrintableModel(name: String) = name.substringBefore('?').let { '.' in it && it.substringAfterLast('.').lowercase() in setOf("stl", "3mf") }
