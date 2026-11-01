@@ -16,7 +16,7 @@ work = "2.12.0"
 junit = "4.13.2"
 
 composeMultiplatform = "1.12.2"
-ktor = "3.6.0"
+ktor = "3.6.1"
 datetime = "0.8.0"
 navigationMp = "2.10.0"
 
