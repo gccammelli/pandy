@@ -83,7 +83,7 @@ fun MeTab(st: UiState) {
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.Card).padding(vertical = 14.dp)) {
             Shortcut(Icons.Outlined.History, "Printing\nHistory", Modifier.weight(1f)) { Nav.go(Screen.History) }
             Shortcut(Icons.Outlined.Videocam, "Timelapse", Modifier.weight(1f)) { Nav.go(Screen.Files) }
-            SiteMenuBox(Modifier.weight(1f), onClick = { Nav.tab = 0 }) { ShortcutContent(Icons.Outlined.ViewInAr, "MakerWorld") }
+            SiteMenuBox(Modifier.weight(1f), onClick = { Nav.tab = 0 }) { ShortcutContent(Icons.Outlined.ViewInAr, "Models") }
             Shortcut(Icons.Outlined.Folder, "Filament", Modifier.weight(1f)) { Nav.go(Screen.Filament) }
         }
         Gap(12.dp)
@@ -371,7 +371,7 @@ fun SettingsScreen() {
                     else NavRow("Home Assistant", value = "Add (optional)") { Nav.go(Screen.AddHa) }
                     if (Repo.direct && Repo.haUrl != null) NavRow("Remove Home Assistant", labelColor = C.Red, chevron = false) { Repo.removeHa(); Nav.back() }
                 }
-                if (!Repo.demo) NavRow("Slicer for MakerWorld prints", value = Repo.slicerUrl ?: if (Repo.haApi != null) "Home Assistant add-on" else "Set up") { Nav.go(Screen.Slicer) }
+                if (!Repo.demo) NavRow("Slicer for model prints", value = Repo.slicerUrl ?: if (Repo.haApi != null) "Home Assistant add-on" else "Set up") { Nav.go(Screen.Slicer) }
                 NavRow(if (Repo.demo) "Leave the demo" else "Disconnect", labelColor = C.Red, chevron = false) { Nav.stack.clear(); Repo.logout() }
             }
         }
@@ -422,7 +422,7 @@ fun NeedsHa(what: String) = Column(Modifier.fillMaxWidth().padding(24.dp), horiz
     Gap(16.dp)
     T("$what comes from Home Assistant", 16.sp, weight = FontWeight.Medium, align = androidx.compose.ui.text.style.TextAlign.Center)
     Gap(8.dp)
-    T("Pandy talks to your printer directly. Add Home Assistant with the Bambu Lab integration to also get print history, cached files, timelapses and printing MakerWorld models.",
+    T("Pandy talks to your printer directly. Add Home Assistant with the Bambu Lab integration to also get print history, cached files, timelapses and printing models from MakerWorld, Thingiverse and Printables.",
         14.sp, C.Sub, align = androidx.compose.ui.text.style.TextAlign.Center, lh = 20.sp)
     Gap(20.dp)
     AccentButton("Add Home Assistant", Modifier.padding(horizontal = 24.dp)) { Nav.go(Screen.AddHa) }

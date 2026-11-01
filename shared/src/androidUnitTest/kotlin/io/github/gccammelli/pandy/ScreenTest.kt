@@ -740,9 +740,9 @@ class ScreenTest {
     }
 
     @Test fun longPressingMakerWorldOffersThingiverseAndPrintables() {
-        show("MakerWorld") { MeTab(st) }
+        show("Models") { MeTab(st) }
         compose.runOnIdle { Nav.site=ModelSite.MakerWorld; Nav.tab=2 }
-        compose.onNodeWithText("MakerWorld").performScrollTo().performTouchInput { longClick() }
+        compose.onNodeWithText("Models").performScrollTo().performTouchInput { longClick() }
         compose.onNodeWithText("MakerWorld ✓").assertExists()
         compose.onNodeWithText("Printables").assertExists()
         compose.onNodeWithText("Thingiverse").performClick()
@@ -759,6 +759,45 @@ class ScreenTest {
         compose.onNodeWithText("Models").performTouchInput { longClick() }
         compose.onNodeWithText("MakerWorld ✓").performClick() // the current site: stays, menu closes
         assertEquals(ModelSite.MakerWorld,Nav.site); compose.onNodeWithText("Thingiverse").assertDoesNotExist()
+    }
+
+    private fun freshModelsTipStore(): MutableMap<String,String> {
+        val storeField=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }
+        val original=storeField.get(Repo)
+        restorePrintSettings={ storeField.set(Repo,original) }
+        val settings=mutableMapOf("demo" to "false","mode" to "ha")
+        storeField.set(Repo,PlatformStorage(Memory(settings),Memory(mutableMapOf()),object : AppFiles {
+            override fun read(name: String): ByteArray? = null
+            override fun write(name: String,bytes: ByteArray) = Unit
+            override fun delete(name: String) = Unit
+        }))
+        return settings
+    }
+
+    @Test fun tappingTheSelectedModelsTabOffersTheSitesAndTheOneTimeTipPointsToIt() {
+        val settings=freshModelsTipStore()
+        compose.runOnIdle { Nav.site=ModelSite.MakerWorld; Nav.tab=1 }
+        show("Devices") { Tabs(st,printer) }
+        compose.onNodeWithText("Tap Models again",substring=true).assertDoesNotExist() // only over the Models tab
+        compose.onNodeWithText("Models").performClick(); assertEquals(0,Nav.tab)
+        compose.onNodeWithText("MakerWorld ✓").assertDoesNotExist() // the first tap only switches tab
+        compose.onNodeWithText("Tap Models again to switch between MakerWorld, Thingiverse and Printables.").assertExists()
+        compose.onNodeWithText("Models").performClick() // already selected: the menu
+        compose.onNodeWithText("MakerWorld ✓").assertExists()
+        compose.onNodeWithText("Thingiverse").assertExists()
+        compose.onNodeWithText("Tap Models again",substring=true).assertDoesNotExist() // opening the menu is the lesson learned
+        assertEquals("seen",settings["models_tip"])
+        compose.onNodeWithText("MakerWorld ✓").performClick()
+        compose.waitForIdle(); compose.onNodeWithText("Thingiverse").assertDoesNotExist()
+    }
+
+    @Test fun theModelsTipClosesOnTapAndStaysClosed() {
+        val settings=freshModelsTipStore()
+        compose.runOnIdle { Nav.site=ModelSite.MakerWorld; Nav.tab=0 }
+        show("Models") { Tabs(st,printer) }
+        compose.onNodeWithText("Got it").performClick()
+        compose.onNodeWithText("Tap Models again",substring=true).assertDoesNotExist()
+        assertEquals("seen",settings["models_tip"]); org.junit.Assert.assertTrue(Repo.modelsTipSeen)
     }
 
     @Test fun longPressingTheModelsTabSwitchesSiteAndItsWebViewLoadsThatSite() {
@@ -976,7 +1015,7 @@ class ScreenTest {
         prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to """{"printer_model":"Bambu Lab A1 mini"}""".toByteArray())))
         compose.onNodeWithText("Next").performClick()
         compose.onNodeWithText("Prepared for ${printer.model}; the designer's A1 mini profile",substring=true).performScrollTo().assertExists()
-        compose.onNodeWithText("Printing MakerWorld models needs Pandy Slicer",substring=true).performScrollTo().assertExists()
+        compose.onNodeWithText("Printing models needs Pandy Slicer",substring=true).performScrollTo().assertExists()
         compose.onNodeWithText("Print current plate").assertIsNotEnabled()
         org.junit.Assert.assertTrue(commands.isEmpty())
     }
@@ -1647,7 +1686,7 @@ class ScreenTest {
         org.junit.Assert.assertFalse(Repo.showUnavailable)
         compose.onNodeWithText("${printer.model} · 192.0.2.1").performScrollTo().assertExists()
         compose.onNodeWithText("Remove Home Assistant").performScrollTo().assertExists()
-        compose.onNodeWithText("Slicer for MakerWorld prints").performScrollTo().performClick()
+        compose.onNodeWithText("Slicer for model prints").performScrollTo().performClick()
         kotlin.test.assertIs<Screen.Slicer>(Nav.stack.last())
     }
 
@@ -1804,7 +1843,7 @@ class ScreenTest {
             assertEquals(destination,Nav.stack.last()); compose.runOnIdle { Nav.stack.clear() }
         }
         compose.runOnIdle { Nav.tab=2 }
-        compose.onNodeWithText("MakerWorld").performScrollTo().performClick(); assertEquals(0,Nav.tab)
+        compose.onNodeWithText("Models").performScrollTo().performClick(); assertEquals(0,Nav.tab)
         for(label in listOf("Learning","Support Center","Buy me a coffee")) compose.onNodeWithText(label).performScrollTo().performClick()
         assertEquals(listOf("https://wiki.bambulab.com","$REPO_URL/issues",DONATE_URL),openedUrls)
     }

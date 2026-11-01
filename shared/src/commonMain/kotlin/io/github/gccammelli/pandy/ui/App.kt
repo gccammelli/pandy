@@ -3,6 +3,8 @@ package io.github.gccammelli.pandy.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -136,7 +138,12 @@ fun Tabs(st: UiState, p: Printer) = Column(Modifier.fillMaxSize().background(C.B
         Triple("Devices", Icons.Outlined.Print) @Composable { DevicesTab(st, p) },
         Triple("Me", Icons.Outlined.Person) @Composable { MeTab(st) },
     )
-    Box(Modifier.weight(1f)) { tabs[Nav.tab].third() }
+    var tip by remember { mutableStateOf(!Repo.modelsTipSeen) }
+    val closeTip = { tip = false; Repo.seeModelsTip() }
+    Box(Modifier.weight(1f)) {
+        tabs[Nav.tab].third()
+        if (tip && Nav.tab == 0) ModelsTip(Modifier.align(Alignment.BottomStart), closeTip)
+    }
     Row(Modifier.fillMaxWidth().background(C.Nav).navigationBarsPadding().height(58.dp)) {
         tabs.forEachIndexed { i, (label, icon) ->
             val sel = Nav.tab == i
@@ -147,7 +154,7 @@ fun Tabs(st: UiState, p: Printer) = Column(Modifier.fillMaxSize().background(C.B
                     T(label, 11.sp, if (sel) C.Accent else C.Sub)
                 }
             }
-            if (i == 0) SiteMenuBox(tab, onClick = { Nav.tab = 0 }, content = content)
+            if (i == 0) SiteMenuBox(tab, selected = sel, onOpen = closeTip, onClick = { Nav.tab = 0 }, content = content)
             else Box(tab.clickable { Nav.tab = i }) { content() }
         }
     }
@@ -175,7 +182,7 @@ fun Connect() {
         Gap(8.dp)
         ConnectModeButton("Pandy Only", "Control the printer directly over your LAN. Needs LAN Only and Developer Mode.", mode == ConnectMode.Direct) { mode = ConnectMode.Direct }
         ConnectModeButton("HA Only", "Use Home Assistant as the printer connection. Works remotely when Home Assistant is reachable.", mode == ConnectMode.HomeAssistant) { mode = ConnectMode.HomeAssistant }
-        ConnectModeButton("Pandy + HA", "Use direct control, plus Home Assistant history, cached files, timelapses and MakerWorld printing.", mode == ConnectMode.DirectPlusHomeAssistant) { mode = ConnectMode.DirectPlusHomeAssistant }
+        ConnectModeButton("Pandy + HA", "Use direct control, plus Home Assistant history, cached files, timelapses and printing models from MakerWorld, Thingiverse and Printables.", mode == ConnectMode.DirectPlusHomeAssistant) { mode = ConnectMode.DirectPlusHomeAssistant }
         Gap(16.dp)
         when (mode) {
             ConnectMode.Direct -> {
@@ -373,11 +380,11 @@ fun HaForm(asPrinter: Boolean, done: () -> Unit = {}) {
     T("Needs the Bambu Lab integration in Home Assistant (from HACS) ›", 13.sp, C.Blue, lh = 18.sp, modifier = Modifier.clickable { p.openUrl(INTEGRATION_URL) })
 }
 
-/** Me › Settings › Home Assistant: add it to direct mode for history, files, timelapses and MakerWorld printing. */
+/** Me › Settings › Home Assistant: add it to direct mode for history, files, timelapses and printing models from MakerWorld, Thingiverse and Printables. */
 @Composable
 fun AddHaScreen() = Page("Home Assistant", { Nav.back() }) {
     Column(Modifier.verticalScroll(rememberScrollState()).imePadding().padding(20.dp)) {
-        T("Pandy controls your printer directly. Home Assistant (with the Bambu Lab integration) adds what the printer can't give a phone on its own: print history and reprinting, cached files, timelapses, and slicing MakerWorld models.", 14.sp, C.Sub, lh = 20.sp)
+        T("Pandy controls your printer directly. Home Assistant (with the Bambu Lab integration) adds what the printer can't give a phone on its own: print history and reprinting, cached files, timelapses, and slicing models from MakerWorld, Thingiverse and Printables.", 14.sp, C.Sub, lh = 20.sp)
         Gap(20.dp)
         HaForm(asPrinter = false) { Nav.back() }
     }
@@ -395,14 +402,16 @@ fun AddDirectScreen() = Page("Direct LAN connection", { Nav.back() }) {
 
 
 /**
- * Tap does [onClick]; a long press offers the model sites (MakerWorld, Thingiverse, Printables) and opens the chosen one
- * in the Models tab.
+ * Tap does [onClick], except when this is already the selected tab ([selected]): then it offers the model sites (MakerWorld,
+ * Thingiverse, Printables), as a long press always does, and opens the chosen one in the Models tab. [onOpen] runs when the
+ * menu opens.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun SiteMenuBox(modifier: Modifier, onClick: () -> Unit, content: @Composable () -> Unit) {
+fun SiteMenuBox(modifier: Modifier, selected: Boolean = false, onOpen: () -> Unit = {}, onClick: () -> Unit, content: @Composable () -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Box(modifier.combinedClickable(onClick = onClick, onLongClick = { open = true })) {
+    val show = { open = true; onOpen() }
+    Box(modifier.combinedClickable(onClick = { if (selected) show() else onClick() }, onLongClick = show)) {
         content()
         androidx.compose.material3.DropdownMenu(open, { open = false }, containerColor = C.Card) {
             for (site in io.github.gccammelli.pandy.ModelSite.entries) {
@@ -411,6 +420,18 @@ fun SiteMenuBox(modifier: Modifier, onClick: () -> Unit, content: @Composable ()
                     onClick = { open = false; Nav.site = site; Nav.tab = 0 },
                 )
             }
+        }
+    }
+}
+
+/** One-time tip over the Models tab: how to switch between the model sites. Closed by tapping it, or by opening the menu. */
+@Composable
+fun ModelsTip(modifier: Modifier, close: () -> Unit) {
+    Box(modifier.padding(start = 12.dp, bottom = 10.dp).widthIn(max = 280.dp).clip(RoundedCornerShape(14.dp)).background(C.Accent)
+        .clickable(onClick = close).padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Column {
+            T("Tap Models again to switch between MakerWorld, Thingiverse and Printables.", 14.sp, Color.White, FontWeight.Medium, lh = 19.sp)
+            T("Got it", 13.sp, Color.White, FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
         }
     }
 }

@@ -346,7 +346,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     val manualReady = presets && pr.filaments.isNotEmpty() && pr.filaments.all { (type, colour) -> manualMapping[filamentKey(type, colour)] in validSlots }
     val mappingReady = pr.filaments.isEmpty() || auto != null || p.ams.isEmpty() || manualReady
     val setupNote = when {
-        slicer == null -> "Printing MakerWorld models needs Pandy Slicer. Add it in Me › Settings."
+        slicer == null -> "Printing models needs Pandy Slicer. Add it in Me › Settings."
         !mappingReady -> "Load matching filament types, or choose every model filament in Match my filament."
         else -> null
     }
@@ -831,7 +831,7 @@ fun SlicerScreen() = Page("Slicer", { Nav.back() }) {
     }
     Column(Modifier.verticalScroll(rememberScrollState()).imePadding().padding(20.dp)) {
         if (ha != null) {
-            T("Pandy prints MakerWorld models by having Pandy Slicer (Bambu Studio's slicer in a container) slice them and put them on the printer. Install the Pandy Slicer add-on in Home Assistant: Pandy reaches it through Home Assistant, so there's nothing to enter here.", 14.sp, C.Sub, lh = 20.sp)
+            T("Pandy prints models from MakerWorld, Thingiverse and Printables by having Pandy Slicer (Bambu Studio's slicer in a container) slice them and put them on the printer. Install the Pandy Slicer add-on in Home Assistant: Pandy reaches it through Home Assistant, so there's nothing to enter here.", 14.sp, C.Sub, lh = 20.sp)
             Gap(16.dp)
             AccentButton(if (busy && checkedAddOn) "Checking…" else "Check the add-on", enabled = !busy) { check(io.github.gccammelli.pandy.SlicerClient(null, null, ha)) }
             if (status != null && checkedAddOn) { Gap(12.dp); T(status!!, 14.sp, if (status!!.startsWith("Connected")) C.Ok else C.Red) }
@@ -839,7 +839,7 @@ fun SlicerScreen() = Page("Slicer", { Nav.back() }) {
             T("Slicer elsewhere (Docker)", 13.sp, C.Sub)
             Gap(4.dp)
             T("Only if it doesn't run in Home Assistant. An address here is used instead of the add-on.", 12.sp, C.Sub, lh = 17.sp)
-        } else T("Pandy prints MakerWorld models by having Pandy Slicer (Bambu Studio's slicer in a container) slice them and put them on the printer. Run it as a Home Assistant add-on or with Docker on any x86-64 computer, then enter its address.", 14.sp, C.Sub, lh = 20.sp)
+        } else T("Pandy prints models from MakerWorld, Thingiverse and Printables by having Pandy Slicer (Bambu Studio's slicer in a container) slice them and put them on the printer. Run it as a Home Assistant add-on or with Docker on any x86-64 computer, then enter its address.", 14.sp, C.Sub, lh = 20.sp)
         Gap(16.dp)
         OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth(), singleLine = true, label = { T("Slicer address (e.g. slicer.local:8737)", 14.sp, C.Sub) },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))

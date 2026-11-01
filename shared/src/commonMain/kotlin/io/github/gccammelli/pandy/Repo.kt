@@ -50,6 +50,9 @@ object Repo {
     fun authHeaders(): Map<String, String> = token?.let { mapOf("Authorization" to "Bearer $it") }.orEmpty()
     val haUrl get() = store.settings.getString("ha_url")
     val demo get() = store.settings.getString("demo") == "true"
+    /** Whether the one-time tip about switching model sites (tap the Models tab again) was shown and closed. */
+    val modelsTipSeen get() = store.settings.getString("models_tip") == "seen"
+    fun seeModelsTip() = store.settings.putString("models_tip", "seen")
     /** "lan" (direct) or "ha". */
     val mode get() = store.settings.getString("mode") ?: if (haUrl != null) "ha" else "lan"
     val direct get() = !demo && mode == "lan"
