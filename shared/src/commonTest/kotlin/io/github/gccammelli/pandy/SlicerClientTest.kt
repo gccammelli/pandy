@@ -176,4 +176,9 @@ class SlicerClientTest {
             }
         }
     }
+
+    @Test fun connectionMessageNamesTheRouteThatAnswered() {
+        assertEquals("Connected through the Home Assistant add-on: Bambu Studio 2.8", slicerConnected(true, "2.8"))
+        assertEquals("Connected: Bambu Studio 2.8", slicerConnected(false, "2.8"))
+    }
 }

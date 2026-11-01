@@ -118,6 +118,10 @@ class SlicerClient(
     }
 }
 
+/** The success line of the slicer check: which route answered, since the add-on needs no address or token and a typed address overrides it. */
+fun slicerConnected(viaHa: Boolean, version: String) =
+    if (viaHa) "Connected through the Home Assistant add-on: Bambu Studio $version" else "Connected: Bambu Studio $version"
+
 /** What an error status without the slicer's own message means: a proxy (Home Assistant's ingress, a reverse proxy) found nothing answering. */
 internal fun slicerFailure(status: Int) = when (status) {
     502, 503, 504 -> "Pandy Slicer isn't answering (HTTP $status). If its add-on was just updated or restarted, give it a minute; otherwise check the add-on's log."

@@ -822,7 +822,7 @@ fun SlicerScreen() = Page("Slicer", { Nav.back() }) {
         busy = true; status = null; checkedAddOn = c.viaHa
         scope.launch {
             runCatching { withContext(Dispatchers.Default) { c.health() } }
-                .onSuccess { v -> saved(); status = "Connected: Bambu Studio $v" }
+                .onSuccess { v -> saved(); status = io.github.gccammelli.pandy.slicerConnected(c.viaHa, v) }
                 .onFailure { status = it.message ?: it.toString() }
             busy = false
         }
@@ -849,7 +849,7 @@ fun SlicerScreen() = Page("Slicer", { Nav.back() }) {
         AccentButton(if (busy && !checkedAddOn) "Checking…" else "Save", enabled = !busy && url.isNotBlank()) {
             check(io.github.gccammelli.pandy.SlicerClient(url, token.ifBlank { null })) { Repo.setSlicer(url, token.ifBlank { null }) }
         }
-        if (Repo.slicerUrl != null) { Gap(12.dp); OutlineButton("Remove", C.Red) { Repo.setSlicer(null, null); url = ""; status = null } }
+        if (Repo.slicerUrl != null) { Gap(12.dp); OutlineButton("Remove", C.Red) { Repo.setSlicer(null, null); url = ""; token = ""; status = null } }
         Gap(16.dp)
         T("Setup guide ›", 14.sp, C.Blue, modifier = Modifier.clickable { pl.openUrl(guide("docs/slicer.md")) })
     }
