@@ -44,4 +44,12 @@ class ModelSitesTest {
         assertFalse(SITE_DOWNLOAD_JS.contains("nodeValue = want")) // the site's own Download is no longer relabelled to Print
         assertTrue(PRINT_INTENT_JS.contains("__pandyPrintUntil")) // the platform asks the page the same thing when that download arrives
     }
+
+    @Test fun aDownloadAsksIfPrintWasPressedOnlyWhenItCouldBecomeAPrint() {
+        assertTrue(asksPrintIntent(alreadyPrint = false, fromSite = true, name = "a.stl", canPrint = true))
+        assertFalse(asksPrintIntent(alreadyPrint = true, fromSite = true, name = "a.stl", canPrint = true)) // MakerWorld's own prints
+        assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = false, name = "a.stl", canPrint = true))
+        assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = true, name = "a.zip", canPrint = true))
+        assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = true, name = "a.stl", canPrint = false))
+    }
 }

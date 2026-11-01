@@ -30,6 +30,9 @@ internal val SITE_HOSTS = listOf("makerworld.com", "bambulab.com", "bblmw.com", 
 /** Whether the site's Download button was pressed by Pandy's Print button just now: "1" or "0" (a string, the same on every platform). */
 const val PRINT_INTENT_JS = "(Date.now() < (window.__pandyPrintUntil || 0)) ? '1' : '0'"
 
+/** Whether a site download that arrived should ask the page if Pandy's Print button pressed it: only a printable file Pandy can print, not already a print. */
+fun asksPrintIntent(alreadyPrint: Boolean, fromSite: Boolean, name: String, canPrint: Boolean) = !alreadyPrint && fromSite && isPrintableModel(name) && canPrint
+
 /** Files Pandy can slice: STL and 3MF. [name] may carry a query string. */
 fun isPrintableModel(name: String) = name.substringBefore('?').let { '.' in it && it.substringAfterLast('.').lowercase() in setOf("stl", "3mf") }
 
