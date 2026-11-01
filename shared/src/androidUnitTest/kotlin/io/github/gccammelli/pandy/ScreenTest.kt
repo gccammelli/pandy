@@ -792,7 +792,7 @@ class ScreenTest {
 
     private fun stlBytes() = ("solid x\n" + listOf("0 0 0","10 0 0","0 10 0","0 0 10").let { v -> listOf(listOf(0,1,2),listOf(0,1,3),listOf(0,2,3),listOf(1,2,3)).joinToString("") { t -> "facet normal 0 0 0\nouter loop\n" + t.joinToString("") { "vertex ${v[it]}\n" } + "endloop\nendfacet\n" } } + "endsolid x\n").encodeToByteArray()
 
-    private fun printablesStl(slicer: Boolean) {
+    private fun printablesStl(slicer: Boolean, pressed: Boolean = true) {
         if (slicer) Repo.setSlicer("http://slicer.example:8737",null)
         compose.runOnIdle { Nav.site=ModelSite.Printables }
         compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { ModelsTab() } } }
@@ -801,8 +801,12 @@ class ScreenTest {
         val realDownload=downloadModel
         downloadModel={ _,_ -> stlBytes() }
         try {
-            compose.runOnIdle { shadow.downloadListener.onDownloadStart("https://files.printables.com/media/a.stl","","attachment; filename=\"a.stl\"","model/stl",3) }
-            if (slicer) {
+            compose.runOnIdle {
+                shadow.downloadListener.onDownloadStart("https://files.printables.com/media/a.stl","","attachment; filename=\"a.stl\"","model/stl",3)
+                // With a printer and a slicer the page is asked whether Pandy's Print button pressed the site's Download.
+                if (slicer) shadow.lastEvaluatedJavascriptCallback.onReceiveValue(if (pressed) "\"1\"" else "\"0\"")
+            }
+            if (slicer && pressed) {
                 // With a printer and a slicer the download is a print: the wrapped STL reads as a one-plate project.
                 compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithText("1 plate",substring=true).assertExists()
@@ -815,6 +819,7 @@ class ScreenTest {
     }
     @Test fun anStlOnPrintablesOpensThePrintSheetWhenASlicerIsSetUp() = printablesStl(true)
     @Test fun anStlOnPrintablesIsJustSavedWithoutASlicer() = printablesStl(false)
+    @Test fun anStlOnPrintablesFromTheSitesOwnDownloadButtonIsJustSaved() = printablesStl(true, pressed = false)
 
     @Test fun makerWorldPrintWaitsForConfirmationThenSlicesUploadsAndStarts() {
         val (uploads,closed) = prepareRealPrint("""[{"id":"1","type":"PLA","color":"#FFFFFF"}]""")
