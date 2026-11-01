@@ -37,4 +37,11 @@ class ModelSitesTest {
         for (n in listOf("a.stl", "A.STL", "b.3mf", "c.stl?token=1")) assertTrue(isPrintableModel(n), n)
         for (n in listOf("a.zip", "a.png", "a.step", "stl")) assertFalse(isPrintableModel(n), n)
     }
+
+    @Test fun siteFileRowsGetPandysOwnPrintButtonAndKeepTheSitesDownloadPlain() {
+        assertTrue(SITE_DOWNLOAD_JS.contains("pandy-print-btn")) // the magenta Print button with the bear, beside the site's own buttons
+        assertTrue(SITE_DOWNLOAD_JS.contains("window.__pandyPrintUntil = Date.now()")) // it presses the site's Download and says so for the next few seconds
+        assertFalse(SITE_DOWNLOAD_JS.contains("nodeValue = want")) // the site's own Download is no longer relabelled to Print
+        assertTrue(PRINT_INTENT_JS.contains("__pandyPrintUntil")) // the platform asks the page the same thing when that download arrives
+    }
 }

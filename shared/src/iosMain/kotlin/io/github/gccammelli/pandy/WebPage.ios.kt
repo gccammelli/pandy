@@ -256,9 +256,10 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
             val url = r.URL?.absoluteString
             val download = attachment || !decidePolicyForNavigationResponse.canShowMIMEType
             if (url != null && download && site != ModelSite.MakerWorld && site.ownsFile(url)) {
-                // Thingiverse and Printables: while Pandy can print, an STL or 3MF opens the print sheet; anything else is saved.
+                // Thingiverse and Printables: an STL or 3MF opens the print sheet when Pandy's Print button asked for it; any other download (the site's own Download, zips, images) is saved.
                 val name = r.suggestedFilename ?: "model.stl"
-                cookies(url) { c -> onDownload?.invoke(WebDownload(url, name, c, printSheet = isPrintableModel(name) && state?.canPrint == true)) }
+                fun deliver(printSheet: Boolean) = cookies(url) { c -> onDownload?.invoke(WebDownload(url, name, c, printSheet = printSheet)) }
+                if (isPrintableModel(name) && state?.canPrint == true) webView.evaluateJavaScript(PRINT_INTENT_JS) { pressed, _ -> deliver(pressed == "1") } else deliver(false)
                 return decisionHandler(WKNavigationResponsePolicy.WKNavigationResponsePolicyCancel)
             }
             if (url != null && makerWorldPage() && trustedFile(url) && download) {

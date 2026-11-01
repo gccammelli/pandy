@@ -78,11 +78,16 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                 if (!url.startsWith("https://") || url.any { it == '\\' || it == '@' || it.isWhitespace() }) return false
                 return Uri.parse(url).host?.lowercase()?.let { it.endsWith(".bblmw.com") || it == "makerworld.com" || it.endsWith(".makerworld.com") } == true
             }
+            // Pandy's own Print button on a site's file row presses that site's Download; only such a download opens the print sheet.
+            fun printPressed(asked: Boolean, then: (Boolean) -> Unit) {
+                val v = view
+                if (!asked || v == null) then(false) else v.evaluateJavascript(PRINT_INTENT_JS) { then(it == "\"1\"") }
+            }
             fun deliver(name: String, bytes: ByteArray?, printSheet: Boolean = false) = main.post {
                 // A site's blob download has the page's own file name when it set one, else a random ".bin"; an STL is recognised by its content.
                 val fromSite = sitePage.get()
                 val named = if (fromSite && bytes != null && !isPrintableModel(name) && looksLikeStl(bytes)) name.substringBeforeLast('.') + ".stl" else name
-                if (bytes != null) onDownload?.invoke(WebDownload(null, named, null, bytes, printSheet || (fromSite && isPrintableModel(named) && state?.canPrint == true))) else
+                if (bytes != null) printPressed(!printSheet && fromSite && isPrintableModel(named) && state?.canPrint == true) { pressed -> onDownload?.invoke(WebDownload(null, named, null, bytes, printSheet || pressed)) } else
                     android.widget.Toast.makeText(ctx, "Couldn't read that download", android.widget.Toast.LENGTH_LONG).show()
             }
             fun fetchInPage(name: String, url: String): Boolean {
@@ -218,8 +223,8 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                         if (b.size > $MAX_PRINT_BYTES) { PandyBridge.problem('The download is too large to save.',window.__pandyBridgeToken); return; }
                         const r=new FileReader();r.onload=()=>PandyBridge.blob(window.__pandyDownloadName||${org.json.JSONObject.quote(name)},r.result.split(',')[1],window.__pandyBridgeToken);r.readAsDataURL(b);})()""", null)
                 } else if (site != ModelSite.MakerWorld && site.ownsFile(u)) {
-                    // Thingiverse and Printables: while Pandy can print, an STL or 3MF opens the print sheet; anything else (zips, images) is saved.
-                    onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u), printSheet = isPrintableModel(name) && state?.canPrint == true))
+                    // Thingiverse and Printables: an STL or 3MF opens the print sheet when Pandy's Print button asked for it; any other download (the site's own Download, zips, images) is saved.
+                    printPressed(isPrintableModel(name) && state?.canPrint == true) { pressed -> onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u), printSheet = pressed)) }
                 } else if (trustedFile(u)) onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u)))
                 else toast("Pandy only opens downloads from ${site.label}")
             }

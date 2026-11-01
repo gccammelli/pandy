@@ -190,7 +190,13 @@ class WebPageTest {
             val shadow = shadowOf(web)
             assertEquals(start,shadow.lastLoadedUrl)
             shadow.downloadListener.onDownloadStart(file,"","attachment; filename=\"benchy.stl\"","model/stl",3)
-            assertTrue(downloads.single().printSheet); assertEquals("benchy.stl",downloads.single().name) // Pandy can print: the download is a print
+            assertEquals(PRINT_INTENT_JS,shadow.lastEvaluatedJavascript) // Pandy can print: the page says whether its own Print button asked
+            shadow.lastEvaluatedJavascriptCallback.onReceiveValue("\"1\"")
+            assertTrue(downloads.single().printSheet); assertEquals("benchy.stl",downloads.single().name) // Pandy's Print button pressed the site's Download: a print
+            shadow.downloadListener.onDownloadStart(file,"","attachment; filename=\"benchy.stl\"","model/stl",3)
+            shadow.lastEvaluatedJavascriptCallback.onReceiveValue("\"0\"")
+            assertFalse(downloads.last().printSheet) // the site's own Download button stays a plain save
+            downloads.removeAt(downloads.lastIndex)
             state.canPrint=false
             shadow.downloadListener.onDownloadStart(file,"","attachment; filename=\"benchy.stl\"","model/stl",3)
             assertFalse(downloads.last().printSheet) // no slicer or printer: a normal save
@@ -231,14 +237,21 @@ class WebPageTest {
             shadow.webViewClient.onPageFinished(web, "https://www.thingiverse.com/thing:1/files")
             assertTrue(shadow.lastEvaluatedJavascript.contains("__pandyCanPrint"))
             // The page's own file name is kept; an anonymous ".bin" holding an STL is renamed by its content.
-            bridgeCall(bridge, "blob", "part.stl", android.util.Base64.encodeToString(byteArrayOf(1, 2, 3), android.util.Base64.NO_WRAP), token)
+            // A printable file asks the page whether Pandy's Print button pressed the site's Download (here it did); a plain one is saved at once.
+            fun blob(name: String, bytes: ByteArray, answer: String?, tok: String = token) {
+                bridgeCall(bridge, "blob", name, android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP), tok)
+                org.robolectric.shadows.ShadowLooper.idleMainLooper()
+                if (answer != null) shadow.lastEvaluatedJavascriptCallback.onReceiveValue(answer)
+            }
+            blob("part.stl", byteArrayOf(1, 2, 3), "\"1\"")
             val stl = "solid x\nfacet normal 0 0 0\nendfacet\nendsolid x\n".toByteArray()
-            bridgeCall(bridge, "blob", "abc.bin", android.util.Base64.encodeToString(stl, android.util.Base64.NO_WRAP), token)
-            bridgeCall(bridge, "blob", "photo.png", android.util.Base64.encodeToString(byteArrayOf(9), android.util.Base64.NO_WRAP), token)
-            bridgeCall(bridge, "blob", "bad.stl", android.util.Base64.encodeToString(byteArrayOf(1), android.util.Base64.NO_WRAP), "wrong-token")
-            org.robolectric.shadows.ShadowLooper.idleMainLooper()
-            assertEquals(listOf("part.stl", "abc.stl", "photo.png"), downloads.map { it.name })
-            assertEquals(listOf(true, true, false), downloads.map { it.printSheet })
+            blob("abc.bin", stl, "\"1\"")
+            blob("photo.png", byteArrayOf(9), null)
+            blob("bad.stl", byteArrayOf(1), null, "wrong-token")
+            blob("own.stl", byteArrayOf(1), "\"0\"") // the site's own Download button
+            assertEquals(listOf("part.stl", "abc.stl", "photo.png", "own.stl"), downloads.map { it.name })
+            assertEquals(listOf(true, true, false, false), downloads.map { it.printSheet })
+            downloads.removeAt(downloads.lastIndex)
             // Not printable (no slicer or printer) it is a plain save; an unreadable download reaches nobody.
             state.canPrint = false
             bridgeCall(bridge, "blob", "plain.stl", android.util.Base64.encodeToString(byteArrayOf(1), android.util.Base64.NO_WRAP), token)
