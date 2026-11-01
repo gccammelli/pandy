@@ -9,6 +9,8 @@ MakerWorld, Thingiverse or Printables (Pandy's Models tab) ──3MF / STL──
                                            └──────────── start the print (MQTT or Home Assistant) ─────▶
 ```
 
+It works in every connection mode: Pandy only (Docker), Home Assistant only or Pandy + Home Assistant (the add-on, or Docker). The printer itself must be in LAN Only and Developer Mode (see below).
+
 Everything else in Pandy (status, camera, controls, history, reprints, timelapses) works without it.
 
 ## Set it up

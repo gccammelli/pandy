@@ -235,6 +235,8 @@ private fun ConnectionComparison() {
         ComparisonFeatureRow("HA history, cache and timelapses", false, true, true)
         ComparisonDivider()
         ComparisonFeatureRow("LAN Only + Developer Mode", true, false, true)
+        ComparisonDivider()
+        ComparisonFeatureRow("Slice and print models (Pandy Slicer)", true, true, true)
     }
     Gap(4.dp)
     T("* Remote use depends on Home Assistant being reachable. Some HA controls depend on what its Bambu integration exposes.", 12.sp, C.Sub, lh = 16.sp)
