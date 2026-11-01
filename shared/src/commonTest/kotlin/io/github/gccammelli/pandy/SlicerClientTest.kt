@@ -181,4 +181,9 @@ class SlicerClientTest {
         assertEquals("Connected through the Home Assistant add-on: Bambu Studio 2.8", slicerConnected(true, "2.8"))
         assertEquals("Connected: Bambu Studio 2.8", slicerConnected(false, "2.8"))
     }
+
+    @Test fun failureTextPrefersTheMessage() {
+        assertEquals("Couldn't put the file on the printer: refused", failureText(ApiException("Couldn't put the file on the printer: refused")))
+        assertTrue(failureText(RuntimeException()).contains("RuntimeException")) // no message: the exception itself
+    }
 }

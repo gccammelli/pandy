@@ -118,6 +118,9 @@ class SlicerClient(
     }
 }
 
+/** What to tell the user about a failure: its message, or the exception itself when it has none. */
+fun failureText(e: Throwable) = e.message ?: e.toString()
+
 /** The success line of the slicer check: which route answered, since the add-on needs no address or token and a typed address overrides it. */
 fun slicerConnected(viaHa: Boolean, version: String) =
     if (viaHa) "Connected through the Home Assistant add-on: Bambu Studio $version" else "Connected: Bambu Studio $version"

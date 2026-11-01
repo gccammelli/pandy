@@ -320,7 +320,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
                 withContext(Dispatchers.Default) { Repo.ha!!.startPrint(p, path, selectedPlate, mapping, selectedTimelapse, selectedLeveling, selectedFlow, buildPlateCode(selectedBuildPlate)) }
                 if (Repo.lan == null) Repo.saveLan(to)
             }.onSuccess { close(); Nav.stack.clear(); Nav.tab = 1 }
-                .onFailure { step = Step.Ready; printFailure = it.message ?: it.toString(); err(printFailure!!) }
+                .onFailure { step = Step.Ready; printFailure = io.github.gccammelli.pandy.failureText(it); err(printFailure!!) }
         }
     }
 
