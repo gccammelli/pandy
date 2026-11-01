@@ -18,3 +18,8 @@
 - Run `./gradlew testDebugUnitTest`.
 - User-facing pull requests require before-and-after screenshots, or a short video where still images are insufficient. Never claim a simulator, phone, Home Assistant instance or printer test that did not actually run.
 - Preserve compatibility with supported printers, firmware and saved settings. Unknown printer states must remain explicit rather than being silently treated as safe.
+
+## First-party auto-merge
+
+- For a maintainer-requested or first-party maintenance pull request, add the `first-party-maintenance` label only after applicable non-CI review, emulator, integration and hardware gates have passed. The auto-merge workflow then waits for required CI. Dependabot maintenance is eligible without the label.
+- Never add this label to work requested by a third party, even if a Cammelli agent authored the pull request. Public-issue branches and PRs labeled `needs-maintainer-approval` are excluded. Do not use the label to bypass required gates.
