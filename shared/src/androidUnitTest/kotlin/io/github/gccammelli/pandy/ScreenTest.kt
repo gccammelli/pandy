@@ -2353,6 +2353,34 @@ class ScreenTest {
         assertEquals("127.0.0.1",settings["lan_ip"]) // the saved details were not replaced
     }
 
+    @Test fun aFailedPrintKeepsItsReasonOnScreenInsteadOfOnlyInAToast() {
+        val storeField=Repo::class.java.getDeclaredField("store").apply { isAccessible=true }
+        val original=storeField.get(Repo)
+        restorePrintSettings={ storeField.set(Repo,original) }
+        val settings=mutableMapOf("demo" to "false","mode" to "ha","lan_serial" to printer.serial.lowercase(),"lan_ip" to "127.0.0.1","lan_model" to "X1C")
+        storeField.set(Repo,PlatformStorage(Memory(settings),Memory(mutableMapOf("lan_code" to "12345678")),object : AppFiles {
+            override fun read(name: String): ByteArray? = null
+            override fun write(name: String,bytes: ByteArray) = Unit
+            override fun delete(name: String) = Unit
+        }))
+        val values=snapshot.toMutableMap()
+        for((role,state) in listOf("sensor.print_status" to "idle","binary_sensor.online" to "on")) { val id=printer.info.ids.getValue(role); values[id]=Entity(id,state,JsonObject(emptyMap())) }
+        Repo.state.value=st.copy(printers=listOf(Printer(printer.info.copy(ams=emptyList()),values)))
+        val http=io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { _ ->
+            respond("""{"error":"Couldn't put the file on the printer: refused"}""",io.ktor.http.HttpStatusCode.FailedDependency,
+                io.ktor.http.headersOf(io.ktor.http.HttpHeaders.ContentType to listOf("application/json")))
+        }).also { testHttpClients += it }
+        val slicer=SlicerClient("http://slicer.invalid:8737",null,http=http)
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            PrintModelSheet(WebDownload(null,"Test model.3mf",null,modelBytes(),true),{},slicerClient=slicer)
+        } } }
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Print current plate",substring=false).performClick()
+        compose.onNodeWithText("Start",substring=false).performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Couldn't put the file on the printer: refused").fetchSemanticsNodes().isNotEmpty() }
+    }
+
     @Test fun everyFilamentSlotOpensItsDetailsAndLoadAndUnloadFollowThePrintState() {
         val trays=printer.info.ams.single().trays
         fun spool(vararg attrs: Pair<String,String>) = entity("Spool",attrs.toMap())

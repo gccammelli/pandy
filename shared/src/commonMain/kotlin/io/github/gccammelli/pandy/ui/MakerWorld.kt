@@ -187,6 +187,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     var stlSource by remember { mutableStateOf<ByteArray?>(null) } // an STL's own bytes: its 3D preview is built from them, not from the wrapped 3MF
     var project by remember { mutableStateOf<Project?>(null) }
     var failed by remember { mutableStateOf<String?>(null) }
+    var printFailure by remember { mutableStateOf<String?>(null) } // why the last Print failed, kept on screen: a toast cuts long reasons short
     var reading by remember { mutableStateOf(false) }
     var previewLoaded by remember { mutableStateOf(false) }
     var plate by remember { mutableStateOf(1) }
@@ -293,7 +294,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         val selectedBuildPlate = buildPlate
         val selectedPresets = presets
         val plainSpool = pickedSpool.takeIf { projectNow.filaments.isEmpty() }
-        step = Step.Slicing
+        step = Step.Slicing; printFailure = null
         scope.launch {
             runCatching {
                 val (path, sliced) = withContext(Dispatchers.Default) { slicer!!.sliceAndUpload(bytes, selectedPlate, name, to, io.github.gccammelli.pandy.printerPreset(p.model, p.state("sensor.nozzle_diameter")), buildPlateCode(selectedBuildPlate),
@@ -319,7 +320,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
                 withContext(Dispatchers.Default) { Repo.ha!!.startPrint(p, path, selectedPlate, mapping, selectedTimelapse, selectedLeveling, selectedFlow, buildPlateCode(selectedBuildPlate)) }
                 if (Repo.lan == null) Repo.saveLan(to)
             }.onSuccess { close(); Nav.stack.clear(); Nav.tab = 1 }
-                .onFailure { step = Step.Ready; err(it.message ?: it.toString()) }
+                .onFailure { step = Step.Ready; printFailure = it.message ?: it.toString(); err(printFailure!!) }
         }
     }
 
@@ -367,7 +368,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
                 confirmPrint = true
             }, step = step, needsAccessCode = !Repo.demo && savedLan == null, canPrint = Repo.demo || (step == Step.Ready && p.online && lan != null && slicer != null && mappingReady), code = code,
             setCode = { code = it }, modelNotice = shortModel(pr.printerModel)?.takeIf { it != p.model }?.let { "Prepared for ${p.model}; the designer's ${it} profile will be converted by Pandy Slicer." },
-            setupNote = setupNote, setupGuide = setupGuide, help = { help = it },
+            setupNote = setupNote, setupGuide = setupGuide, help = { help = it }, printFailure = printFailure,
         )
         PrepareView.Preview -> PreviewView(p, pr, plate, auto, manualMapping, presets, plainColor = pickedSpool?.second?.color, back = { view = PrepareView.Prepare })
     }
@@ -444,7 +445,7 @@ private fun PrepareView(
     leveling: Boolean, setLeveling: (Boolean) -> Unit, flow: Boolean, setFlow: (Boolean) -> Unit, timelapse: Boolean,
     setTimelapse: (Boolean) -> Unit, back: () -> Unit, print: () -> Unit, step: Step,
     canPrint: Boolean, needsAccessCode: Boolean, code: String, setCode: (String) -> Unit, modelNotice: String?,
-    setupNote: String?, setupGuide: String?, help: (String) -> Unit,
+    setupNote: String?, setupGuide: String?, help: (String) -> Unit, printFailure: String?,
 ) = Column(Modifier.fillMaxSize().background(C.Bg)) {
     val editable = step == Step.Ready
     PrepareHeader("Prepare to Print", back.takeIf { editable })
@@ -528,6 +529,7 @@ private fun PrepareView(
             }
         }
         if (step == Step.Slicing || step == Step.Starting) T(step.label, 13.sp, C.Sub, modifier = Modifier.padding(22.dp, 8.dp))
+        else if (printFailure != null) T(printFailure!!, 13.sp, C.Red, lh = 18.sp, modifier = Modifier.padding(22.dp, 8.dp))
         else if (!canPrint && !Repo.demo) setupNote?.let { note ->
             if (setupGuide != null) SetupNote(note, setupGuide, Modifier.padding(14.dp))
             else T(note, 13.sp, C.Sub, lh = 18.sp, modifier = Modifier.padding(22.dp, 8.dp))
