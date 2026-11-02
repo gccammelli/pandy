@@ -61,7 +61,7 @@ expect suspend fun discoverPrinters(millis: Long): List<FoundPrinter>
 fun modelName(code: String?, serial: String = ""): String = when {
     code == null || code.isBlank() -> when (serial.take(3)) {
         "00M" -> "X1C"; "00W" -> "X1"; "03W" -> "X1E"; "01S" -> "P1P"; "01P" -> "P1S"; "22E" -> "P2S"
-        "039" -> "A1"; "030" -> "A1 mini"; "094" -> "H2D"; "239" -> "H2S"; else -> "Bambu printer"
+        "039" -> "A1"; "030" -> "A1 mini"; "094" -> "H2D"; "239" -> "H2S"; "20P" -> "X2D"; else -> "Bambu printer"
     }
     code.contains("X1-Carbon", true) || code == "BL-P001" -> "X1C"
     code.contains("X1E", true) || code == "C13" -> "X1E"
@@ -73,11 +73,12 @@ fun modelName(code: String?, serial: String = ""): String = when {
     code == "N1" -> "A1 mini"
     code == "O1D" -> "H2D"
     code == "O1S" -> "H2S"
+    code == "N6" || code.contains("X2", true) -> "X2D"
     else -> code
 }
 
 /** X1 and H2 cameras stream RTSP; P1 and A1 send JPEG frames. */
-fun rtspCamera(model: String) = model.startsWith("X1") || model.startsWith("H2") || model.startsWith("P2")
+fun rtspCamera(model: String) = model.startsWith("X1") || model.startsWith("H2") || model.startsWith("P2") || model.startsWith("X2")
 
 /** Merges a report into the last one: printers (P1, A1) send only what changed. Objects merge; arrays and values replace. */
 fun deepMerge(old: JsonObject, new: JsonObject): JsonObject = JsonObject(old + new.mapValues { (k, v) ->
@@ -217,7 +218,7 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     add("sensor", "target_bed_temp", p.dbl("bed_target_temper")?.toInt())
     (p.str("bed_type") ?: p.str("print_bed_type"))?.let { add("sensor", "print_bed_type", it) }
     // Only enclosed printers with a chamber sensor report it (X1, H2); P1S shows none, like Handy. Newer firmware moved it under device.ctc.
-    (p.dbl("chamber_temper") ?: p.o("device")?.o("ctc")?.o("info")?.dbl("temp"))?.takeIf { c.model.startsWith("X1") || c.model.startsWith("H2") || c.model.startsWith("P2") }?.let { add("sensor", "chamber_temp", it) }
+    (p.dbl("chamber_temper") ?: p.o("device")?.o("ctc")?.o("info")?.dbl("temp"))?.takeIf { c.model.startsWith("X1") || c.model.startsWith("H2") || c.model.startsWith("P2") || c.model.startsWith("X2") }?.let { add("sensor", "chamber_temp", it) }
     val status = if (!online) "offline" else printStatus(p.str("gcode_state"))
     add("sensor", "print_status", status)
     add("sensor", "stage", stageName(p.int("stg_cur")))

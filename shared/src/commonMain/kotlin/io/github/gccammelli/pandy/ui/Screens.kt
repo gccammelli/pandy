@@ -289,7 +289,7 @@ fun PrinterSettingsScreen(p: Printer) {
 fun CalibrationScreen(p: Printer) {
     val err = errorToast()
     var confirm by remember { mutableStateOf(false) }
-    var lidar by remember { mutableStateOf(p.model.startsWith("X1") || p.model.startsWith("H2")) }
+    var lidar by remember { mutableStateOf(p.model.startsWith("X1") || p.model.startsWith("H2") || p.model.startsWith("X2")) }
     var bed by remember { mutableStateOf(true) }
     var vibration by remember { mutableStateOf(true) }
     var motor by remember { mutableStateOf(false) }
@@ -300,7 +300,7 @@ fun CalibrationScreen(p: Printer) {
             T("Choose the checks to run on the printer. Calibration can move the toolhead and heat the bed.", 14.sp, C.Sub, lh = 19.sp, modifier = Modifier.padding(horizontal = 6.dp))
             Gap(12.dp)
             Group {
-                if (p.model.startsWith("X1") || p.model.startsWith("H2")) ToggleRow("Micro lidar calibration", lidar, enabled = canSend && !p.printing) { lidar = it }
+                if (p.model.startsWith("X1") || p.model.startsWith("H2") || p.model.startsWith("X2")) ToggleRow("Micro lidar calibration", lidar, enabled = canSend && !p.printing) { lidar = it }
                 ToggleRow("Bed leveling", bed, enabled = canSend && !p.printing) { bed = it }
                 ToggleRow("Vibration compensation", vibration, enabled = canSend && !p.printing) { vibration = it }
                 ToggleRow("Motor noise cancellation", motor, enabled = canSend && !p.printing) { motor = it }

@@ -53,7 +53,7 @@ class LanBoundaryTest {
 
     @Test fun chamberTemperaturesAreLimitedToSupportedModelsAndBedTypeUsesFallback() {
         val report = """{"print":{"device":{"ctc":{"info":{"temp":25}}},"print_bed_type":"cool_plate","sdcard":"false","ipcam":{"timelapse":"disable"}}}"""
-        for (model in listOf("X1C", "H2D", "P2S")) assertEquals("25.0", entities(report, model).getValue("chamber_temp").state)
+        for (model in listOf("X1C", "H2D", "P2S", "X2D")) assertEquals("25.0", entities(report, model).getValue("chamber_temp").state)
         for (model in listOf("P1S", "A1")) assertFalse(entities(report, model).containsKey("chamber_temp"))
         val e = entities(report)
         assertEquals("cool_plate", e.getValue("print_bed_type").state)
@@ -100,7 +100,7 @@ class LanBoundaryTest {
     }
 
     @Test fun advertisedCameraAndNozzleVariantsRemainReadableAcrossPrinterFamilies() {
-        for((model,rtsp) in listOf("X1C" to true,"H2D" to true,"P2S" to true,"P1S" to false,"A1" to false))
+        for((model,rtsp) in listOf("X1C" to true,"H2D" to true,"P2S" to true,"X2D" to true,"P1S" to false,"A1" to false))
             assertEquals(rtsp,rtspCamera(model))
         for((raw,expected) in listOf("HS00" to "stainless_steel","HH01" to "high_flow_hardened_steel",
             "HH05" to "high_flow_tungsten_carbide","HS99" to "unknown","1234" to "1234","HHxx" to "HHxx","brass" to "brass"))

@@ -46,7 +46,7 @@ class LanTest {
         for ((code, serial, expected) in listOf(
             Triple("N7","22E123","P2S"), Triple("N2S","039123","A1"),
             Triple("N1","030123","A1 mini"), Triple("O1D","094123","H2D"),
-            Triple("O1S","239123","H2S"), Triple("C13","03W123","X1E"),
+            Triple("O1S","239123","H2S"), Triple("N6","20P123","X2D"), Triple("C13","03W123","X1E"),
             Triple("C11","01S123","P1P"), Triple("C12","01P123","P1S"),
             Triple("BL-P001","00M123","X1C"), Triple("BL-P002","00W123","X1"),
         )) {

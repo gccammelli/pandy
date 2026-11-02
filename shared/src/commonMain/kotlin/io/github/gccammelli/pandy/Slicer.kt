@@ -511,7 +511,7 @@ fun printerPreset(model: String, nozzle: String?): String {
 fun shortModel(projectModel: String?): String? = when (projectModel?.removePrefix("Bambu Lab ")?.trim()) {
     null -> null
     "X1 Carbon" -> "X1C"; "X1" -> "X1"; "X1E" -> "X1E"; "P1S" -> "P1S"; "P1P" -> "P1P"; "P2S" -> "P2S"
-    "A1" -> "A1"; "A1 mini" -> "A1 mini"; "H2D" -> "H2D"; "H2S" -> "H2S"
+    "A1" -> "A1"; "A1 mini" -> "A1 mini"; "H2D" -> "H2D"; "H2S" -> "H2S"; "X2D" -> "X2D"
     else -> projectModel.removePrefix("Bambu Lab ")
 }
 
