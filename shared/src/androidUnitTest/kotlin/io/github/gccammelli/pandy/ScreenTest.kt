@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import io.ktor.client.engine.mock.respond
 import androidx.activity.ComponentActivity
 import android.graphics.Bitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import android.graphics.Canvas
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.onNodeWithText
@@ -1921,6 +1922,121 @@ class ScreenTest {
         }
         assertEquals(listOf("Retract","Extrude"),commands.map { json.parseToJsonElement(it.second).jsonObject.s("type") })
         org.junit.Assert.assertTrue(commands.all { it.first.endsWith("extrude_retract") })
+    }
+
+    @Test fun dualNozzlePrinterRendersBothNozzlesAndAllowsTargetSelection() {
+        val extraIds = mapOf(
+            "sensor.left_nozzle_temp" to "sensor.left_nozzle_temp",
+            "sensor.left_target_nozzle_temp" to "sensor.left_target_nozzle_temp",
+            "sensor.right_nozzle_temp" to "sensor.right_nozzle_temp",
+            "sensor.right_target_nozzle_temp" to "sensor.right_target_nozzle_temp",
+            "sensor.left_nozzle_diameter" to "sensor.left_nozzle_diameter",
+            "sensor.right_nozzle_diameter" to "sensor.right_nozzle_diameter",
+            "sensor.left_nozzle_type" to "sensor.left_nozzle_type",
+            "sensor.right_nozzle_type" to "sensor.right_nozzle_type",
+            "sensor.active_nozzle" to "sensor.active_nozzle"
+        )
+        val info = printer.info.copy(model = "X2D", ids = printer.info.ids + extraIds)
+        val p = variant(
+            info = info,
+            set = arrayOf(
+                "sensor.print_status" to entity("idle"),
+                "sensor.left_nozzle_temp" to entity("45.0"),
+                "sensor.left_target_nozzle_temp" to entity("0"),
+                "sensor.right_nozzle_temp" to entity("220.0"),
+                "sensor.right_target_nozzle_temp" to entity("220"),
+                "sensor.left_nozzle_diameter" to entity("0.4"),
+                "sensor.right_nozzle_diameter" to entity("0.4"),
+                "sensor.left_nozzle_type" to entity("stainless_steel"),
+                "sensor.right_nozzle_type" to entity("hardened_steel"),
+                "sensor.active_nozzle" to entity("right")
+            )
+        )
+        show("Device Control") { ControlScreen(p) }
+        compose.onAllNodesWithText("L").assertCountEquals(1) // top Chip
+        compose.onAllNodesWithText("R").assertCountEquals(1)
+        compose.onNodeWithText("Nozzle & Extruder").performScrollTo().performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithText("Left Nozzle (L)").assertExists()
+        compose.onNodeWithText("Right Nozzle (R)").assertExists()
+        compose.onNodeWithText("0.4mm Hardened steel", substring = true).assertExists()
+        compose.onNodeWithText("220°C → 220°C").assertExists()
+        compose.onNodeWithText("Left Nozzle (L)").performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithText("0.4mm Stainless steel", substring = true).assertExists()
+        compose.onNodeWithText("45°C").assertExists()
+    }
+
+    private fun sampleX2DPrinter(): Printer {
+        val extraIds = mapOf(
+            "sensor.printer_name" to "sensor.printer_name",
+            "sensor.left_nozzle_temp" to "sensor.left_nozzle_temp",
+            "sensor.left_target_nozzle_temp" to "sensor.left_target_nozzle_temp",
+            "sensor.right_nozzle_temp" to "sensor.right_nozzle_temp",
+            "sensor.right_target_nozzle_temp" to "sensor.right_target_nozzle_temp",
+            "sensor.left_nozzle_diameter" to "sensor.left_nozzle_diameter",
+            "sensor.right_nozzle_diameter" to "sensor.right_nozzle_diameter",
+            "sensor.left_nozzle_type" to "sensor.left_nozzle_type",
+            "sensor.right_nozzle_type" to "sensor.right_nozzle_type",
+            "sensor.active_nozzle" to "sensor.active_nozzle"
+        )
+        val info = printer.info.copy(name = "My X2D", model = "X2D", ids = printer.info.ids + extraIds)
+        return variant(
+            info = info,
+            set = arrayOf(
+                "sensor.printer_name" to entity("My X2D"),
+                "sensor.print_status" to entity("idle"),
+                "sensor.left_nozzle_temp" to entity("15.0"),
+                "sensor.left_target_nozzle_temp" to entity("0"),
+                "sensor.right_nozzle_temp" to entity("15.0"),
+                "sensor.right_target_nozzle_temp" to entity("0"),
+                "sensor.chamber_temp" to entity("19.0"),
+                "sensor.chamber_target_temp" to entity("0"),
+                "sensor.bed_temp" to entity("20.0"),
+                "sensor.bed_target_temp" to entity("0"),
+                "sensor.left_nozzle_diameter" to entity("0.4"),
+                "sensor.right_nozzle_diameter" to entity("0.4"),
+                "sensor.left_nozzle_type" to entity("hardened_steel"),
+                "sensor.right_nozzle_type" to entity("hardened_steel"),
+                "sensor.active_nozzle" to entity("right")
+            )
+        )
+    }
+
+    private fun evidenceDir(): java.io.File =
+        listOf(java.io.File("../docs/evidence/dual-nozzle"), java.io.File("docs/evidence/dual-nozzle"))
+            .first { it.parentFile?.exists() == true }.apply { mkdirs() }
+
+    @Test fun dualNozzleEvidenceDevicesScreen() {
+        val p = sampleX2DPrinter()
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    DevicesTab(st.copy(printers = listOf(p)), p)
+                }
+            }
+        }
+        compose.waitForIdle()
+        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
+        java.io.FileOutputStream(java.io.File(evidenceDir(), "devices-screen.png")).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
+    }
+
+    @Test fun dualNozzleEvidenceControlScreen() {
+        val p = sampleX2DPrinter()
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    ControlScreen(p)
+                }
+            }
+        }
+        compose.waitForIdle()
+        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
+        java.io.FileOutputStream(java.io.File(evidenceDir(), "control-screen.png")).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
     }
 
     @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {

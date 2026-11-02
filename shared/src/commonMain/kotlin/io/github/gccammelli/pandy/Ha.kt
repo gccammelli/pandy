@@ -252,9 +252,13 @@ fun hexColor(s: String?): Long {
 fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
     val all = devs.map { it.jsonObject }.filter { d -> d.a("identifiers")?.any { (it.jsonArray[0] as JsonPrimitive).content == "bambu_lab" } == true }
     val byDevice = ents.map { it.jsonObject }.filter { it.s("platform") == "bambu_lab" && it.s("disabled_by") == null }.groupBy { it.s("device_id") }
-    fun keyed(id: String?) = byDevice[id].orEmpty().mapNotNull { r ->
+    fun keyed(id: String?, serial: String? = null) = byDevice[id].orEmpty().mapNotNull { r ->
         val eid = r.s("entity_id") ?: return@mapNotNull null
-        val key = r.s("translation_key") ?: r.s("unique_id")?.substringAfterLast('_') ?: return@mapNotNull null
+        val u = r.s("unique_id")
+        val key = r.s("translation_key")
+            ?: (if (serial != null && u != null && u.startsWith("${serial}_")) u.removePrefix("${serial}_") else null)
+            ?: u?.substringAfterLast('_')
+            ?: return@mapNotNull null
         "${eid.substringBefore('.')}.$key" to eid
     }.toMap()
     val printers = all.filter { it.s("via_device_id") == null }
@@ -279,7 +283,7 @@ fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
         val extDev = children.firstOrNull { c -> byDevice[c.s("id")].orEmpty().any { it.s("translation_key") == "external_spool" } }?.s("id")
         val ext = children.flatMap { c -> byDevice[c.s("id")].orEmpty().filter { it.s("translation_key") == "external_spool" }.mapNotNull { it.s("entity_id") } }
         val serial = p.a("identifiers")!!.map { it.jsonArray }.first { (it[0] as JsonPrimitive).content == "bambu_lab" }[1].let { (it as JsonPrimitive).content }
-        PrinterInfo(p.s("id")!!, serial, p.s("name_by_user") ?: p.s("name") ?: serial, p.s("model") ?: "", p.s("sw_version"), keyed(p.s("id")), ams, ext, extDev)
+        PrinterInfo(p.s("id")!!, serial, p.s("name_by_user") ?: p.s("name") ?: serial, p.s("model") ?: "", p.s("sw_version"), keyed(p.s("id"), serial), ams, ext, extDev)
     }
 }
 
@@ -318,6 +322,12 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val speed get() = state("select.printing_speed") ?: state("sensor.speed_profile")
     val nozzle get() = get("sensor.nozzle_temp")?.celsius
     val nozzleTarget get() = get("sensor.target_nozzle_temp")?.celsius
+    val isDualNozzle: Boolean get() = info.ids.containsKey("sensor.left_nozzle_temp") || info.ids.containsKey("sensor.right_nozzle_temp") || model.contains("2D")
+    val leftNozzle: Double? get() = get("sensor.left_nozzle_temp")?.celsius ?: if (isDualNozzle && activeNozzle == "left") nozzle else null
+    val leftNozzleTarget: Double? get() = get("sensor.left_target_nozzle_temp")?.celsius ?: if (isDualNozzle && activeNozzle == "left") nozzleTarget else null
+    val rightNozzle: Double? get() = get("sensor.right_nozzle_temp")?.celsius ?: if (isDualNozzle && activeNozzle != "left") nozzle else null
+    val rightNozzleTarget: Double? get() = get("sensor.right_target_nozzle_temp")?.celsius ?: if (isDualNozzle && activeNozzle != "left") nozzleTarget else null
+    val activeNozzle: String? get() = state("sensor.active_nozzle") ?: if (isDualNozzle) "right" else null
     val bed get() = get("sensor.bed_temp")?.celsius
     val bedTarget get() = get("sensor.target_bed_temp")?.celsius
     val chamber get() = get("sensor.chamber_temp")?.celsius

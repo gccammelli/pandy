@@ -88,4 +88,36 @@ class PrintersFromTest {
         assertFalse(printer("on", hybrid = "off").controlBlocked)
         assertEquals(1, printer("on").external.size) // a spool id without a state is skipped
     }
+
+    @Test fun dualNozzleEntitiesAreMappedCorrectly() {
+        val dev = array("""[{"id":"p_dual","name":"Bambu X2D","model":"X2D","identifiers":[["bambu_lab","SERIAL_DUAL"]]}]""")
+        val ents = array("""[
+            {"entity_id":"sensor.left_t","device_id":"p_dual","platform":"bambu_lab","unique_id":"SERIAL_DUAL_left_nozzle_temp"},
+            {"entity_id":"sensor.right_t","device_id":"p_dual","platform":"bambu_lab","unique_id":"SERIAL_DUAL_right_nozzle_temp"},
+            {"entity_id":"sensor.left_target","device_id":"p_dual","platform":"bambu_lab","unique_id":"SERIAL_DUAL_left_target_nozzle_temp"},
+            {"entity_id":"sensor.right_target","device_id":"p_dual","platform":"bambu_lab","unique_id":"SERIAL_DUAL_right_target_nozzle_temp"},
+            {"entity_id":"sensor.act","device_id":"p_dual","platform":"bambu_lab","unique_id":"SERIAL_DUAL_active_nozzle"}
+        ]""")
+        val printer = printersFrom(dev, ents).single()
+        assertEquals("sensor.left_t", printer.ids["sensor.left_nozzle_temp"])
+        assertEquals("sensor.right_t", printer.ids["sensor.right_nozzle_temp"])
+        assertEquals("sensor.left_target", printer.ids["sensor.left_target_nozzle_temp"])
+        assertEquals("sensor.right_target", printer.ids["sensor.right_target_nozzle_temp"])
+        assertEquals("sensor.act", printer.ids["sensor.active_nozzle"])
+
+        val states = mapOf(
+            "sensor.left_t" to Entity("sensor.left_t", "45.0", JsonObject(emptyMap())),
+            "sensor.right_t" to Entity("sensor.right_t", "220.0", JsonObject(emptyMap())),
+            "sensor.left_target" to Entity("sensor.left_target", "0", JsonObject(emptyMap())),
+            "sensor.right_target" to Entity("sensor.right_target", "220", JsonObject(emptyMap())),
+            "sensor.act" to Entity("sensor.act", "right", JsonObject(emptyMap()))
+        )
+        val p = Printer(printer, states)
+        assertTrue(p.isDualNozzle)
+        assertEquals(45.0, p.leftNozzle)
+        assertEquals(0.0, p.leftNozzleTarget)
+        assertEquals(220.0, p.rightNozzle)
+        assertEquals(220.0, p.rightNozzleTarget)
+        assertEquals("right", p.activeNozzle)
+    }
 }

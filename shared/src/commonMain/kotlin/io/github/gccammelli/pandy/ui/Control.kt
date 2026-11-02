@@ -78,9 +78,20 @@ fun ControlScreen(p: Printer) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 14.dp)) {
             Box(Modifier.fillMaxWidth().height(200.dp).padding(vertical = 8.dp)) {
                 PrinterArt(Modifier.fillMaxSize().padding(horizontal = 60.dp), ams = p.info.ams.isNotEmpty(), lit = p.lightOn)
-                Chip("nozzle", p.nozzle, p.nozzleTarget, Modifier.align(Alignment.TopStart))
-                if (p.chamber != null) Chip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.TopEnd))
-                Chip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
+                if (p.isDualNozzle) {
+                    Chip("nozzle", p.leftNozzle ?: p.nozzle, p.leftNozzleTarget, Modifier.align(Alignment.TopStart), label = "L")
+                    Chip("nozzle", p.rightNozzle ?: p.nozzle, p.rightNozzleTarget, Modifier.align(Alignment.TopEnd), label = "R")
+                    if (p.chamber != null) {
+                        Chip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.BottomStart))
+                        Chip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomEnd))
+                    } else {
+                        Chip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
+                    }
+                } else {
+                    Chip("nozzle", p.nozzle, p.nozzleTarget, Modifier.align(Alignment.TopStart))
+                    if (p.chamber != null) Chip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.TopEnd))
+                    Chip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MiniCard("Speed", speedLabel(p.speed), Modifier.weight(1f)) { if (p.printing) sheet = "speed" else err("Speed can only be changed while printing") }
@@ -123,9 +134,15 @@ private fun ChamberInfoSheet(p: Printer, close: () -> Unit) = Sheet(close, "Cham
 }
 
 @Composable
-private fun Chip(which: String, now: Double?, target: Double?, modifier: Modifier) =
+private fun Chip(which: String, now: Double?, target: Double?, modifier: Modifier = Modifier, label: String? = null) =
     Row(modifier.clip(RoundedCornerShape(50)).background(C.Card).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-        HeaterGlyph(which, Modifier.size(14.dp)); Spacer(Modifier.width(5.dp)); TempText(now, target, 14.sp, 10.sp)
+        if (label != null) {
+            T(label, 12.sp, C.Sub, FontWeight.Bold)
+            Spacer(Modifier.width(4.dp))
+        }
+        HeaterGlyph(which, Modifier.size(14.dp))
+        Spacer(Modifier.width(5.dp))
+        TempText(now, target, 14.sp, 10.sp)
     }
 
 @Composable
@@ -152,38 +169,64 @@ private fun SpeedSheet(p: Printer, err: (String) -> Unit, close: () -> Unit) = S
 
 @Composable
 private fun NozzleSheet(p: Printer, err: (String) -> Unit, close: () -> Unit) {
+    var selectedNozzle by remember { mutableStateOf(if (p.isDualNozzle && p.activeNozzle == "left") "left" else if (p.isDualNozzle) "right" else null) }
     var temp by remember { mutableStateOf(false) }
+    val curNozzle = selectedNozzle
+    val curTemp = if (curNozzle == "left") (p.leftNozzle ?: p.nozzle) else if (curNozzle == "right") (p.rightNozzle ?: p.nozzle) else p.nozzle
+    val curTarget = if (curNozzle == "left") (p.leftNozzleTarget ?: p.nozzleTarget) else if (curNozzle == "right") (p.rightNozzleTarget ?: p.nozzleTarget) else p.nozzleTarget
+    val curDiam = if (curNozzle == "left") (p.state("sensor.left_nozzle_diameter") ?: p.state("sensor.nozzle_diameter"))
+        else if (curNozzle == "right") (p.state("sensor.right_nozzle_diameter") ?: p.state("sensor.nozzle_diameter"))
+        else p.state("sensor.nozzle_diameter")
+    val curType = if (curNozzle == "left") (p.state("sensor.left_nozzle_type") ?: p.state("sensor.nozzle_type"))
+        else if (curNozzle == "right") (p.state("sensor.right_nozzle_type") ?: p.state("sensor.nozzle_type"))
+        else p.state("sensor.nozzle_type")
+    val targetKey = if (curNozzle == "left") "left_nozzle" else if (curNozzle == "right") "right_nozzle" else "nozzle"
+
     Sheet(close, "Nozzle & Extruder", centeredTitle = true, confirm = null) {
+        if (p.isDualNozzle) {
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(C.Fill).padding(3.dp)) {
+                val isLeft = selectedNozzle == "left"
+                Box(Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isLeft) C.Card else Color.Transparent)
+                    .clickable { selectedNozzle = "left" }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                    T("Left Nozzle (L)", 13.sp, if (isLeft) C.Accent else C.Sub, if (isLeft) FontWeight.Bold else FontWeight.Normal)
+                }
+                Box(Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (!isLeft) C.Card else Color.Transparent)
+                    .clickable { selectedNozzle = "right" }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                    T("Right Nozzle (R)", 13.sp, if (!isLeft) C.Accent else C.Sub, if (!isLeft) FontWeight.Bold else FontWeight.Normal)
+                }
+            }
+            Gap(12.dp)
+        }
         Row(Modifier.fillMaxWidth().height(200.dp), verticalAlignment = Alignment.CenterVertically) {
             ToolheadArt(Modifier.weight(1f).fillMaxSize().padding(horizontal = 24.dp))
             Column(Modifier.width(110.dp).clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 T("Extruder", 13.sp, C.Text)
                 Gap(10.dp)
-                KeyButton(Icons.Default.ArrowDropUp, enabled = !p.printing && (p.nozzle ?: 0.0) >= 170) { p.extrude(false, err) } // up: pull filament back
+                KeyButton(Icons.Default.ArrowDropUp, enabled = !p.printing && (curTemp ?: 0.0) >= 170) { p.extrude(false, err) } // up: pull filament back
                 Gap(16.dp)
-                KeyButton(Icons.Default.ArrowDropDown, enabled = !p.printing && (p.nozzle ?: 0.0) >= 170) { p.extrude(true, err) }
+                KeyButton(Icons.Default.ArrowDropDown, enabled = !p.printing && (curTemp ?: 0.0) >= 170) { p.extrude(true, err) }
             }
         }
         if (p.printing) T("Extrusion is unavailable while printing.", 12.sp, C.Sub, modifier = Modifier.padding(top = 6.dp))
-        else if ((p.nozzle ?: 0.0) < 170) T("Heat the nozzle to 170°C or more before extruding.", 12.sp, C.Sub, modifier = Modifier.padding(top = 6.dp))
+        else if ((curTemp ?: 0.0) < 170) T("Heat the nozzle to 170°C or more before extruding.", 12.sp, C.Sub, modifier = Modifier.padding(top = 6.dp))
         Gap(16.dp)
         T("Nozzle temperature", 14.sp)
         Gap(8.dp)
         Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(C.Fill).clickable { temp = true }.padding(14.dp)) {
-            T("${p.nozzle?.toInt() ?: "--"}°C" + (p.nozzleTarget?.takeIf { it > 0 }?.let { " → ${it.toInt()}°C" } ?: ""), 16.sp)
+            T("${curTemp?.toInt() ?: "--"}°C" + (curTarget?.takeIf { it > 0 }?.let { " → ${it.toInt()}°C" } ?: ""), 16.sp)
         }
         Gap(14.dp)
         T("Nozzle type", 14.sp)
         Gap(8.dp)
         Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(C.Fill).padding(14.dp)) {
-            T("${p.state("sensor.nozzle_diameter") ?: "?"}mm ${nozzleType(p.state("sensor.nozzle_type"))}", 16.sp, C.Sub)
+            T("${curDiam ?: "?"}mm ${nozzleType(curType)}", 16.sp, C.Sub)
         }
         Gap(8.dp)
         T("Please change the nozzle settings on the printer.", 12.sp, C.Sub)
         Gap(24.dp)
     }
     if (temp) TempSheet("Nozzle temperature", "The nozzle heats to this temperature. Most PLA prints at 190–230°C, PETG at 230–260°C.",
-        listOf(190, 220, 250, 280), p.nozzleTarget, 0..320, { temp = false }) { p.setTarget("nozzle", it, err) }
+        listOf(190, 220, 250, 280), curTarget, 0..320, { temp = false }) { p.setTarget(targetKey, it, err) }
 }
 
 @Composable

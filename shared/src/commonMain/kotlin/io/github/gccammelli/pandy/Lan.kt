@@ -212,6 +212,37 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     val speed = when (p.int("spd_lvl")) { 1 -> "silent"; 3 -> "sport"; 4 -> "ludicrous"; else -> "standard" }
     add("select", "printing_speed", speed, buildJsonObject { putJsonArray("options") { listOf("silent", "standard", "sport", "ludicrous").forEach { add(JsonPrimitive(it)) } } })
     add("sensor", "speed_profile", speed)
+    val deviceObj = p.o("device") ?: r.o("device")
+    val extruder = deviceObj?.o("extruder")
+    val extruderInfo = (extruder?.get("info") as? JsonArray)?.mapNotNull { it as? JsonObject }
+    if (!extruderInfo.isNullOrEmpty()) {
+        extruderInfo.forEach { entry ->
+            val id = entry.int("id")
+            val rawTemp = entry.str("temp")?.toLongOrNull() ?: entry.int("temp")?.toLong()
+            val temp = rawTemp?.let { (it and 0xFFFFL).toDouble() }
+            val target = rawTemp?.let { ((it ushr 16) and 0xFFFFL).toInt() }
+            val prefix = if (id == 1) "left" else if (id == 0) "right" else null
+            if (prefix != null) {
+                temp?.let { add("sensor", "${prefix}_nozzle_temp", it) }
+                target?.let { add("sensor", "${prefix}_target_nozzle_temp", it) }
+                target?.let { add("number", "target_${prefix}_nozzle_temperature", it, buildJsonObject { put("min", 0); put("max", 320) }) }
+            }
+        }
+        val extState = extruder.int("state") ?: 0
+        val activeIdx = (extState ushr 4) and 0xF
+        add("sensor", "active_nozzle", if (activeIdx == 1) "left" else "right")
+    }
+    val nozzleInfo = (deviceObj?.o("nozzle")?.get("info") as? JsonArray)?.mapNotNull { it as? JsonObject }
+    if (!nozzleInfo.isNullOrEmpty()) {
+        nozzleInfo.forEach { entry ->
+            val id = entry.int("id")
+            val prefix = if (id == 1) "left" else if (id == 0) "right" else null
+            if (prefix != null) {
+                (entry.str("diameter") ?: entry.dbl("diameter")?.toString())?.let { add("sensor", "${prefix}_nozzle_diameter", it) }
+                entry.str("type")?.let { add("sensor", "${prefix}_nozzle_type", nozzleTypeName(it)) }
+            }
+        }
+    }
     add("sensor", "nozzle_temp", p.dbl("nozzle_temper"))
     add("sensor", "target_nozzle_temp", p.dbl("nozzle_target_temper")?.toInt())
     add("sensor", "bed_temp", p.dbl("bed_temper"))
@@ -638,6 +669,8 @@ class DirectPrinter(
                 val v = d.s("value")?.toDoubleOrNull()?.toInt() ?: 0
                 when (rowOf(target)?.key) {
                     "target_nozzle_temperature" -> gcode("M104 S$v\n")
+                    "target_left_nozzle_temperature" -> gcode("M104 T1 S$v\n")
+                    "target_right_nozzle_temperature" -> gcode("M104 T0 S$v\n")
                     "target_bed_temperature" -> gcode("M140 S$v\n")
                 }
             }
