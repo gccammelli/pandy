@@ -73,7 +73,7 @@ fun modelName(code: String?, serial: String = ""): String = when {
     code == "N1" -> "A1 mini"
     code == "O1D" -> "H2D"
     code == "O1S" -> "H2S"
-    code == "N6" || code.contains("X2", true) -> "X2D"
+    code.equals("N6", true) || code.equals("X2D", true) -> "X2D"
     else -> code
 }
 

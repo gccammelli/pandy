@@ -54,6 +54,8 @@ class LanTest {
             assertEquals(expected, modelName(null,serial))
         }
         assertEquals("future-model",modelName("future-model"))
+        assertEquals("X2D", modelName("X2D"))
+        assertEquals("X2S", modelName("X2S"))
         assertEquals("Bambu printer",modelName(null,"future-serial"))
         assertEquals("X1C",modelName("Bambu X1-Carbon"))
         assertEquals("X1E",modelName("Bambu X1E"))
