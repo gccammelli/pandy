@@ -8,7 +8,6 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import io.ktor.client.engine.mock.respond
 import androidx.activity.ComponentActivity
 import android.graphics.Bitmap
-import androidx.compose.ui.graphics.asAndroidBitmap
 import android.graphics.Canvas
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.onNodeWithText
@@ -2003,11 +2002,7 @@ class ScreenTest {
         )
     }
 
-    private fun evidenceDir(): java.io.File =
-        listOf(java.io.File("../docs/evidence/dual-nozzle"), java.io.File("docs/evidence/dual-nozzle"))
-            .first { it.parentFile?.exists() == true }.apply { mkdirs() }
-
-    @Test fun dualNozzleEvidenceDevicesScreen() {
+    @Test fun dualNozzleDevicesScreenShowsBothNozzles() {
         val p = sampleX2DPrinter()
         compose.setContent {
             CompositionLocalProvider(LocalPlatform provides platform) {
@@ -2017,13 +2012,11 @@ class ScreenTest {
             }
         }
         compose.waitForIdle()
-        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
-        java.io.FileOutputStream(java.io.File(evidenceDir(), "devices-screen.png")).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-        }
+        compose.onAllNodesWithText("L").onFirst().assertExists()
+        compose.onAllNodesWithText("R").onFirst().assertExists()
     }
 
-    @Test fun dualNozzleEvidenceControlScreen() {
+    @Test fun dualNozzleControlScreenShowsBothNozzles() {
         val p = sampleX2DPrinter()
         compose.setContent {
             CompositionLocalProvider(LocalPlatform provides platform) {
@@ -2033,10 +2026,8 @@ class ScreenTest {
             }
         }
         compose.waitForIdle()
-        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
-        java.io.FileOutputStream(java.io.File(evidenceDir(), "control-screen.png")).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-        }
+        compose.onAllNodesWithText("L").onFirst().assertExists()
+        compose.onAllNodesWithText("R").onFirst().assertExists()
     }
 
     @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {

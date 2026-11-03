@@ -242,7 +242,7 @@ class LanFirmwareTest {
     }
 
     @Test fun dualNozzleEntitiesAreExposedAndTrackActiveNozzle() {
-        val cfg = LanConfig("192.168.1.100", "20P0000000000000", "00000000", "X2D", "Bambu X2D")
+        val cfg = LanConfig("172.20.0.100", "20P0000000000000", "00000000", "X2D", "Bambu X2D")
         val r = json.parseToJsonElement("""{
             "print": {
                 "gcode_state": "RUNNING",
