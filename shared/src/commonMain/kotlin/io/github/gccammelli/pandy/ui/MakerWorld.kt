@@ -169,7 +169,7 @@ val debugDownload = mutableStateOf<WebDownload?>(null)
 /** Steps of printing a model, shown on the sheet's button. */
 private enum class Step(val label: String) { Download("Downloading…"), Ready("Print"), Slicing("Slicing…"), Starting("Starting…") }
 
-private enum class PrepareView { Profile, Prepare, Preview }
+private enum class PrepareView { Profile, Prepare, Preview, SlicerSettings }
 private enum class PreviewScheme { Model, Printer }
 
 /**
@@ -206,6 +206,8 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     var manualMapping by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var presets by remember { mutableStateOf(false) }
     var confirmPrint by remember { mutableStateOf(false) }
+    var slicerSettings by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var slicerSettingInfo by remember { mutableStateOf<List<io.github.gccammelli.pandy.SlicerSetting>>(emptyList()) }
     // A plain model (an STL) has no filament of its own: the user picks one of the printer's loaded spools to print it in.
     val spools = p.loadedSpools()
     var chosenTray by remember { mutableStateOf<Int?>(null) }
@@ -220,6 +222,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
                     PrepareView.Profile -> close()
                     PrepareView.Prepare -> view = PrepareView.Profile
                     PrepareView.Preview -> view = PrepareView.Prepare
+                    PrepareView.SlicerSettings -> view = PrepareView.Prepare
                 }
             }
         })
@@ -237,6 +240,8 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         view = PrepareView.Profile
         manualMapping = emptyMap()
         presets = false
+        slicerSettings = emptyMap()
+        slicerSettingInfo = emptyList()
         buildPlate = printerBed ?: "Textured PEI Plate"
         runCatching {
             val downloaded = d.bytes ?: withContext(Dispatchers.Default) { downloadModel(d.url!!, d.cookies) }
@@ -293,12 +298,13 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         val selectedFlow = flow
         val selectedBuildPlate = buildPlate
         val selectedPresets = presets
+        val selectedSettings = slicerSettings.toMap()
         val plainSpool = pickedSpool.takeIf { projectNow.filaments.isEmpty() }
         step = Step.Slicing; printFailure = null
         scope.launch {
             runCatching {
                 val (path, sliced) = withContext(Dispatchers.Default) { slicer!!.sliceAndUpload(bytes, selectedPlate, name, to, io.github.gccammelli.pandy.printerPreset(p.model, p.state("sensor.nozzle_diameter")), buildPlateCode(selectedBuildPlate),
-                    plainSpool?.second?.type, plainSpool?.second?.let { io.github.gccammelli.pandy.colorHex(it.color) }) }
+                    plainSpool?.second?.type, plainSpool?.second?.let { io.github.gccammelli.pandy.colorHex(it.color) }, selectedSettings) }
                 step = Step.Starting
                 val mapping = if (sliced == null) {
                     if (p.ams.isNotEmpty() && projectNow.filaments.isNotEmpty()) throw ApiException("The slicer returned no filament mapping; refusing to print")
@@ -364,6 +370,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             printer = { printerPicker = true }, filament = { filamentIndex = it; filamentPicker = true },
             leveling = leveling, setLeveling = { leveling = it }, flow = flow, setFlow = { flow = it }, timelapse = timelapse,
             setTimelapse = { timelapse = it }, back = { view = PrepareView.Profile },
+            slicerSettingsCount = slicerSettings.size, openSlicerSettings = { view = PrepareView.SlicerSettings },
             print = {
                 confirmPrint = true
             }, step = step, needsAccessCode = !Repo.demo && savedLan == null, canPrint = Repo.demo || (step == Step.Ready && p.online && lan != null && slicer != null && mappingReady), code = code,
@@ -371,6 +378,9 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             setupNote = setupNote, setupGuide = setupGuide, help = { help = it }, printFailure = printFailure,
         )
         PrepareView.Preview -> PreviewView(p, pr, plate, auto, manualMapping, presets, plainColor = pickedSpool?.second?.color, back = { view = PrepareView.Prepare })
+        PrepareView.SlicerSettings -> AdvancedSlicerSettings(slicer, slicerSettings, back = { view = PrepareView.Prepare }) { values, info ->
+            slicerSettings = values; slicerSettingInfo = info; view = PrepareView.Prepare
+        }
     }
 
     if (printerPicker) PrinterPicker(p, buildPlate, close = { printerPicker = false }, plate = { printerPicker = false; platePicker = true })
@@ -386,7 +396,19 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         onDismissRequest = { confirmPrint = false },
         containerColor = C.Card,
         title = { T(if (Repo.demo) "Start demo print?" else "Start print?", weight = FontWeight.Bold) },
-        text = { T("Start ${name.ifBlank { "this model" }} on ${p.name}?", 14.sp, C.Sub) },
+        text = {
+            val changes = slicerSettingInfo.mapNotNull { item -> slicerSettings[item.key]?.let { "${item.label}: ${item.display(it)}" } }
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                T("Start ${name.ifBlank { "this model" }} on ${p.name}?", 14.sp, C.Sub)
+                if (changes.isNotEmpty()) {
+                    Gap(12.dp)
+                    T("Slicer settings", 14.sp, weight = FontWeight.Medium)
+                    Gap(4.dp)
+                    T(changes.joinToString("\n"), 13.sp, C.Sub, lh = 19.sp)
+                    if (Repo.demo) { Gap(8.dp); T("The demo does not slice a model.", 13.sp, C.Sub) }
+                }
+            }
+        },
         confirmButton = {
             TextButton(onClick = {
                 confirmPrint = false
@@ -407,7 +429,7 @@ private fun PreparePage(title: String, close: () -> Unit, content: @Composable C
 }
 
 @Composable
-private fun PrepareHeader(title: String, back: (() -> Unit)?) = Box(Modifier.fillMaxWidth().height(58.dp).background(C.Card)) {
+internal fun PrepareHeader(title: String, back: (() -> Unit)?) = Box(Modifier.fillMaxWidth().height(58.dp).background(C.Card)) {
     back?.let { BackChevron(it, Modifier.align(Alignment.CenterStart)) }
     T(title, 19.sp, weight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
     T("✦", 22.sp, C.Accent, modifier = Modifier.align(Alignment.CenterEnd).padding(end = 22.dp))
@@ -444,6 +466,7 @@ private fun PrepareView(
     spools: List<Pair<Int, io.github.gccammelli.pandy.Spool>>, plainTray: Int?, pickTray: (Int) -> Unit,
     leveling: Boolean, setLeveling: (Boolean) -> Unit, flow: Boolean, setFlow: (Boolean) -> Unit, timelapse: Boolean,
     setTimelapse: (Boolean) -> Unit, back: () -> Unit, print: () -> Unit, step: Step,
+    slicerSettingsCount: Int, openSlicerSettings: () -> Unit,
     canPrint: Boolean, needsAccessCode: Boolean, code: String, setCode: (String) -> Unit, modelNotice: String?,
     setupNote: String?, setupGuide: String?, help: (String) -> Unit, printFailure: String?,
 ) = Column(Modifier.fillMaxSize().background(C.Bg)) {
@@ -520,6 +543,17 @@ private fun PrepareView(
             ToggleLine("Bed leveling", leveling, enabled = editable, change = setLeveling)
             ToggleLine("Flow dynamics calibration", flow, enabled = editable, change = setFlow)
             ToggleLine("Timelapse", timelapse, enabled = editable, change = setTimelapse)
+        }
+        Card(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), radius = 16.dp,
+            padding = androidx.compose.foundation.layout.PaddingValues(16.dp), onClick = openSlicerSettings.takeIf { editable }) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    T("Advanced slicer settings", 15.sp, weight = FontWeight.Medium)
+                    Gap(4.dp)
+                    T(if (slicerSettingsCount == 0) "Use the model's profile" else "$slicerSettingsCount changed for this print", 13.sp, C.Sub)
+                }
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = C.Sub)
+            }
         }
         if (needsAccessCode) {
             Card(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), radius = 16.dp, padding = androidx.compose.foundation.layout.PaddingValues(16.dp)) {

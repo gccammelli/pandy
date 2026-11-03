@@ -39,6 +39,19 @@ one. **Save** checks it answers. An address entered here is used instead of the 
 3. **Print**: the slicer slices the plate (about a minute), converting a profile made for another printer to yours,
    puts it on the printer, and the print starts with Bambu Studio's usual preparation.
 
+### Advanced slicer settings
+
+On **Prepare to Print**, open **Advanced slicer settings** to change quality, walls and infill, support, adhesion, or
+speed for this print. Each setting starts at **Profile default**: only the settings you change replace the profile's
+values. Review them in the print confirmation, or reset individual settings or all of them to the profile.
+
+This needs Pandy Slicer 1.5.0 or later; update the add-on or Docker image if prompted. Pandy
+Slicer checks the sliced file before printing and refuses a setting that conflicts with an object or layer-specific
+setting anywhere in the model, including on another plate. Some projects from other slicers have object settings Pandy
+cannot check and require the advanced settings to be reset or the model edited in Bambu Studio. Speeds can still be
+limited by the filament's maximum flow. Filament temperatures, custom G-code and the rest of Bambu Studio's full
+editor are not available here.
+
 ## When Print doesn't show
 
 The printer must take commands from Pandy: **LAN Only mode** and **Developer Mode** on (printer: Settings › Network,

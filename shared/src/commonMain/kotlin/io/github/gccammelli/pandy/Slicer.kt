@@ -76,39 +76,66 @@ class SlicerClient(
         return o.s("version") ?: "?"
     }
 
+    /** The slicer advertises only settings it can validate and apply. Older versions have no settings endpoint. */
+    suspend fun settings(): List<SlicerSetting> {
+        val (at, cookie) = target()
+        return settings(at, cookie)
+    }
+
+    private suspend fun settings(at: String, cookie: String?): List<SlicerSetting> {
+        val r = http.get("$at/settings") { auth(cookie) }
+        if (r.status.value == 404) throw ApiException("Update Pandy Slicer to use advanced slicer settings.")
+        if (r.status.value == 401) throw ApiException(if (cookie != null) "Home Assistant didn't let Pandy in to the slicer" else "The slicer wants a different token")
+        if (r.status.value != 200) throw ApiException(slicerFailure(r.status.value))
+        val result = runCatching { json.parseToJsonElement(r.bodyAsText()).jsonObject }.getOrNull()
+            ?: throw ApiException("Pandy Slicer returned unsupported settings. Update the slicer and try again.")
+        return parseSlicerSettings(result)
+    }
+
     /**
      * Slices [plate] of a 3MF (a plain model prints in [filamentType] and [filamentColor]) and puts it on the printer [to]; returns its path there and the plate's details. The
      * printer's access code goes to the slicer only through Home Assistant over HTTPS; otherwise Pandy downloads the
      * sliced file and sends it to the printer itself, over FTPS.
      */
     suspend fun sliceAndUpload(data: ByteArray, plate: Int, name: String, to: LanConfig, printer: String? = null, bedType: String = "auto",
-                                filamentType: String? = null, filamentColor: String? = null): Pair<String, SlicedPlate?> {
+                                filamentType: String? = null, filamentColor: String? = null, settings: Map<String, String> = emptyMap()): Pair<String, SlicedPlate?> {
         val printerParam = printer?.let { "&printer=${it.encodeURLParam()}" }.orEmpty()
         val bed = "&bed_type=${bedType.encodeURLParam()}"
         val (at, cookie) = target()
+        if (settings.isNotEmpty()) {
+            val available = settings(at, cookie).associateBy { it.key }
+            if (settings.any { (key, value) -> available[key]?.valid(value) != true })
+                throw ApiException("A selected slicer setting is no longer supported. Review the advanced settings.")
+        }
+        val settingsHeader = settings.takeIf { it.isNotEmpty() }?.let { values ->
+            JsonObject(values.mapValues { JsonPrimitive(it.value) }).toString()
+        }
         // A plain model (an STL) has no filament of its own: the slicer prints it in the chosen type and colour.
         fun optional(key: String, value: String?) = if (value.isNullOrBlank()) "" else "&$key=${value.encodeURLParam()}"
         val filament = optional("filament_type", filamentType) + optional("filament_color", filamentColor)
         val query = "plate=$plate&name=${name.encodeURLParam()}$printerParam$bed$filament"
         if (cookie == null || !at.startsWith("https://", ignoreCase = true)) {
-            val r = http.post("$at/slice?$query") { auth(cookie); setBody(data) }
+            val r = http.post("$at/slice?$query") { auth(cookie); settingsHeader?.let { header("X-Pandy-Slicer-Settings", it) }; setBody(data) }
             if (r.status.value != 200) {
                 val o = runCatching { json.parseToJsonElement(r.bodyAsText()).jsonObject }.getOrNull()
                 throw ApiException(o?.s("error") ?: slicerFailure(r.status.value))
             }
             val sliced = r.readRawBytes()
             val info = runCatching { json.parseToJsonElement(r.headers["X-Pandy-Result"].orEmpty()).jsonObject }.getOrNull()
+            if (!settingsConfirmed(info, settings)) throw ApiException("The slicer did not confirm the advanced settings. Update Pandy Slicer and try again.")
             val file = slicedFileName(r.headers[HttpHeaders.ContentDisposition])
             storageFactory(to).write("/cache/$file", sliced)
             return "cache/$file" to info?.let { firstPlate(it, plate) }
         }
         val r = http.post("$at/slice?$query&upload=1") {
             auth(cookie)
+            settingsHeader?.let { header("X-Pandy-Slicer-Settings", it) }
             header("X-Printer-Ip", to.ip); header("X-Printer-Serial", to.serial); header("X-Printer-Code", to.code)
             setBody(data)
         }
         val o = runCatching { json.parseToJsonElement(r.bodyAsText()).jsonObject }.getOrNull()
         if (r.status.value != 200 || o == null) throw ApiException(o?.s("error") ?: slicerFailure(r.status.value))
+        if (!settingsConfirmed(o, settings)) throw ApiException("The slicer did not confirm the advanced settings. Update Pandy Slicer and try again.")
         return (o.s("path") ?: throw ApiException("The slicer didn't say where it put the file")) to firstPlate(o, plate)
     }
 
