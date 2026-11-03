@@ -65,8 +65,12 @@ class SlicerSettingsTest {
             """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"choice","options":[{"value":"1"}]}]}""",
             """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"number","min":"NaN","max":1}]}""",
             """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"number","min":0,"max":"Infinity"}]}""",
+            """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"number","min":-1,"max":1}]}""",
+            """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"number","max":1}]}""",
             """{"version":1,"settings":[{"group":"Q","key":"a","label":"","type":"number","min":0,"max":1}]}""",
             """{"version":1,"settings":[{"group":"Q\nQ","key":"a","label":"A","type":"number","min":0,"max":1}]}""",
+            """{"version":1,"settings":[{"group":"Q\rQ","key":"a","label":"A","type":"number","min":0,"max":1}]}""",
+            """{"version":1,"settings":[{"group":"Q","key":"a","label":"${"x".repeat(81)}","type":"number","min":0,"max":1}]}""",
             """{"version":1,"settings":[{"group":"Q","label":"A","type":"number","min":0,"max":1}]}""",
             """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","min":0,"max":1}]}""",
             """{"version":1,"settings":[${List(101) { "null" }.joinToString(",")}]}""",
@@ -77,6 +81,21 @@ class SlicerSettingsTest {
         assertTrue(settingsConfirmed(null, emptyMap()))
         val wrong = json.parseToJsonElement("""{"applied_settings":{"wall_loops":{}}}""").jsonObject
         assertFalse(settingsConfirmed(wrong, mapOf("wall_loops" to "4")))
+        val extra = json.parseToJsonElement("""{"applied_settings":{"wall_loops":"4","other":"1"}}""").jsonObject
+        assertFalse(settingsConfirmed(extra, mapOf("wall_loops" to "4")))
+    }
+
+    @Test fun settingsEndpointReportsAuthorizationServerAndMalformedResponseErrors() = runTest {
+        for ((status, body, expected) in listOf(
+            Triple(HttpStatusCode.Unauthorized, "{}", "different token"),
+            Triple(HttpStatusCode.ServiceUnavailable, "{}", "slicer"),
+            Triple(HttpStatusCode.OK, "not JSON", "unsupported settings"),
+        )) {
+            HttpClient(MockEngine { respond(body, status) }).use { http ->
+                val error = assertFailsWith<ApiException> { SlicerClient("slicer.local", "token", http = http).settings() }
+                assertTrue(error.message!!.contains(expected, ignoreCase = true))
+            }
+        }
     }
 
     @Test fun advancedSettingsAreConfirmedBeforeUploading() = runTest {

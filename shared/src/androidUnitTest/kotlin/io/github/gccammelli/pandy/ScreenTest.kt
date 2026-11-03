@@ -1079,6 +1079,9 @@ class ScreenTest {
         compose.onNodeWithText("Wall loops").performClick()
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithText("Range: 1–20").assertExists()
+        compose.onNodeWithContentDescription("Close").performClick()
+        compose.onNodeWithText("Wall loops").performClick()
+        compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithText("Use profile default").performClick()
         compose.onNodeWithText("Generate support").performClick()
         compose.mainClock.advanceTimeBy(500)
@@ -1088,6 +1091,28 @@ class ScreenTest {
         compose.onAllNodesWithText("Profile default").onLast().performClick()
         compose.onNodeWithText("Done").performClick()
         assertEquals(emptyMap<String, String>(), result)
+    }
+
+    @Test fun advancedSettingsHandleAConnectionFailureWithoutAReason() {
+        val http = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine {
+            throw java.io.IOException()
+        }).also { testHttpClients += it }
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            AdvancedSlicerSettings(SlicerClient("slicer.invalid", null, http = http), emptyMap(), {}, { _, _ -> })
+        } } }
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Couldn't load the slicer settings.").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Done").assertIsNotEnabled()
+    }
+
+    @Test fun cancellingTheSettingsRequestDoesNotShowAConnectionError() {
+        val http = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine {
+            throw kotlinx.coroutines.CancellationException("cancelled")
+        }).also { testHttpClients += it }
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            AdvancedSlicerSettings(SlicerClient("slicer.invalid", null, http = http), emptyMap(), {}, { _, _ -> })
+        } } }
+        compose.onNodeWithText("Loading slicer settings…").assertExists()
+        compose.onNodeWithText("Done").assertIsNotEnabled()
     }
 
     @Test fun slicerSettingsDoNotReloadWhenTheSameConnectionIsRecreatedDuringRecomposition() {
