@@ -1064,6 +1064,32 @@ class ScreenTest {
         assertEquals(emptyMap<String, String>(), result)
     }
 
+    @Test fun individualAdvancedSettingsCanReturnToTheProfileOrBeDismissed() {
+        val http = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine {
+            respond("""{"version":1,"settings":[
+                {"group":"Strength","key":"wall_loops","label":"Wall loops","type":"integer","min":1,"max":20},
+                {"group":"Support","key":"enable_support","label":"Generate support","type":"choice","options":[{"value":"1","label":"On"},{"value":"0","label":"Off"}]}]}""")
+        }).also { testHttpClients += it }
+        var result: Map<String, String>? = null
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            AdvancedSlicerSettings(SlicerClient("slicer.invalid", null, http = http),
+                mapOf("wall_loops" to "4", "enable_support" to "1"), {}, { values, _ -> result = values })
+        } } }
+        compose.waitUntil(5000) { compose.onAllNodesWithText("Wall loops").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Wall loops").performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithText("Range: 1–20").assertExists()
+        compose.onNodeWithText("Use profile default").performClick()
+        compose.onNodeWithText("Generate support").performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithContentDescription("Close").performClick()
+        compose.onNodeWithText("Generate support").performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onAllNodesWithText("Profile default").onLast().performClick()
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(emptyMap<String, String>(), result)
+    }
+
     @Test fun slicerSettingsDoNotReloadWhenTheSameConnectionIsRecreatedDuringRecomposition() {
         val requests = java.util.concurrent.atomic.AtomicInteger()
         val http = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine {

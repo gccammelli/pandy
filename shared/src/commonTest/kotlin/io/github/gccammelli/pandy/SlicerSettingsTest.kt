@@ -45,7 +45,9 @@ class SlicerSettingsTest {
     @Test fun numericAndChoiceSchemasRejectMalformedData() {
         val integer = SlicerSetting("Strength", "wall_loops", "Wall loops", "integer", min = 1.0, max = 20.0)
         assertTrue(integer.valid("4")); assertEquals("4", integer.display("4"))
-        for (value in listOf("0", "21", "-1", "1.5", "٤", "1".repeat(33))) assertFalse(integer.valid(value))
+        for (value in listOf("0", "21", "-1", "1.5", "٤", "abc", "1".repeat(33))) assertFalse(integer.valid(value))
+        assertFalse(integer.copy(min = null).valid("4"))
+        assertFalse(integer.copy(max = null).valid("4"))
         assertFalse(integer.copy(type = "unknown").valid("4"))
         val choice = SlicerSetting("Support", "enable_support", "Support", "choice", options = listOf(SlicerChoice("1", "On")))
         assertEquals("On", choice.display("1")); assertEquals("0", choice.display("0"))
@@ -58,10 +60,23 @@ class SlicerSettingsTest {
             """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"choice","options":[null]}]}""",
             """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"number","unit":"too-long-a-unit","min":0,"max":1}]}""",
             """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"number","min":0,"max":1},{"group":"Q","key":"a","label":"B","type":"number","min":0,"max":1}]}""",
+            """{"version":1,"settings":{}}""",
+            """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"choice"}]}""",
+            """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"choice","options":[{"value":"1"}]}]}""",
+            """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"number","min":"NaN","max":1}]}""",
+            """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"number","min":0,"max":"Infinity"}]}""",
+            """{"version":1,"settings":[{"group":"Q","key":"a","label":"","type":"number","min":0,"max":1}]}""",
+            """{"version":1,"settings":[{"group":"Q\nQ","key":"a","label":"A","type":"number","min":0,"max":1}]}""",
+            """{"version":1,"settings":[{"group":"Q","label":"A","type":"number","min":0,"max":1}]}""",
+            """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","min":0,"max":1}]}""",
+            """{"version":1,"settings":[${List(101) { "null" }.joinToString(",")}]}""",
+            """{"version":1,"settings":[{"group":"Q","key":"a","label":"A","type":"choice","options":[${List(31) { "null" }.joinToString(",")}]}]}""",
         )
         for (source in bad) assertFailsWith<ApiException> { parseSlicerSettings(json.parseToJsonElement(source).jsonObject) }
         assertFalse(settingsConfirmed(null, mapOf("wall_loops" to "4")))
         assertTrue(settingsConfirmed(null, emptyMap()))
+        val wrong = json.parseToJsonElement("""{"applied_settings":{"wall_loops":{}}}""").jsonObject
+        assertFalse(settingsConfirmed(wrong, mapOf("wall_loops" to "4")))
     }
 
     @Test fun advancedSettingsAreConfirmedBeforeUploading() = runTest {

@@ -16,7 +16,7 @@ data class SlicerSetting(
         "integer", "number" -> {
             val pattern = if (type == "integer") Regex("""[0-9]+""") else Regex("""(?:[0-9]+(?:\.[0-9]{1,3})?|\.[0-9]{1,3})""")
             val n = value.toDoubleOrNull()
-            value.length <= 32 && pattern.matches(value) && n != null && min != null && max != null && n in min..max
+            n != null && value.length <= 32 && pattern.matches(value) && min != null && max != null && n in min..max
         }
         else -> false
     }
@@ -26,32 +26,32 @@ data class SlicerSetting(
 }
 
 internal fun parseSlicerSettings(root: JsonObject): List<SlicerSetting> {
-    fun invalid(): Nothing = throw ApiException("Pandy Slicer returned unsupported settings. Update the slicer and try again.")
-    fun text(value: String?, max: Int = 80) = value?.takeIf { it.isNotBlank() && it.length <= max && it.none { c -> c == '\n' || c == '\r' } } ?: invalid()
-    if (root.s("version") != "1") invalid()
-    val items = root["settings"] as? JsonArray ?: invalid()
-    if (items.isEmpty() || items.size > 100) invalid()
+    fun invalid() = ApiException("Pandy Slicer returned unsupported settings. Update the slicer and try again.")
+    fun text(value: String?, max: Int = 80) = value?.takeIf { it.isNotBlank() && it.length <= max && it.none { c -> c == '\n' || c == '\r' } } ?: throw invalid()
+    if (root.s("version") != "1") throw invalid()
+    val items = root["settings"] as? JsonArray ?: throw invalid()
+    if (items.isEmpty() || items.size > 100) throw invalid()
     val settings = items.map { item ->
-        val o = item as? JsonObject ?: invalid()
-        val key = text(o.s("key"), 64).takeIf { it.matches(Regex("""[a-z0-9_]+""")) } ?: invalid()
-        val type = o.s("type")?.takeIf { it in setOf("number", "integer", "choice") } ?: invalid()
-        val unit = o.s("unit").orEmpty().takeIf { it.length <= 12 } ?: invalid()
+        val o = item as? JsonObject ?: throw invalid()
+        val key = text(o.s("key"), 64).takeIf { it.matches(Regex("""[a-z0-9_]+""")) } ?: throw invalid()
+        val type = o.s("type")?.takeIf { it in setOf("number", "integer", "choice") } ?: throw invalid()
+        val unit = o.s("unit").orEmpty().takeIf { it.length <= 12 } ?: throw invalid()
         val min = o.s("min")?.toDoubleOrNull()
         val max = o.s("max")?.toDoubleOrNull()
         val options = if (type == "choice") {
-            val list = o["options"] as? JsonArray ?: invalid()
-            if (list.isEmpty() || list.size > 30) invalid()
+            val list = o["options"] as? JsonArray ?: throw invalid()
+            if (list.isEmpty() || list.size > 30) throw invalid()
             list.map { option ->
-                val choice = option as? JsonObject ?: invalid()
+                val choice = option as? JsonObject ?: throw invalid()
                 SlicerChoice(text(choice.s("value"), 32), text(choice.s("label")))
-            }.also { if (it.map { c -> c.value }.distinct().size != it.size) invalid() }
+            }.also { if (it.map { c -> c.value }.distinct().size != it.size) throw invalid() }
         } else {
-            if (min == null || max == null || !min.isFinite() || !max.isFinite() || min < 0 || min > max) invalid()
+            if (min == null || max == null || !min.isFinite() || !max.isFinite() || min < 0 || min > max) throw invalid()
             emptyList()
         }
         SlicerSetting(text(o.s("group")), key, text(o.s("label")), type, unit, min, max, options)
     }
-    if (settings.map { it.key }.distinct().size != settings.size) invalid()
+    if (settings.map { it.key }.distinct().size != settings.size) throw invalid()
     return settings
 }
 
