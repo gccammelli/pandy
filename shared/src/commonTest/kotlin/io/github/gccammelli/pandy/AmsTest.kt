@@ -12,6 +12,35 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
 class AmsTest {
+    @Test fun homeAssistantRecognizesIndependentAmsModelAndDryingHints() {
+        val printer = json.parseToJsonElement("""{"id":"p","identifiers":[["bambu_lab","DEMO"]]}""").jsonObject
+        for ((model, dryingRow) in listOf(
+            "2 Pro" to null, "N3F" to null, "AMS 2" to null,
+            "AMS" to "\"translation_key\":\"drying\"",
+            "AMS" to "\"unique_id\":\"demo_drying_status\"",
+            "AMS" to "\"entity_id\":\"binary_sensor.demo_drying\""
+        )) {
+            val device = json.parseToJsonElement("""{"id":"a","via_device_id":"p","model":"$model","identifiers":[["bambu_lab","DEMO_ams_0"]]}""").jsonObject
+            val tray = json.parseToJsonElement("""{"device_id":"a","platform":"bambu_lab","entity_id":"sensor.demo_tray_2","unique_id":"renamed"}""").jsonObject
+            val rows = mutableListOf(tray)
+            if (dryingRow != null) {
+                val eid = if (dryingRow.startsWith("\"entity_id\"")) "" else "\"entity_id\":\"binary_sensor.demo_status\","
+                rows += json.parseToJsonElement("""{"device_id":"a","platform":"bambu_lab",$eid$dryingRow}""").jsonObject
+            }
+            val ams = printersFrom(JsonArray(listOf(printer, device)), JsonArray(rows)).single().ams.single()
+            assertEquals("AMS 2 Pro", ams.model, "$model $dryingRow")
+            assertEquals(mapOf(2 to "sensor.demo_tray_2"), ams.trays)
+        }
+
+        val device = json.parseToJsonElement("""{"id":"a","via_device_id":"p","model":"AMS","identifiers":[["bambu_lab","DEMO_ams_0"]]}""").jsonObject
+        val rows = JsonArray(listOf(
+            json.parseToJsonElement("""{"device_id":"a","platform":"bambu_lab","entity_id":"sensor.demo_tray_1"}""").jsonObject,
+            json.parseToJsonElement("""{"device_id":"a","platform":"bambu_lab","entity_id":"sensor.demo_remaining","unique_id":"demo_remaining_drying"}""").jsonObject
+        ))
+        val ams = printersFrom(JsonArray(listOf(printer, device)), rows).single().ams.single()
+        assertEquals("sensor.demo_remaining", ams.ids["sensor.remaining_drying_time"])
+    }
+
     private fun mappingPrinter(): Printer {
         val ams=AmsInfo("ams",1,"AMS",emptyMap(),mapOf(1 to "sensor.white",2 to "sensor.green"))
         val info=PrinterInfo("printer","serial","Printer","X1C",null,emptyMap(),listOf(ams),emptyList())

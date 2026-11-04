@@ -3415,6 +3415,46 @@ class ScreenTest {
         return p to ams2Pro
     }
 
+    @Test fun dryingStatusHandlesUnavailableAndMissingTelemetry() {
+        val (sample, ams) = sampleAms2ProPrinter()
+        fun withStates(vararg states: Pair<String, String>) = Printer(sample.info, states.associate { (id, value) -> id to entity(value) })
+        val printers = listOf(
+            withStates("binary_sensor.drying_active" to "unavailable"),
+            withStates(),
+            withStates("binary_sensor.drying_active" to "on", "sensor.drying_remaining" to "1.5", "sensor.drying_target" to "55"),
+            withStates("binary_sensor.drying_active" to "on", "sensor.drying_remaining" to "0")
+        )
+        val index = androidx.compose.runtime.mutableStateOf(0)
+        val sheet = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+            androidx.compose.runtime.key(index.value, sheet.value) {
+                if (sheet.value) AmsDryingSheet(printers[index.value], ams, {}) {}
+                else FilamentScreen(printers[index.value])
+            }
+        } } }
+        for (i in 0..1) {
+            compose.runOnIdle { index.value = i; sheet.value = true }
+            compose.onNodeWithText("Drying status is unavailable, so drying can't be started or stopped right now.").assertExists()
+            compose.onNodeWithText("Start drying").assertDoesNotExist()
+            compose.onNodeWithText("Stop drying").assertDoesNotExist()
+        }
+        for (i in 2..3) {
+            compose.runOnIdle { index.value = i; sheet.value = false }
+            compose.onNodeWithText("Filament drying active").assertExists()
+            if (i == 2) compose.onNodeWithText("Remaining: 1h 30m").assertExists()
+            else compose.onNodeWithText("Remaining:", substring = true).assertDoesNotExist()
+            compose.runOnIdle { sheet.value = true }
+            compose.onNodeWithText("Drying in progress").assertExists()
+            if (i == 2) {
+                compose.onNodeWithText("Remaining: 1h 30m").assertExists()
+                compose.onNodeWithText("55°C").assertExists()
+            } else {
+                compose.onNodeWithText("Remaining:", substring = true).assertDoesNotExist()
+                compose.onNodeWithText("50°C").assertExists()
+            }
+        }
+    }
+
     @Test fun ams2ProFilamentScreenAndDryingSheetInteractCleanly() {
         val (ams2ProPrinter, ams2Pro) = sampleAms2ProPrinter(drying = false)
         val (dryingPrinter, _) = sampleAms2ProPrinter(drying = true)

@@ -9,6 +9,35 @@ class LanBoundaryTest {
     private fun entities(text: String, model: String = "X1C", job: LanJob? = null) =
         lanEntities(config.copy(model = model), obj(text), true, job).filter { it.first.device == "printer" }.associate { it.first.key to it.second }
 
+    @Test fun amsModuleNamesAndModelHintsIdentifyEachVariant() {
+        fun model(fields: String = "", module: String = ""): String {
+            val report = obj("""{"print":{"ams":{"ams":[{"id":0,"tray":[]$fields}]}},"info":{"module":[$module]}}""")
+            return lanEntities(config, report, true).first { it.first.device == "ams0" }.first.deviceModel
+        }
+        for (name in listOf("ams/0", "ams0", "ams_f1/0", "ams_f1_0", "n3f/0", "n3s/0", "ams_1")) {
+            assertEquals("AMS 2 Pro", model(module = """{"name":"$name","project_name":"2 Pro"}"""), name)
+        }
+        for ((fields, expected) in listOf(
+            "model" to "Lite", "model" to "HT", "type" to "N3S",
+            "hw_version" to "N3S", "hw" to "N3S", "model" to "2 Pro",
+            "type" to "N3F", "model" to "AMS 2", "hw_version" to "N3F", "hw" to "N3F"
+        )) {
+            val result = when (expected) { "Lite" -> "AMS Lite"; "HT", "N3S" -> "AMS HT"; else -> "AMS 2 Pro" }
+            assertEquals(result, model(fields = ",\"$fields\":\"$expected\""), "$fields=$expected")
+        }
+        for ((name, project, expected) in listOf(
+            Triple("ams_f1/0", null, "AMS Lite"), Triple("ams/0", "Lite", "AMS Lite"),
+            Triple("n3s/0", null, "AMS HT"), Triple("ams/0", "2 Pro", "AMS 2 Pro"),
+            Triple("ams/0", "AMS 2", "AMS 2 Pro"), Triple("n3f/0", null, "AMS 2 Pro")
+        )) {
+            val projectField = project?.let { ",\"project_name\":\"$it\"" }.orEmpty()
+            assertEquals(expected, model(module = """{"name":"$name"$projectField}"""), "$name $project")
+        }
+        for ((hw, expected) in listOf("N3S" to "AMS HT", "N3F" to "AMS 2 Pro")) {
+            assertEquals(expected, model(module = """{"name":"ams/0","hw_ver":"$hw"}"""), hw)
+        }
+    }
+
     @Test fun emptyAndMalformedOptionalReportsStayExplicitlyUnknown() {
         for (report in listOf("{}", """{"print":null}""", """{"print":{"fun":"bad-hex","hms":[null,{},42,{"attr":"bad"},{"attr":1,"code":"bad"}],"lights_report":[null,{},42]}}""")) {
             val e = entities(report)
