@@ -219,7 +219,8 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     val deviceObj = p.o("device") ?: r.o("device")
     val extruder = deviceObj?.o("extruder")
     val extruderInfo = (extruder?.get("info") as? JsonArray)?.mapNotNull { it as? JsonObject }
-    if (!extruderInfo.isNullOrEmpty()) {
+    // Single-nozzle printers (X1C, P1S…) also report one extruder entry, with id 0; only two entries mean a dual-nozzle printer.
+    if (extruderInfo != null && extruderInfo.size > 1) {
         extruderInfo.forEach { entry ->
             val id = entry.int("id")
             val rawTemp = entry.str("temp")?.toLongOrNull() ?: entry.int("temp")?.toLong()
@@ -237,7 +238,7 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
         add("sensor", "active_nozzle", if (activeIdx == 1) "left" else "right")
     }
     val nozzleInfo = (deviceObj?.o("nozzle")?.get("info") as? JsonArray)?.mapNotNull { it as? JsonObject }
-    if (!nozzleInfo.isNullOrEmpty()) {
+    if (nozzleInfo != null && nozzleInfo.size > 1) {
         nozzleInfo.forEach { entry ->
             val id = entry.int("id")
             val prefix = if (id == 1) "left" else if (id == 0) "right" else null

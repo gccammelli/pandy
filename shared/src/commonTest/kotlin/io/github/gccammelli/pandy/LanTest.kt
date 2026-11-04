@@ -8,6 +8,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -239,6 +240,25 @@ class LanFirmwareTest {
         val r = json.parseToJsonElement("""{"print":{"gcode_state":"IDLE","device":{"ctc":{"info":{"temp":25}}}}}""").jsonObject
         val e = lanEntities(cfg, r, true).associate { it.first.key to it.second.state }
         assertEquals("25.0", e["chamber_temp"]); assertEquals("Demo X1C", e["printer_name"])
+    }
+
+    @Test fun singleNozzlePrinterWithOneExtruderEntryIsNotDualNozzle() {
+        // Shape of a real X1C report: one extruder entry (id 0) and one nozzle entry.
+        val cfg = LanConfig("172.20.0.100", "00M0000000000000", "00000000", "X1C", "Bambu X1C")
+        val r = json.parseToJsonElement("""{
+            "print": {
+                "gcode_state": "IDLE", "nozzle_temper": 219.0, "nozzle_target_temper": 0, "nozzle_diameter": "0.4",
+                "device": {
+                    "extruder": {"info": [{"id": 0, "info": 42, "temp": 14745820}], "state": 1},
+                    "nozzle": {"exist": 1, "info": [{"id": 0, "diameter": 0.4, "type": "HX01"}], "state": 0}
+                }
+            }
+        }""").jsonObject
+        val map = lanEntities(cfg, r, online = true).associate { it.first.key to it.second.state }
+        assertEquals("219.0", map["nozzle_temp"])
+        assertEquals("0.4", map["nozzle_diameter"])
+        for (key in listOf("left_nozzle_temp", "right_nozzle_temp", "active_nozzle", "right_nozzle_diameter", "left_nozzle_diameter"))
+            assertFalse(map.containsKey(key), key)
     }
 
     @Test fun dualNozzleEntitiesAreExposedAndTrackActiveNozzle() {
