@@ -248,6 +248,13 @@ fun hexColor(s: String?): Long {
     return if (alpha == 0L) 0xFFDDDDDD else (0xFF000000 or rgb)
 }
 
+private fun dryingKey(u: String?, eid: String): String? = when {
+    (u ?: eid).let { it.contains("dry", ignoreCase = true) && it.contains("target", ignoreCase = true) } -> "drying_target_temp"
+    (u ?: eid).let { it.contains("remain", ignoreCase = true) && it.contains("dry", ignoreCase = true) } -> "remaining_drying_time"
+    (u ?: eid).endsWith("_drying") || (u ?: eid).contains("drying_status") -> "drying"
+    else -> null
+}
+
 /** Finds the Bambu Lab printers, their AMS units and external spools in the device and entity registries. */
 fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
     val all = devs.map { it.jsonObject }.filter { d -> d.a("identifiers")?.any { (it.jsonArray[0] as JsonPrimitive).content == "bambu_lab" } == true }
@@ -256,6 +263,7 @@ fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
         val eid = r.s("entity_id") ?: return@mapNotNull null
         val u = r.s("unique_id")
         val key = r.s("translation_key")
+            ?: dryingKey(u, eid)
             ?: (if (serial != null && u != null && u.startsWith("${serial}_")) u.removePrefix("${serial}_") else null)
             ?: u?.substringAfterLast('_')
             ?: return@mapNotNull null
@@ -265,18 +273,31 @@ fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
     return printers.map { p ->
         val children = all.filter { it.s("via_device_id") == p.s("id") }
         var nextHtId = 128
-        val ams = children.filter { c -> byDevice[c.s("id")].orEmpty().any { it.s("translation_key") == "tray" } }.mapIndexed { i, c ->
+        val ams = children.filter { c -> byDevice[c.s("id")].orEmpty().any { it.s("translation_key") == "tray" || it.s("entity_id")?.contains("tray") == true } }.mapIndexed { i, c ->
             val rows = byDevice.getValue(c.s("id")) // this device has tray entities (see the filter above)
-            val trays = rows.filter { it.s("translation_key") == "tray" }.mapNotNull { r ->
-                val n = Regex("""tray_(\d+)$""").find(r.s("unique_id").orEmpty())?.groupValues?.get(1)?.toIntOrNull() ?: return@mapNotNull null
+            val trays = rows.filter { it.s("translation_key") == "tray" || it.s("entity_id")?.contains("tray") == true }.mapNotNull { r ->
+                val n = Regex("""tray_(\d+)$""").find(r.s("unique_id").orEmpty())?.groupValues?.get(1)?.toIntOrNull()
+                    ?: Regex("""tray_(\d+)$""").find(r.s("entity_id").orEmpty())?.groupValues?.get(1)?.toIntOrNull()
+                    ?: return@mapNotNull null
                 n to r.s("entity_id")!!
             }.toMap()
             val protocolId = c.a("identifiers")!!.mapNotNull { id -> // every device here was chosen for having identifiers
                 val value = id.jsonArray.getOrNull(1) as? JsonPrimitive
                 Regex("""(?i)(?:^|_)ams_?(\d+)$""").find(value?.contentOrNull.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
             }.firstOrNull()
-            val model = c.s("model") ?: "AMS"
-            val singleSlot = model.contains("HT", true) || model.contains("N3S", true) || protocolId?.let { it >= 128 } == true
+            val rawModel = c.s("model") ?: "AMS"
+            val hw = c.s("hw_version") ?: c.s("hw_ver") ?: ""
+            val name = c.s("name_by_user") ?: c.s("name") ?: ""
+            val hasDrying = rows.any { it.s("translation_key") == "drying" || it.s("unique_id")?.contains("drying") == true || it.s("entity_id")?.contains("drying") == true }
+            val isHt = rawModel.contains("HT", true) || rawModel.contains("N3S", true) || hw.contains("N3S", true) || protocolId?.let { it >= 128 } == true
+            val isAms2 = !isHt && (rawModel.contains("2 Pro", true) || rawModel.contains("N3F", true) || rawModel.contains("AMS 2", true) ||
+                hw.contains("N3F", true) || name.contains("2 Pro", true) || hasDrying)
+            val model = when {
+                isHt -> "AMS HT"
+                isAms2 -> "AMS 2 Pro"
+                else -> rawModel
+            }
+            val singleSlot = isHt
             if (protocolId != null && protocolId >= 128) nextHtId = maxOf(nextHtId, protocolId + 1)
             AmsInfo(c.s("id")!!, i + 1, model, keyed(c.s("id")), trays, protocolId ?: if (singleSlot) nextHtId++ else null)
         }
@@ -357,6 +378,11 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     fun amsTemp(a: AmsInfo) = a.ids["sensor.ams_temp"]?.let { states[it] }?.celsius
     /** A boolean setting exposed by an AMS; null means this firmware/integration did not report it. */
     fun amsFlag(a: AmsInfo, key: String): Boolean? = a.ids["switch.$key"]?.let { id -> states[id]?.flag }
+    /** null when the printer reports no drying state (missing, unavailable or unknown): it must not be read as "not drying". */
+    fun amsDryingState(a: AmsInfo): Boolean? = a.ids["binary_sensor.drying"]?.let { states[it] }?.takeIf { it.ok }?.on
+    fun amsIsDrying(a: AmsInfo): Boolean = amsDryingState(a) == true
+    fun amsDryingRemaining(a: AmsInfo): Double? = a.ids["sensor.remaining_drying_time"]?.let { states[it]?.num }
+    fun amsDryingTargetTemp(a: AmsInfo): Double? = a.ids["sensor.drying_target_temp"]?.let { states[it]?.num }
     fun flag(key: String): Boolean? = get("switch.$key")?.flag
     fun flagAttribute(key: String, attribute: String): Boolean? = get("switch.$key")?.attrs?.s(attribute)?.let(::parseFlag)
 
@@ -462,6 +488,36 @@ fun Printer.setAmsSettings(amsId: Int, startup: Boolean, insertion: Boolean, rem
     })
 }
 
+suspend fun HaBackend.startAmsDrying(p: Printer, a: AmsInfo, temp: Int, durationHours: Int, rotateTray: Boolean) {
+    if (!a.supportsDrying()) throw ApiException("${a.model.ifBlank { "This AMS" }} cannot dry filament")
+    val validTemp = temp.coerceIn(45, a.maxDryingTemp())
+    val validDuration = durationHours.coerceIn(1, 24)
+    val data = buildJsonObject {
+        put("device_id", a.haId.ifBlank { p.info.haId })
+        put("ams_id", a.amsId())
+        put("temp", validTemp)
+        put("duration", validDuration)
+        put("rotate_tray", rotateTray)
+    }
+    call("bambu_lab", "start_filament_drying", data)
+}
+
+suspend fun HaBackend.stopAmsDrying(p: Printer, a: AmsInfo) {
+    val data = buildJsonObject {
+        put("device_id", a.haId.ifBlank { p.info.haId })
+        put("ams_id", a.amsId())
+    }
+    call("bambu_lab", "stop_filament_drying", data)
+}
+
+fun Printer.startAmsDrying(a: AmsInfo, temp: Int, durationHours: Int, rotateTray: Boolean, err: (String) -> Unit) = Repo.act(err) {
+    startAmsDrying(this@startAmsDrying, a, temp, durationHours, rotateTray)
+}
+
+fun Printer.stopAmsDrying(a: AmsInfo, err: (String) -> Unit) = Repo.act(err) {
+    stopAmsDrying(this@stopAmsDrying, a)
+}
+
 /** An HLS address for a camera, from Home Assistant's own streaming (valid while it's being watched). */
 suspend fun HaBackend.hlsUrl(cameraId: String): String {
     val r = ws(listOf(buildJsonObject { put("type", "camera/stream"); put("entity_id", cameraId); put("format", "hls") })).first() as? JsonObject
@@ -557,6 +613,20 @@ fun filamentKey(type: String, colour: String) = "${type.trim().uppercase()}|${he
 
 /** The absolute tray ID used by the printer protocol: standard AMS 0–103, AMS HT 128–135. */
 fun AmsInfo.isSingleSlot() = model.contains("HT", ignoreCase = true) || model.contains("N3S", ignoreCase = true) || protocolId?.let { it >= 128 } == true
+fun AmsInfo.isAms2Pro() = !isSingleSlot() && !model.contains("Lite", ignoreCase = true) && (
+    model.contains("2 Pro", ignoreCase = true) || model.contains("N3F", ignoreCase = true) || model.contains("AMS 2", ignoreCase = true) ||
+    ids.containsKey("binary_sensor.drying") || ids.containsKey("sensor.remaining_drying_time") || ids.containsKey("sensor.drying_target_temp") ||
+    ids.keys.any { it.contains("drying") }
+)
+fun AmsInfo.supportsDrying() = isAms2Pro() || isSingleSlot()
+/** The hottest drying setpoint the unit takes: the AMS 2 Pro stops at 65 °C, the AMS HT goes to 85 °C. */
+fun AmsInfo.maxDryingTemp() = if (isSingleSlot()) 85 else 65
+fun AmsInfo.displayName() = if (isSingleSlot()) "AMS HT" else "AMS ${'A' + index - 1}"
+fun AmsInfo.modelBadge(): String? = when {
+    isAms2Pro() -> "AMS 2 Pro"
+    model.contains("Lite", ignoreCase = true) -> "AMS Lite"
+    else -> null
+}
 
 /** The protocol's AMS unit ID; unlike [index], HT units start at 128. */
 fun AmsInfo.amsId(): Int = protocolId?.takeIf { !isSingleSlot() || it >= 128 } ?: if (isSingleSlot()) 128 else index - 1

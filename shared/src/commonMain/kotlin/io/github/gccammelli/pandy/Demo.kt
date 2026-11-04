@@ -119,6 +119,9 @@ class FakeHomeAssistant : HaBackend, PrinterFiles {
         add("switch", "ams_read_on_startup", "on", device = amsDev, uid = "AMS_1_ams_read_on_startup")
         add("switch", "ams_remaining_estimation", "on", device = amsDev, uid = "AMS_1_ams_remaining_estimation")
         add("switch", "ams_auto_refill", "off", device = amsDev, uid = "AMS_1_ams_auto_refill")
+        add("binary_sensor", "drying", "off", device = amsDev, uid = "AMS_1_drying")
+        add("sensor", "remaining_drying_time", 0.0, device = amsDev, uid = "AMS_1_remaining_drying_time")
+        add("sensor", "drying_target_temp", 50.0, device = amsDev, uid = "AMS_1_drying_target_temp")
         add("sensor", "external_spool", "Generic PLA", tray("Generic PLA", "PLA", "#F98C36FF", -1), extDev, "ExternalSpool_external_spool")
         layerFromProgress()
     }
@@ -295,6 +298,17 @@ class FakeHomeAssistant : HaBackend, PrinterFiles {
                 val on = d.s("config")?.let { it != "0" } ?: (d.s("enable") == "true")
                 val r = rows.first { it.key == "door_open_check" }
                 setById(id(r), if (on) "on" else "off")
+            }
+            "bambu_lab/start_filament_drying" -> {
+                setById(id(rows.first { it.key == "drying" }), "on")
+                val duration = d.s("duration")?.toDoubleOrNull() ?: 4.0
+                setById(id(rows.first { it.key == "remaining_drying_time" }), duration.toString())
+                val temp = d.s("temp")?.toDoubleOrNull() ?: 50.0
+                setById(id(rows.first { it.key == "drying_target_temp" }), temp.toString())
+            }
+            "bambu_lab/stop_filament_drying" -> {
+                setById(id(rows.first { it.key == "drying" }), "off")
+                setById(id(rows.first { it.key == "remaining_drying_time" }), "0.0")
             }
             "bambu_lab/ams_user_setting" -> {
                 val ams = d.s("ams_id")?.toIntOrNull() ?: 0

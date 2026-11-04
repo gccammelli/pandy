@@ -349,4 +349,42 @@ class DirectPrinterTest {
         } finally { printer.stop() }
     }
 
+    @Test fun directPrinterDispatchesAmsDryingCommands() = runBlocking<Unit> {
+        val ams = ""","ams":{"ams":[{"id":"0","model":"AMS 2 Pro"}]}"""
+        val link = Link(report(ams))
+        val printer = DirectPrinter(config, true, { link })
+        try {
+            registry(printer)
+            printer.command("bambu_lab/start_filament_drying", "ams_id" to "0", "temp" to "55", "duration" to "4", "rotate_tray" to "true")
+            val startSent = link.sent.last().o("print")!!
+            assertEquals("ams_filament_drying", startSent.s("command"))
+            assertEquals("1", startSent.s("mode"))
+            assertEquals("0", startSent.s("ams_id"))
+            assertEquals("55", startSent.s("temp"))
+            assertEquals("4", startSent.s("duration"))
+            assertEquals("45", startSent.s("cooling_temp"))
+            assertEquals("true", startSent.s("rotate_tray"))
+
+            printer.command("bambu_lab/stop_filament_drying", "ams_id" to "0")
+            val stopSent = link.sent.last().o("print")!!
+            assertEquals("ams_filament_drying", stopSent.s("command"))
+            assertEquals("0", stopSent.s("mode"))
+            assertEquals("0", stopSent.s("ams_id"))
+
+            printer.command("bambu_lab/start_filament_drying", "rotate_tray" to "false")
+            val startDefault = link.sent.last().o("print")!!
+            assertEquals("50", startDefault.s("temp"))
+            assertEquals("4", startDefault.s("duration"))
+            assertEquals("false", startDefault.s("rotate_tray"))
+
+            // Out-of-range inputs clamped
+            printer.command("bambu_lab/start_filament_drying", "temp" to "20", "duration" to "50")
+            val startClamped = link.sent.last().o("print")!!
+            assertEquals("45", startClamped.s("temp"))
+            assertEquals("24", startClamped.s("duration"))
+
+            printer.command("bambu_lab/stop_filament_drying")
+            assertEquals("0", link.sent.last().o("print")!!.s("ams_id"))
+        } finally { printer.stop() }
+    }
 }

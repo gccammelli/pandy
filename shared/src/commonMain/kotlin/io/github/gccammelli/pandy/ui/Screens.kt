@@ -25,7 +25,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Inbox
@@ -54,7 +61,12 @@ import io.github.gccammelli.pandy.LocalPlatform
 import io.github.gccammelli.pandy.Printer
 import io.github.gccammelli.pandy.Repo
 import io.github.gccammelli.pandy.amsId
+import io.github.gccammelli.pandy.displayName
 import io.github.gccammelli.pandy.isSingleSlot
+import io.github.gccammelli.pandy.modelBadge
+import io.github.gccammelli.pandy.startAmsDrying
+import io.github.gccammelli.pandy.stopAmsDrying
+import io.github.gccammelli.pandy.supportsDrying
 import io.github.gccammelli.pandy.calibrate
 import io.github.gccammelli.pandy.decodeImage
 import io.github.gccammelli.pandy.load
@@ -167,13 +179,27 @@ fun CheckDot(on: Boolean, disabled: Boolean = false) =
 fun FilamentScreen(p: Printer) {
     val err = errorToast()
     var open by remember { mutableStateOf<io.github.gccammelli.pandy.Spool?>(null) }
+    var dryingAms by remember { mutableStateOf<io.github.gccammelli.pandy.AmsInfo?>(null) }
     var edit by remember { mutableStateOf<io.github.gccammelli.pandy.Spool?>(null) }
     Page("Filament", { Nav.back() }) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
             p.ams.forEach { (a, trays) ->
                 Card {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        T(if (a.isSingleSlot()) "AMS HT" else "AMS ${'A' + a.index - 1}", 16.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        T(a.displayName(), 16.sp, weight = FontWeight.Bold)
+                        a.modelBadge()?.let { badge ->
+                            Spacer(Modifier.width(8.dp))
+                            Box(Modifier.clip(RoundedCornerShape(4.dp)).background(C.Track).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                T(badge, 11.sp, C.Sub, weight = FontWeight.Medium)
+                            }
+                        }
+                        if (p.amsIsDrying(a)) {
+                            Spacer(Modifier.width(8.dp))
+                            Box(Modifier.clip(RoundedCornerShape(4.dp)).background(C.AccentBg).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                T("Drying", 11.sp, C.Orange, FontWeight.Bold)
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
                         p.amsNum(a, "sensor.humidity_index")?.let { h ->
                             Icon(Icons.Outlined.WaterDrop, null, Modifier.size(16.dp), tint = humidityColor(h.toInt()))
                             T(" ${h.toInt()}", 13.sp, C.Sub)
@@ -189,6 +215,35 @@ fun FilamentScreen(p: Printer) {
                     }
                     Gap(10.dp)
                     T("Humidity level 1 (dry) to 5 (wet). Dry the filament above 3.", 12.sp, C.Sub)
+                    if (a.supportsDrying()) {
+                        Gap(12.dp)
+                        val isDrying = p.amsIsDrying(a)
+                        val remaining = p.amsDryingRemaining(a)
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isDrying) C.Orange.copy(alpha = 0.12f) else C.Fill)
+                                .clickable { dryingAms = a }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            DryingGlyph(Modifier.size(18.dp), color = if (isDrying) C.Orange else C.Sub)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                T(if (isDrying) "Filament drying active" else "Filament drying", 13.sp, weight = FontWeight.Medium)
+                                if (isDrying && remaining != null && remaining > 0.0) {
+                                    val totalMins = kotlin.math.round(remaining * 60).toInt()
+                                    val hours = totalMins / 60
+                                    val mins = totalMins % 60
+                                    T("Remaining: ${hours}h ${mins}m", 11.sp, C.Sub)
+                                } else if (!isDrying) {
+                                    T("Preheat & dry filament spools", 11.sp, C.Sub)
+                                }
+                            }
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(16.dp), tint = C.Faint)
+                        }
+                    }
                 }
                 Gap(12.dp)
             }
@@ -232,6 +287,9 @@ fun FilamentScreen(p: Printer) {
             }
             Gap(8.dp)
         }
+    }
+    dryingAms?.let { ams ->
+        AmsDryingSheet(p, ams, onDismiss = { dryingAms = null }, err = err)
     }
 }
 
@@ -407,7 +465,8 @@ private fun AmsSettingsCard(p: Printer, ams: io.github.gccammelli.pandy.AmsInfo,
         if (!settingsKnown) { revert(); return }
         p.setAmsSettings(ams.amsId(), start, insert, remain) { message -> revert(); err(message) }
     }
-    T(if (ams.isSingleSlot()) "AMS HT" else "AMS ${'A' + ams.index - 1}", 14.sp, C.Sub, modifier = Modifier.padding(horizontal = 6.dp))
+    val amsLabel = ams.displayName() + (ams.modelBadge()?.let { " [$it]" } ?: "")
+    T(amsLabel, 14.sp, C.Sub, modifier = Modifier.padding(horizontal = 6.dp))
     Gap(8.dp)
     if (Repo.showUnavailable || canSend) Group {
             if (insertionRemote == null) {
@@ -486,3 +545,208 @@ fun Empty(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector = 
         Gap(12.dp)
         T(text, 14.sp, C.Sub)
     }
+
+// ---------- AMS Drying UI ----------
+
+data class DryingPreset(val name: String, val temp: Int, val duration: Int)
+
+val DRYING_PRESETS = listOf(
+    DryingPreset("PLA", 50, 4),
+    DryingPreset("PETG", 55, 6),
+    DryingPreset("ABS/ASA", 65, 8),
+    DryingPreset("TPU", 55, 6),
+    DryingPreset("PA/PC", 65, 12),
+)
+
+@Composable
+fun DryingGlyph(modifier: Modifier = Modifier, color: Color = C.Sub) {
+    Canvas(modifier) {
+        val w = size.width; val h = size.height
+        val waveWidth = w / 3f
+        for (i in 0 until 3) {
+            val startX = i * waveWidth + waveWidth * 0.2f
+            val path = Path().apply {
+                moveTo(startX, h * 0.85f)
+                cubicTo(startX - 2f, h * 0.55f, startX + waveWidth * 0.6f, h * 0.45f, startX + waveWidth * 0.3f, h * 0.15f)
+            }
+            drawPath(path, color, style = Stroke(width = 2.5f, cap = StrokeCap.Round))
+        }
+    }
+}
+
+@Composable
+private fun StepButton(icon: ImageVector, enabled: Boolean, desc: String? = null, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(if (enabled) C.Card else C.Fill)
+            .clickable(enabled = enabled, onClickLabel = desc, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, desc, Modifier.size(18.dp), tint = if (enabled) C.Text else C.Faint)
+    }
+}
+
+@Composable
+fun AmsDryingSheet(
+    p: Printer,
+    ams: io.github.gccammelli.pandy.AmsInfo,
+    onDismiss: () -> Unit,
+    err: (String) -> Unit
+) {
+    val isDrying = p.amsIsDrying(ams)
+    val dryingKnown = p.amsDryingState(ams) != null // never offer Start while the printer may already be drying
+    val remainingHours = p.amsDryingRemaining(ams)
+    val targetTemp = p.amsDryingTargetTemp(ams)
+    val currentTemp = p.amsTemp(ams)
+
+    val initialPreset = if (isDrying) {
+        DRYING_PRESETS.firstOrNull { it.temp == targetTemp?.toInt() }
+    } else {
+        DRYING_PRESETS.first()
+    }
+    var temp by remember(ams.amsId(), isDrying) { mutableStateOf(if (isDrying) (targetTemp?.toInt()?.coerceIn(45, 65) ?: 50) else (initialPreset?.temp ?: 50)) }
+    var duration by remember(ams.amsId(), isDrying) { mutableStateOf(if (isDrying && remainingHours != null && remainingHours > 0.0) remainingHours.toInt().coerceIn(1, 24) else (initialPreset?.duration ?: 4)) }
+    var rotateTray by remember(ams.amsId(), isDrying) { mutableStateOf(true) }
+    var selectedPreset by remember(ams.amsId(), isDrying) { mutableStateOf<String?>(initialPreset?.name) }
+
+    val amsTitle = "Filament Drying - " + ams.displayName()
+
+    Sheet(
+        onDismiss = onDismiss,
+        title = amsTitle,
+        centeredTitle = true,
+        confirm = if (!isDrying && dryingKnown) "Start drying" else null,
+        onConfirm = {
+            p.startAmsDrying(ams, temp, duration, rotateTray, err)
+            onDismiss()
+        }
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+            if (!dryingKnown) {
+                T("Drying status is unavailable, so drying can't be started or stopped right now.", 13.sp, C.Sub)
+                Gap(12.dp)
+            }
+            if (isDrying) {
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.Fill).padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    DryingGlyph(Modifier.size(40.dp), color = C.Orange)
+                    Gap(12.dp)
+                    T("Drying in progress", 18.sp, weight = FontWeight.Bold)
+                    Gap(4.dp)
+                    if (remainingHours != null && remainingHours > 0.0) {
+                        val totalMins = kotlin.math.round(remainingHours * 60).toInt()
+                        val hours = totalMins / 60
+                        val mins = totalMins % 60
+                        T("Remaining: ${hours}h ${mins}m", 15.sp, C.Orange, FontWeight.Medium)
+                    }
+                    Gap(12.dp)
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            T("Target temperature", 12.sp, C.Sub)
+                            T("${targetTemp?.toInt() ?: temp}°C", 16.sp, weight = FontWeight.Bold)
+                        }
+                        if (currentTemp != null) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                T("Chamber temperature", 12.sp, C.Sub)
+                                T("${currentTemp.toInt()}°C", 16.sp, weight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+                Gap(16.dp)
+                OutlineButton("Stop drying", C.Red, Modifier.fillMaxWidth()) {
+                    p.stopAmsDrying(ams, err)
+                    onDismiss()
+                }
+                Gap(16.dp)
+            } else {
+                T("Presets", 13.sp, C.Sub)
+                Gap(8.dp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DRYING_PRESETS.forEach { preset ->
+                        val sel = selectedPreset == preset.name
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (sel) C.Accent else C.Fill)
+                                .clickable {
+                                    selectedPreset = preset.name
+                                    temp = preset.temp
+                                    duration = preset.duration
+                                }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            T(preset.name, 12.sp, if (sel) C.OnAccent else C.Text, weight = if (sel) FontWeight.Bold else FontWeight.Normal)
+                        }
+                    }
+                }
+                Gap(16.dp)
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(14.dp)) {
+                    T("Target temperature", 13.sp, C.Sub)
+                    Gap(6.dp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        T("$temp°C", 22.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        StepButton(Icons.Default.Remove, enabled = temp > 45, "Decrease temperature") {
+                            temp = (temp - 5).coerceAtLeast(45)
+                            selectedPreset = null
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        StepButton(Icons.Default.Add, enabled = temp < 65, "Increase temperature") {
+                            temp = (temp + 5).coerceAtMost(65)
+                            selectedPreset = null
+                        }
+                    }
+                    Gap(4.dp)
+                    T("Supported range: 45°C – 65°C", 11.sp, C.Sub)
+                }
+                Gap(12.dp)
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(14.dp)) {
+                    T("Drying duration", 13.sp, C.Sub)
+                    Gap(6.dp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        T("${duration}h", 22.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        StepButton(Icons.Default.Remove, enabled = duration > 1, "Decrease duration") {
+                            duration = (duration - 1).coerceAtLeast(1)
+                            selectedPreset = null
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        StepButton(Icons.Default.Add, enabled = duration < 24, "Increase duration") {
+                            duration = (duration + 1).coerceAtMost(24)
+                            selectedPreset = null
+                        }
+                    }
+                    Gap(4.dp)
+                    T("Supported range: 1h – 24h", 11.sp, C.Sub)
+                }
+                Gap(12.dp)
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        T("Rotate spool when drying", 15.sp, weight = FontWeight.Medium)
+                        Gap(2.dp)
+                        T(
+                            if (rotateTray) "Unload filament from feeder and secure the tip into the spool rim before rotating."
+                            else "Even heating. Disabled to dry without rotating.",
+                            11.sp,
+                            C.Sub
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Toggle(rotateTray) { rotateTray = it }
+                }
+                Gap(20.dp)
+            }
+        }
+    }
+}

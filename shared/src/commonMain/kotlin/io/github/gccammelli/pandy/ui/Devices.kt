@@ -58,6 +58,8 @@ import io.github.gccammelli.pandy.Repo
 import io.github.gccammelli.pandy.Spool
 import io.github.gccammelli.pandy.UiState
 import io.github.gccammelli.pandy.button
+import io.github.gccammelli.pandy.displayName
+import io.github.gccammelli.pandy.modelBadge
 import io.github.gccammelli.pandy.isSingleSlot
 import io.github.gccammelli.pandy.light
 
@@ -476,7 +478,20 @@ private fun FilamentCard(p: Printer, onClick: () -> Unit) = Card(padding = andro
     if (p.ams.isEmpty() && p.external.isEmpty()) { T("No AMS or external spool in Home Assistant", 13.sp, C.Sub); return@Card }
     p.ams.forEach { (a, trays) ->
         Row(verticalAlignment = Alignment.CenterVertically) {
-            T(if (a.isSingleSlot()) "AMS HT" else "AMS ${'A' + a.index - 1}", 13.sp, C.Sub, modifier = Modifier.weight(1f))
+            T(a.displayName(), 13.sp, C.Sub)
+            a.modelBadge()?.let { badge ->
+                Spacer(Modifier.width(6.dp))
+                Box(Modifier.clip(RoundedCornerShape(4.dp)).background(C.Fill).padding(horizontal = 5.dp, vertical = 1.dp)) {
+                    T(badge, 10.sp, C.Sub, FontWeight.Medium)
+                }
+            }
+            if (p.amsIsDrying(a)) {
+                Spacer(Modifier.width(6.dp))
+                Box(Modifier.clip(RoundedCornerShape(4.dp)).background(C.AccentBg).padding(horizontal = 5.dp, vertical = 1.dp)) {
+                    T("Drying", 10.sp, C.Orange, FontWeight.Bold)
+                }
+            }
+            Spacer(Modifier.weight(1f))
             p.amsNum(a, "sensor.humidity_index")?.let { h ->
                 Icon(Icons.Outlined.WaterDrop, null, Modifier.size(14.dp), tint = humidityColor(h.toInt()))
                 T(" ${h.toInt()}", 12.sp, C.Sub)
