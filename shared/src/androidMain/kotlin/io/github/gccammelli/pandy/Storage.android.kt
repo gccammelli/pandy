@@ -46,10 +46,13 @@ actual suspend fun cacheFile(name: String, bytes: ByteArray): String = withConte
  * offset and length), STOR. Data connections reuse the control connection's TLS session: they are wrapped as if to
  * port 990 so the session cache resumes it. One operation at a time per printer.
  */
+internal const val FTPS_UNAVAILABLE = "The printer's file service is not answering. Wait a minute and try again; if it keeps failing, restart the printer."
+
 internal class FtpsStorage(
     private val c: LanConfig,
     private val socketFactory: suspend (String) -> SSLSocketFactory = BambuTls::factory,
     private val controlPort: Int = 990,
+    private val handshakeMs: Int = 12_000,
 ) : PrinterStorage {
     private val lock = locks.getOrPut(c.serial) { Mutex() }
 
@@ -89,7 +92,15 @@ internal class FtpsStorage(
             val f = socketFactory(c.serial)
             // Connected with host and port known, so the session is cached under ip:990 for the data connections to resume.
             // TLS 1.2: its session-ID resumption is what the printer's FTP server checks reliably.
-            val sock = (Socket().apply { connect(InetSocketAddress(c.ip, controlPort), 10_000) }.let { f.createSocket(it, c.ip, controlPort, true) } as SSLSocket).apply { enabledProtocols = arrayOf("TLSv1.2"); tickets(); soTimeout = 30_000; startHandshake() }
+            val plain = Socket()
+            val sock = try {
+                plain.connect(InetSocketAddress(c.ip, controlPort), 5_000)
+                // A short deadline for the handshake: a printer whose file service is stuck accepts the connection and then never answers.
+                (f.createSocket(plain, c.ip, controlPort, true) as SSLSocket).apply { enabledProtocols = arrayOf("TLSv1.2"); tickets(); soTimeout = handshakeMs; startHandshake(); soTimeout = 30_000 }
+            } catch (e: java.io.IOException) {
+                runCatching { plain.close() } // a failed handshake must not leave the printer's few FTP slots in use
+                throw ApiException(if (e is java.net.SocketTimeoutException || e is javax.net.ssl.SSLException || e is java.net.ConnectException) FTPS_UNAVAILABLE else (e.message ?: FTPS_UNAVAILABLE))
+            }
             sock.use {
                 val s = Session(sock, f, c.ip, controlPort)
                 s.reply()

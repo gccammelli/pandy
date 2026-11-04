@@ -94,6 +94,21 @@ class FtpsStorageTest {
         }
     }
 
+    @Test fun aPrinterThatAcceptsTheConnectionButNeverAnswersGivesAClearErrorAndFreesTheSocket() = runBlocking<Unit> {
+        java.net.ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { silent ->
+            val accepted = java.util.concurrent.atomic.AtomicReference<java.net.Socket>()
+            thread(isDaemon = true) { runCatching { accepted.set(silent.accept()) } }
+            val storage = FtpsStorage(LanConfig("127.0.0.1", "TEST-SILENT", "test-access-code", "X1C"), { testTlsContext().socketFactory }, silent.localPort, handshakeMs = 500)
+            val e = assertFailsWith<ApiException> { storage.list("/") }
+            assertEquals(FTPS_UNAVAILABLE, e.message)
+            // Our side closed the connection: the peer sees the end of the stream instead of a half-open slot.
+            val peer = accepted.get()
+            peer.soTimeout = 3000
+            assertTrue(runCatching { peer.getInputStream().let { while (it.read() >= 0) {} } ; true }.getOrDefault(false))
+            peer.close()
+        }
+    }
+
     @Test fun listsFilesUsingProtectedPassiveDataAndMultilineGreeting() = runBlocking {
         Peer().use { peer ->
             val files = peer.storage().list("/")
