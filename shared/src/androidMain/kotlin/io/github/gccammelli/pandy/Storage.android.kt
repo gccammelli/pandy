@@ -99,7 +99,7 @@ internal class FtpsStorage(
                 (f.createSocket(plain, c.ip, controlPort, true) as SSLSocket).apply { enabledProtocols = arrayOf("TLSv1.2"); tickets(); soTimeout = handshakeMs; startHandshake(); soTimeout = 30_000 }
             } catch (e: java.io.IOException) {
                 runCatching { plain.close() } // a failed handshake must not leave the printer's few FTP slots in use
-                throw ApiException(if (e is java.net.SocketTimeoutException || e is javax.net.ssl.SSLException || e is java.net.ConnectException) FTPS_UNAVAILABLE else (e.message ?: FTPS_UNAVAILABLE))
+                throw ApiException(FTPS_UNAVAILABLE)
             }
             sock.use {
                 val s = Session(sock, f, c.ip, controlPort)
