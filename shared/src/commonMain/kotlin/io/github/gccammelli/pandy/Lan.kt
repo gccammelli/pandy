@@ -201,7 +201,8 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     (printOptions?.flag("auto_switch_filament") ?: p.flag("auto_switch_filament") ?: p.bit("home_flag", 10) ?: p.hexBit("cfg", 18))?.let { add("switch", "auto_switch_filament", if (it) "on" else "off") }
     if (c.model !in listOf("A1", "A1 mini", "P1P")) {
         (p.flag("door_open_check") ?: (p.str("cfg")?.toLongOrNull(16)?.let { ((it shr 20) and 3L) != 0L }) ?: p.bit("home_flag", 26))?.let { add("switch", "door_open_check", if (it) "on" else "off") }
-        (p.hexBit("stat", 23) ?: p.bit("home_flag", 23))?.let { add("binary_sensor", "door_open", if (it) "on" else "off") }
+        // Only home_flag bit 23 follows the door: on a real X1C `stat` bit 23 stays set whether the door is open or closed.
+        p.bit("home_flag", 23)?.let { add("binary_sensor", "door_open", if (it) "on" else "off") }
     }
     val light = (p["lights_report"] as? JsonArray)?.mapNotNull { it as? JsonObject }?.firstOrNull { it.str("node") == "chamber_light" }?.str("mode")
     add("light", "chamber_light", if (light == "on") "on" else "off")

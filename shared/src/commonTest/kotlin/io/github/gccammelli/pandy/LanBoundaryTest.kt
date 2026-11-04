@@ -113,8 +113,10 @@ class LanBoundaryTest {
     }
 
     @Test fun chamberDoorStatusAndDetectionSwitchAreParsedAndCommandsFormatted() {
-        val openDoorPayload = """{"print": {"stat": "46A58008"}}"""
-        assertEquals("on", entities(openDoorPayload, model = "X2D").getValue("door_open").state)
+        // Real X1C reports: stat is 47A58000 with the door open and closed; only home_flag bit 23 changes (0xC065CD98 closed, 0xC0E5CD98 open).
+        assertEquals("on", entities("""{"print": {"stat": "47A58000", "home_flag": ${0xC0E5CD98L}}}""", model = "X1C").getValue("door_open").state)
+        assertEquals("off", entities("""{"print": {"stat": "47A58000", "home_flag": ${0xC065CD98L}}}""", model = "X1C").getValue("door_open").state)
+        assertFalse(entities("""{"print": {"stat": "46A58008"}}""", model = "X2D").containsKey("door_open"))
 
         val homeFlagOpen = """{"print": {"home_flag": ${1L shl 23}}}"""
         assertEquals("on", entities(homeFlagOpen, model = "X2D").getValue("door_open").state)
