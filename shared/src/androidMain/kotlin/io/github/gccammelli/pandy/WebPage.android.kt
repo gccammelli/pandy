@@ -223,10 +223,7 @@ actual fun WebPage(url: String, modifier: Modifier, onDownload: ((WebDownload) -
                         const r=new FileReader();r.onload=()=>PandyBridge.blob(window.__pandyDownloadName||${org.json.JSONObject.quote(name)},r.result.split(',')[1],window.__pandyBridgeToken);r.readAsDataURL(b);})()""", null)
                 } else if (site != ModelSite.MakerWorld && site.ownsFile(u)) {
                     // Thingiverse and Printables: an STL or 3MF opens the print sheet when Pandy's Print button asked for it; any other download (the site's own Download, zips, images) is saved.
-                    // A signed URL can lose the model's extension and guess as ".bin": that is still asked about, and only an explicit Print press sends it to the sheet, which checks the bytes.
-                    val canPrint = state?.canPrint == true
-                    val ask = asksPrintIntent(false, true, name, canPrint) || (canPrint && name.endsWith(".bin", ignoreCase = true))
-                    printPressed(ask) { pressed -> onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u), printSheet = pressed)) }
+                    printPressed(asksPrintIntent(false, true, name, state?.canPrint == true)) { pressed -> onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u), printSheet = pressed)) }
                 } else if (trustedFile(u)) onDownload?.invoke(WebDownload(u, name, CookieManager.getInstance().getCookie(u)))
                 else toast("Pandy only opens downloads from ${site.label}")
             }

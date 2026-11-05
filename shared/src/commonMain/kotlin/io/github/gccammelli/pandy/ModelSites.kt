@@ -33,8 +33,12 @@ internal val SITE_HOSTS = listOf("makerworld.com", "bambulab.com", "bblmw.com", 
  */
 const val PRINT_INTENT_JS = "(function(){ var on = Date.now() < (window.__pandyPrintUntil || 0); window.__pandyPrintUntil = 0; return on ? '1' : '0'; })()"
 
-/** Whether a site download that arrived should ask the page if Pandy's Print button pressed it: only a printable file Pandy can print, not already a print. */
-fun asksPrintIntent(alreadyPrint: Boolean, fromSite: Boolean, name: String, canPrint: Boolean) = !alreadyPrint && fromSite && isPrintableModel(name) && canPrint
+/**
+ * Whether a site download that arrived should ask the page if Pandy's Print button pressed it: only a printable file Pandy can print, not already a print.
+ * A signed URL can lose the model's extension so that Android guesses ".bin"; that is asked about too, and only an explicit Print press sends it on (the print sheet checks the bytes).
+ */
+fun asksPrintIntent(alreadyPrint: Boolean, fromSite: Boolean, name: String, canPrint: Boolean) =
+    !alreadyPrint && fromSite && canPrint && (isPrintableModel(name) || name.endsWith(".bin", ignoreCase = true))
 
 /** A download's file name as the person should see it: percent escapes decoded ("Calibration%20Cube.stl"), no folder parts, no ";" parameters. */
 fun downloadName(guessed: String): String {

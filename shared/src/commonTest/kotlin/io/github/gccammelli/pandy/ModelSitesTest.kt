@@ -52,6 +52,12 @@ class ModelSitesTest {
         assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = false, name = "a.stl", canPrint = true))
         assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = true, name = "a.zip", canPrint = true))
         assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = true, name = "a.stl", canPrint = false))
+        // An extensionless signed URL guesses ".bin": asked about only when Print is possible, never for other files
+        assertTrue(asksPrintIntent(alreadyPrint = false, fromSite = true, name = "demo.bin", canPrint = true))
+        assertTrue(asksPrintIntent(alreadyPrint = false, fromSite = true, name = "DEMO.BIN", canPrint = true))
+        assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = true, name = "demo.bin", canPrint = false))
+        assertFalse(asksPrintIntent(alreadyPrint = true, fromSite = true, name = "demo.bin", canPrint = true))
+        assertFalse(asksPrintIntent(alreadyPrint = false, fromSite = false, name = "demo.bin", canPrint = true))
     }
 
     @Test fun downloadNamesAreDecodedAndStayPlainFileNames() {
