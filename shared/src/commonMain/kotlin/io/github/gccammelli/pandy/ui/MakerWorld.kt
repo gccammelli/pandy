@@ -213,7 +213,9 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     var chosenTray by remember { mutableStateOf<Int?>(null) }
     val pickedSpool = spools.firstOrNull { it.first == chosenTray } ?: spools.firstOrNull()
     val plainTray = pickedSpool?.first
-    val name = d.name.replace(Regex("(?i)\\.(3mf|stl|gcode)$"), "")
+    // An STL that arrived under a ".bin" name (its signed URL lost the extension) is shown and sliced as an STL.
+    val modelName = if (stlSource != null && d.name.endsWith(".bin", ignoreCase = true)) d.name.dropLast(4) + ".stl" else d.name
+    val name = modelName.replace(Regex("(?i)\\.(3mf|stl|gcode)$"), "")
 
     DisposableEffect(view, step) {
         registerBack(if (step == Step.Slicing || step == Step.Starting) ({}) else {
