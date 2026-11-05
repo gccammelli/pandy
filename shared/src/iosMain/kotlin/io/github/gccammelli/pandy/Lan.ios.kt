@@ -253,12 +253,13 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
         try {
             return memScoped {
                 val n = alloc<ULongVar>()
+                val before = tlsInfo()
                 val status = dst.usePinned { SSLRead(ssl, it.addressOf(offset), length.toULong(), n.ptr) }
                 when {
                     status == errSecSuccess -> n.value.toInt().takeIf { it > 0 } ?: -1
                     status == errSSLClosedGraceful || status == errSSLClosedNoNotify -> -1
                     status == errSSLWouldBlock -> n.value.toInt()
-                    else -> throw ApiException("The printer connection failed (read $status, ${tlsInfo()})")
+                    else -> throw ApiException("The printer connection failed (read $status, $length bytes asked, before: $before, after: ${tlsInfo()})")
                 }
             }
         } finally {
@@ -301,6 +302,7 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
         try {
             return memScoped {
                 val n = alloc<ULongVar>()
+                val before = tlsInfo()
                 var status = bytes.usePinned { SSLWrite(ssl, it.addressOf(offset), length.toULong(), n.ptr) }
                 if (status == errSSLWouldBlock) {
                     // SecureTransport can accept the whole application buffer before its encrypted output is flushed.
@@ -309,11 +311,11 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
                         n.value = 0u
                         status = SSLWrite(ssl, null, 0u, n.ptr)
                         if (status == errSecSuccess) return@memScoped length
-                        if (status != errSSLWouldBlock) throw ApiException("The printer connection failed (write $status, ${tlsInfo()})")
+                        if (status != errSSLWouldBlock) throw ApiException("The printer connection failed (write flush $status, before: $before, after: ${tlsInfo()})")
                         if (getTimeMillis() >= deadline) throw ApiException("The printer write timed out")
                     }
                 }
-                if (status != errSecSuccess) throw ApiException("The printer connection failed (write $status, ${tlsInfo()})")
+                if (status != errSecSuccess) throw ApiException("The printer connection failed (write $status, $length bytes, before: $before, after: ${tlsInfo()})")
                 n.value.toInt()
             }
         } finally {
@@ -386,7 +388,7 @@ private fun tlsRead(connection: CPointer<out kotlinx.cinterop.CPointed>?, data: 
     val requested = length!!.pointed.value.toInt()
     val n = recv(socket.nativeFd(), data, requested.toULong(), 0)
     return when {
-        n > 0L -> { length.pointed.value = n.toULong(); errSecSuccess }
+        n > 0L -> { length.pointed.value = n.toULong(); if (n == requested.toLong()) errSecSuccess else errSSLWouldBlock }
         n == 0L -> { length.pointed.value = 0uL; errSSLClosedGraceful }
         platform.posix.posix_errno() == EAGAIN || platform.posix.posix_errno() == EWOULDBLOCK -> { length.pointed.value = 0u; errSSLWouldBlock }
         platform.posix.posix_errno() == EINTR -> { length.pointed.value = 0u; errSSLWouldBlock }
@@ -400,7 +402,7 @@ private fun tlsWrite(connection: CPointer<out kotlinx.cinterop.CPointed>?, data:
     val n = send(socket.nativeFd(), data, requested.toULong(), 0)
     return if (n >= 0) {
         length.pointed.value = n.toULong()
-        errSecSuccess
+        if (n == requested.toLong()) errSecSuccess else errSSLWouldBlock
     } else if (platform.posix.posix_errno() == EINTR || platform.posix.posix_errno() == EAGAIN || platform.posix.posix_errno() == EWOULDBLOCK) {
         length.pointed.value = 0u
         errSSLWouldBlock
