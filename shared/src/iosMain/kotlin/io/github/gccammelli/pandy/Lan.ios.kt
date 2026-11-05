@@ -188,19 +188,20 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
             if (status != errSSLWouldBlock) break
             if (getTimeMillis() >= deadline) error("TLS handshake timed out")
         }
+        var afterTrust = false
         if (status == errSSLServerAuthCompleted) {
             verifyPeer(serial, anchors)
             verified = true
-            check(SSLSetSessionOption(ssl, kSSLSessionOptionBreakOnServerAuth, false) == errSecSuccess) {
-                "Couldn't continue TLS handshake"
-            }
+            afterTrust = true
+            // Resume as SecureTransport documents: just call SSLHandshake again. Clearing BreakOnServerAuth here
+            // made the resumed handshake fail with paramErr (-50) on iOS 27.
             while (true) {
                 status = SSLHandshake(ssl)
                 if (status != errSSLWouldBlock) break
                 if (getTimeMillis() >= deadline) error("TLS handshake timed out")
             }
         }
-        if (status != errSecSuccess) error("TLS handshake failed ($status)")
+        if (status != errSecSuccess) error("TLS handshake failed ($status${if (afterTrust) ", after the certificate check" else ""})")
         if (!verified) verifyPeer(serial, anchors)
     }
 
