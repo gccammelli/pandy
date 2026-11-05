@@ -163,6 +163,12 @@ class ScreenTest {
 
     @Test fun connectionShowsDirectSetup() = show("Pandy") { Connect() }
 
+    @Test fun connectionComparisonListsSlicingInEveryMode() {
+        show("Pandy") { Connect() }
+        // The Pandy Slicer works with or without Home Assistant, so the "Help me choose" table says so.
+        compose.onNodeWithText("Slice and print models (Pandy Slicer)").performScrollTo().assertIsDisplayed()
+    }
+
     @Test fun connectionModeSwitchesBetweenDirectHomeAssistantAndCombinedSetup() {
         show("Pandy") { Connect() }
         compose.onNodeWithText("HA Only",substring=false).performScrollTo().performClick()
