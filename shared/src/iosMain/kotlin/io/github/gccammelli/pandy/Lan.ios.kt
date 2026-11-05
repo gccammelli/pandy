@@ -46,7 +46,9 @@ import platform.Security.SSLCreateContext
 import platform.Security.SSLContextRef
 import platform.Security.SSLClose
 import platform.Security.SSLHandshake
+import platform.Security.SSLGetSessionState
 import platform.Security.SSLRead
+import platform.Security.SSLSessionState
 import platform.Security.SSLSetConnection
 import platform.Security.SSLSetIOFuncs
 import platform.Security.SSLSetPeerID
@@ -205,6 +207,13 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
         if (!verified) verifyPeer(serial, anchors)
     }
 
+    /** Where the TLS session stands, for error messages: a read or write that fails while it is not connected points at the handshake. */
+    private fun tlsInfo(): String = memScoped {
+        val state = alloc<SSLSessionState.Var>()
+        val result = SSLGetSessionState(ssl, state.ptr)
+        if (result == errSecSuccess) "TLS ${state.value}" else "TLS state unknown ($result)"
+    }
+
     private fun verifyPeer(serial: String, anchors: List<SecCertificateRef>) = memScoped {
         val trustRef = alloc<SecTrustRefVar>()
         check(SSLCopyPeerTrust(ssl, trustRef.ptr) == errSecSuccess && trustRef.value != null) { "Printer sent no certificate" }
@@ -249,7 +258,7 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
                     status == errSecSuccess -> n.value.toInt().takeIf { it > 0 } ?: -1
                     status == errSSLClosedGraceful || status == errSSLClosedNoNotify -> -1
                     status == errSSLWouldBlock -> n.value.toInt()
-                    else -> throw ApiException("The printer connection failed ($status)")
+                    else -> throw ApiException("The printer connection failed (read $status, ${tlsInfo()})")
                 }
             }
         } finally {
@@ -300,11 +309,11 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
                         n.value = 0u
                         status = SSLWrite(ssl, null, 0u, n.ptr)
                         if (status == errSecSuccess) return@memScoped length
-                        if (status != errSSLWouldBlock) throw ApiException("The printer connection failed ($status)")
+                        if (status != errSSLWouldBlock) throw ApiException("The printer connection failed (write $status, ${tlsInfo()})")
                         if (getTimeMillis() >= deadline) throw ApiException("The printer write timed out")
                     }
                 }
-                if (status != errSecSuccess) throw ApiException("The printer connection failed ($status)")
+                if (status != errSecSuccess) throw ApiException("The printer connection failed (write $status, ${tlsInfo()})")
                 n.value.toInt()
             }
         } finally {
