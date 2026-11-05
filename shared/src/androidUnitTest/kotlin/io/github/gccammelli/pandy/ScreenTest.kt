@@ -859,7 +859,7 @@ class ScreenTest {
 
     private fun stlBytes() = ("solid x\n" + listOf("0 0 0","10 0 0","0 10 0","0 0 10").let { v -> listOf(listOf(0,1,2),listOf(0,1,3),listOf(0,2,3),listOf(1,2,3)).joinToString("") { t -> "facet normal 0 0 0\nouter loop\n" + t.joinToString("") { "vertex ${v[it]}\n" } + "endloop\nendfacet\n" } } + "endsolid x\n").encodeToByteArray()
 
-    private fun printablesStl(slicer: Boolean, pressed: Boolean = true, opaque: Boolean = false) {
+    private fun printablesStl(slicer: Boolean, pressed: Boolean = true, opaque: Boolean = false, zip: Boolean = false) {
         if (slicer) Repo.setSlicer("http://slicer.example:8737",null)
         compose.runOnIdle { Nav.site=ModelSite.Printables }
         compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme { ModelsTab() } } }
@@ -870,12 +870,13 @@ class ScreenTest {
         try {
             compose.runOnIdle {
                 // "opaque": a signed URL with no extension and no file name, which Android guesses as "demo.bin".
-                if (opaque) shadow.downloadListener.onDownloadStart("https://files.printables.com/media/demo.bin?token=demo","","","application/octet-stream",3)
+                if (zip) shadow.downloadListener.onDownloadStart("https://files.printables.com/media/pack.zip","","attachment; filename=\"pack.zip\"","application/zip",3)
+                else if (opaque) shadow.downloadListener.onDownloadStart("https://files.printables.com/media/demo.bin?token=demo","","","application/octet-stream",3)
                 else shadow.downloadListener.onDownloadStart("https://files.printables.com/media/a.stl","","attachment; filename=\"a.stl\"","model/stl",3)
                 // With a printer and a slicer the page is asked whether Pandy's Print button pressed the site's Download.
-                if (slicer) shadow.lastEvaluatedJavascriptCallback.onReceiveValue(if (pressed) "\"1\"" else "\"0\"")
+                if (slicer && !zip) shadow.lastEvaluatedJavascriptCallback.onReceiveValue(if (pressed) "\"1\"" else "\"0\"")
             }
-            if (slicer && pressed) {
+            if (slicer && pressed && !zip) {
                 // With a printer and a slicer the download is a print: the wrapped STL reads as a one-plate project.
                 compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithText("1 plate",substring=true).assertExists()
@@ -883,7 +884,7 @@ class ScreenTest {
             } else {
                 // A printer but no slicer: a plain save.
                 compose.waitUntil(5000) { compose.waitForIdle(); savedFiles.isNotEmpty() }
-                assertEquals(if (opaque) "demo.bin" else "a.stl",savedFiles.last().first)
+                assertEquals(if (zip) "pack.zip" else if (opaque) "demo.bin" else "a.stl",savedFiles.last().first)
             }
         } finally { downloadModel=realDownload; Repo.setSlicer(null,null); compose.runOnIdle { Nav.site=ModelSite.MakerWorld } }
     }
@@ -893,6 +894,7 @@ class ScreenTest {
     @Test fun anExtensionlessPrintablesDownloadFromPandysPrintButtonOpensThePrintSheet() = printablesStl(true, opaque = true)
     @Test fun anExtensionlessPrintablesDownloadFromTheSitesOwnButtonIsJustSaved() = printablesStl(true, pressed = false, opaque = true)
     @Test fun anExtensionlessPrintablesDownloadWithoutASlicerIsJustSaved() = printablesStl(false, opaque = true)
+    @Test fun aZipOnPrintablesIsJustSavedEvenWithASlicerSetUp() = printablesStl(true, zip = true) // only STL/3MF, or an extensionless .bin, ever ask about Print intent
 
     @Test fun makerWorldPrintWaitsForConfirmationThenSlicesUploadsAndStarts() {
         val (uploads,closed) = prepareRealPrint("""[{"id":"1","type":"PLA","color":"#FFFFFF"}]""")
