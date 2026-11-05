@@ -97,7 +97,9 @@ jobs:
   ios:
     # Releases and manual runs only: a pushed commit doesn't need a new .ipa.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: macos-15
+    # GitHub's hosted macOS runners are sometimes unavailable ("job was not acquired by Runner of type hosted"): the repository
+    # variable PANDY_IOS_RUNNER switches the label (macos-14, a newer image, or a self-hosted Mac) without a code change.
+    runs-on: ${{ vars.PANDY_IOS_RUNNER || 'macos-15' }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
