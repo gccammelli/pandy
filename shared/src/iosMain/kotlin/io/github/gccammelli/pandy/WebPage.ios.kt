@@ -121,6 +121,8 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
         }
     }
 
+    // Thingiverse makes its downloads as in-page blobs, which need the bridge only MakerWorld gets on iOS, so the button is for Printables.
+    private fun printablesPage() = site == ModelSite.Printables && site.ownsPage(webView?.get()?.URL?.host)
     private fun makerWorldPage() = webView?.get()?.URL?.host?.let { it == "makerworld.com" || it.endsWith(".makerworld.com") } == true
     private fun trustedFile(url: String): Boolean {
         if (!url.startsWith("https://") || url.any { it == '\\' || it == '@' || it.isWhitespace() }) return false
@@ -259,7 +261,7 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
                 // Thingiverse and Printables: an STL or 3MF opens the print sheet when Pandy's Print button asked for it; any other download (the site's own Download, zips, images) is saved.
                 val name = r.suggestedFilename ?: "model.stl"
                 fun deliver(printSheet: Boolean) = cookies(url) { c -> onDownload?.invoke(WebDownload(url, name, c, printSheet = printSheet)) }
-                if (isPrintableModel(name) && state?.canPrint == true) webView.evaluateJavaScript(PRINT_INTENT_JS) { pressed, _ -> deliver(pressed == "1") } else deliver(false)
+                if (asksPrintIntent(false, true, name, state?.canPrint == true)) webView.evaluateJavaScript(PRINT_INTENT_JS) { pressed, _ -> deliver(pressed == "1") } else deliver(false)
                 return decisionHandler(WKNavigationResponsePolicy.WKNavigationResponsePolicyCancel)
             }
             if (url != null && makerWorldPage() && trustedFile(url) && download) {
@@ -272,6 +274,11 @@ private class Handlers(var onDownload: ((WebDownload) -> Unit)?, var state: WebS
         @ObjCSignatureOverride
         override fun webView(webView: WKWebView, didFinishNavigation: WKNavigation?) {
             pageChanged(webView.URL?.absoluteString)
+            if (printablesPage()) {
+                // Printables: Pandy's magenta Print button next to each STL/3MF file's Download; its download comes back through decidePolicyForNavigationResponse above.
+                webView.evaluateJavaScript(SITE_DOWNLOAD_JS, null)
+                webView.evaluateJavaScript(canPrintJs(state?.canPrint == true), null)
+            }
             if (makerWorldPage()) {
                 webView.evaluateJavaScript("window.__pandyPrinter = ${json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(printer.orEmpty()))};", null)
                 webView.evaluateJavaScript(canPrintJs(state?.canPrint != false), null)
