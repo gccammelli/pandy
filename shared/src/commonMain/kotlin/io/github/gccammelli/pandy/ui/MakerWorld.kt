@@ -722,7 +722,7 @@ private fun PreviewView(p: Printer, project: Project, plate: Int, auto: List<Int
                     T("Customize colors", 15.sp, modifier = Modifier.weight(1f)); T("Reset", 13.sp, C.Blue, modifier = Modifier.clickable { custom = emptyMap(); scheme = PreviewScheme.Model }.padding(8.dp)); T("›", 24.sp, C.Sub)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 4.dp)) {
-                    displayColors.ifEmpty { listOf(0xFF888888) }.forEach { colour -> Box(Modifier.size(28.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(colour))) }
+                    displayColors.forEach { colour -> Box(Modifier.size(28.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(colour))) }
                 }
             }
         }
