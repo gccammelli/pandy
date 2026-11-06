@@ -3677,6 +3677,33 @@ class ScreenTest {
         return p to ams2Pro
     }
 
+    private fun sampleAmsHtPrinter(drying: Boolean = false, targetTemp: Double? = 70.0): Pair<Printer, AmsInfo> {
+        val baseAms = printer.info.ams.first()
+        val amsHt = baseAms.copy(
+            model = "AMS HT",
+            protocolId = 128,
+            ids = baseAms.ids + mapOf(
+                "binary_sensor.drying" to "binary_sensor.drying_active",
+                "sensor.remaining_drying_time" to "sensor.drying_remaining",
+                "sensor.drying_target_temp" to "sensor.drying_target",
+                "sensor.ams_temp" to "sensor.ams_temp_val"
+            )
+        )
+        val setList = mutableListOf(
+            "binary_sensor.drying_active" to entity(if (drying) "on" else "off"),
+            "sensor.drying_remaining" to entity(if (drying) "4.2" else "0.0"),
+            "sensor.ams_temp_val" to entity("42.0")
+        )
+        if (targetTemp != null) {
+            setList.add("sensor.drying_target" to entity(targetTemp.toString()))
+        }
+        val p = variant(
+            info = printer.info.copy(ams = listOf(amsHt)),
+            set = setList.toTypedArray()
+        )
+        return p to amsHt
+    }
+
     @Test fun dryingStatusHandlesUnavailableAndMissingTelemetry() {
         val (sample, ams) = sampleAms2ProPrinter()
         fun withStates(vararg states: Pair<String, String>) = Printer(sample.info, states.associate { (id, value) -> id to entity(value) })
@@ -3797,6 +3824,7 @@ class ScreenTest {
         compose.waitForIdle()
 
         compose.onNodeWithText("Filament Drying - AMS A").assertExists()
+        compose.onNodeWithText("Supported range: 45°C – 65°C").assertExists()
         compose.onNodeWithText("Rotate spool when drying").assertExists()
         compose.onNodeWithText("Unload filament from feeder and secure the tip into the spool rim before rotating.").assertExists()
         compose.onNodeWithText("Start drying").assertExists()
@@ -3917,5 +3945,112 @@ class ScreenTest {
 
         ams2ProPrinter.stopAmsDrying(ams2Pro) { errMessage = it }
         compose.waitUntil(5000) { compose.waitForIdle(); commands.count { it.first.endsWith("stop_filament_drying") } > stopCount }
+    }
+
+    @Test fun amsHtFilamentScreenAndDryingSheetInteractCleanly() {
+        val (amsHtPrinter, amsHt) = sampleAmsHtPrinter(drying = false)
+        val (dryingPrinter, _) = sampleAmsHtPrinter(drying = true, targetTemp = 70.0)
+        val (dryingPrinterEng, _) = sampleAmsHtPrinter(drying = true, targetTemp = 85.0)
+        val (dryingPrinterCustom, _) = sampleAmsHtPrinter(drying = true, targetTemp = 60.0)
+        val (dryingPrinterNoTarget, _) = sampleAmsHtPrinter(drying = true, targetTemp = null)
+        val (dryingPrinterOverLimit, _) = sampleAmsHtPrinter(drying = true, targetTemp = 95.0)
+        var errMessage = ""
+        val mode = androidx.compose.runtime.mutableStateOf("sheet")
+
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    when (mode.value) {
+                        "sheet" -> AmsDryingSheet(amsHtPrinter, amsHt, {}) { errMessage = it }
+                        "active_sheet" -> AmsDryingSheet(dryingPrinter, amsHt, {}) { errMessage = it }
+                        "active_sheet_eng" -> AmsDryingSheet(dryingPrinterEng, amsHt, {}) { errMessage = it }
+                        "active_sheet_custom" -> AmsDryingSheet(dryingPrinterCustom, amsHt, {}) { errMessage = it }
+                        "active_sheet_no_target" -> AmsDryingSheet(dryingPrinterNoTarget, amsHt, {}) { errMessage = it }
+                        "active_sheet_over_limit" -> AmsDryingSheet(dryingPrinterOverLimit, amsHt, {}) { errMessage = it }
+                    }
+                }
+            }
+        }
+
+        // Title and supported range for AMS HT
+        compose.onNodeWithText("Filament Drying - AMS HT").assertExists()
+        compose.onNodeWithText("Supported range: 45°C – 85°C").assertExists()
+
+        // Presets: PLA (50), PETG (55), PA/PC (70), Engineering (85)
+        compose.onNodeWithText("PLA").assertExists()
+        compose.onNodeWithText("PETG").assertExists()
+        compose.onNodeWithText("PA/PC").assertExists()
+        compose.onNodeWithText("Engineering").assertExists()
+
+        // Non-HT preset ABS/ASA should NOT exist
+        compose.onNodeWithText("ABS/ASA").assertDoesNotExist()
+
+        // Default initial preset is PLA (50°C, 4h)
+        compose.onNodeWithText("50°C").assertExists()
+        compose.onNodeWithText("4h").assertExists()
+
+        // Tap PA/PC preset -> 70°C, 12h
+        compose.onNodeWithText("PA/PC").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("70°C").assertExists()
+        compose.onNodeWithText("12h").assertExists()
+
+        // Tap Engineering preset -> 85°C, 12h
+        compose.onNodeWithText("Engineering").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("85°C").assertExists()
+
+        // Stepper at 85°C limit: cannot increase past 85°C
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("85°C").assertExists()
+
+        // Decrease temperature down to 45°C limit
+        for (i in 1..9) {
+            compose.onNodeWithContentDescription("Decrease temperature").performClick()
+            compose.waitForIdle()
+        }
+        compose.onNodeWithText("45°C").assertExists()
+        compose.onNodeWithContentDescription("Decrease temperature").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("45°C").assertExists()
+
+        // Step up by 5°C increments from 45°C to 85°C (8 steps)
+        for (i in 1..8) {
+            compose.onNodeWithContentDescription("Increase temperature").performClick()
+            compose.waitForIdle()
+        }
+        compose.onNodeWithText("85°C").assertExists()
+
+        // Active drying sheet with PA/PC (70°C preset match)
+        mode.value = "active_sheet"
+        compose.waitForIdle()
+        compose.onNodeWithText("Drying in progress").assertExists()
+        compose.onNodeWithText("70°C").assertExists()
+        compose.onNodeWithText("Stop drying").assertExists()
+
+        // Active drying sheet with Engineering (85°C preset match)
+        mode.value = "active_sheet_eng"
+        compose.waitForIdle()
+        compose.onNodeWithText("Drying in progress").assertExists()
+        compose.onNodeWithText("85°C").assertExists()
+
+        // Active drying sheet with custom target temperature (no preset match)
+        mode.value = "active_sheet_custom"
+        compose.waitForIdle()
+        compose.onNodeWithText("Drying in progress").assertExists()
+        compose.onNodeWithText("60°C").assertExists()
+
+        // Active drying sheet with no target temperature telemetry (null fallback)
+        mode.value = "active_sheet_no_target"
+        compose.waitForIdle()
+        compose.onNodeWithText("Drying in progress").assertExists()
+        compose.onNodeWithText("50°C").assertExists()
+
+        // Active drying sheet with target temperature exceeding max
+        mode.value = "active_sheet_over_limit"
+        compose.waitForIdle()
+        compose.onNodeWithText("Drying in progress").assertExists()
+        compose.onNodeWithText("95°C").assertExists()
     }
 }

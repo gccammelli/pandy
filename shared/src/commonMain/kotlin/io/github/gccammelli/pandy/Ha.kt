@@ -498,7 +498,7 @@ fun Printer.setAmsSettings(amsId: Int, startup: Boolean, insertion: Boolean, rem
 
 suspend fun HaBackend.startAmsDrying(p: Printer, a: AmsInfo, temp: Int, durationHours: Int, rotateTray: Boolean) {
     if (!a.supportsDrying()) throw ApiException("${a.model.ifBlank { "This AMS" }} cannot dry filament")
-    val validTemp = temp.coerceIn(45, a.maxDryingTemp())
+    val validTemp = temp.coerceIn(45, a.maxDryingTemp)
     val validDuration = durationHours.coerceIn(1, 24)
     val data = buildJsonObject {
         put("device_id", a.haId.ifBlank { p.info.haId })
@@ -619,16 +619,21 @@ fun buildPlateLabel(value: String?) = when (value?.lowercase()) {
 /** Stable key for a model filament; presets must never be reused solely because two models have the same slot number. */
 fun filamentKey(type: String, colour: String) = "${type.trim().uppercase()}|${hexColor(colour).toString(16)}"
 
+val AmsInfo.isHt: Boolean
+    get() = model.equals("AMS HT", ignoreCase = true) || model.contains("HT", ignoreCase = true) || model.contains("N3S", ignoreCase = true)
+
+/** The hottest drying setpoint the unit takes: the AMS 2 Pro stops at 65 °C, the AMS HT goes to 85 °C. */
+val AmsInfo.maxDryingTemp: Int
+    get() = if (isHt) 85 else 65
+
 /** The absolute tray ID used by the printer protocol: standard AMS 0–103, AMS HT 128–135. */
-fun AmsInfo.isSingleSlot() = model.contains("HT", ignoreCase = true) || model.contains("N3S", ignoreCase = true) || protocolId?.let { it >= 128 } == true
+fun AmsInfo.isSingleSlot() = isHt || protocolId?.let { it >= 128 } == true
 fun AmsInfo.isAms2Pro() = !isSingleSlot() && !model.contains("Lite", ignoreCase = true) && (
     model.contains("2 Pro", ignoreCase = true) || model.contains("N3F", ignoreCase = true) || model.contains("AMS 2", ignoreCase = true) ||
     ids.containsKey("binary_sensor.drying") || ids.containsKey("sensor.remaining_drying_time") || ids.containsKey("sensor.drying_target_temp") ||
     ids.keys.any { it.contains("drying") }
 )
-fun AmsInfo.supportsDrying() = isAms2Pro() || isSingleSlot()
-/** The hottest drying setpoint the unit takes: the AMS 2 Pro stops at 65 °C, the AMS HT goes to 85 °C. */
-fun AmsInfo.maxDryingTemp() = if (isSingleSlot()) 85 else 65
+fun AmsInfo.supportsDrying() = isAms2Pro() || isHt || isSingleSlot()
 fun AmsInfo.displayName() = if (isSingleSlot()) "AMS HT" else "AMS ${'A' + index - 1}"
 fun AmsInfo.modelBadge(): String? = when {
     isAms2Pro() -> "AMS 2 Pro"

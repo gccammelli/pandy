@@ -63,6 +63,8 @@ import io.github.gccammelli.pandy.Repo
 import io.github.gccammelli.pandy.amsId
 import io.github.gccammelli.pandy.displayName
 import io.github.gccammelli.pandy.isSingleSlot
+import io.github.gccammelli.pandy.isHt
+import io.github.gccammelli.pandy.maxDryingTemp
 import io.github.gccammelli.pandy.modelBadge
 import io.github.gccammelli.pandy.startAmsDrying
 import io.github.gccammelli.pandy.stopAmsDrying
@@ -559,6 +561,13 @@ fun Empty(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector = 
 
 data class DryingPreset(val name: String, val temp: Int, val duration: Int)
 
+val HT_DRYING_PRESETS = listOf(
+    DryingPreset("PLA", 50, 4),
+    DryingPreset("PETG", 55, 6),
+    DryingPreset("PA/PC", 70, 12),
+    DryingPreset("Engineering", 85, 12),
+)
+
 val DRYING_PRESETS = listOf(
     DryingPreset("PLA", 50, 4),
     DryingPreset("PETG", 55, 6),
@@ -610,12 +619,13 @@ fun AmsDryingSheet(
     val targetTemp = p.amsDryingTargetTemp(ams)
     val currentTemp = p.amsTemp(ams)
 
+    val presets = if (ams.isHt) HT_DRYING_PRESETS else DRYING_PRESETS
     val initialPreset = if (isDrying) {
-        DRYING_PRESETS.firstOrNull { it.temp == targetTemp?.toInt() }
+        presets.firstOrNull { it.temp == targetTemp?.toInt() }
     } else {
-        DRYING_PRESETS.first()
+        presets.first()
     }
-    var temp by remember(ams.amsId(), isDrying) { mutableStateOf(if (isDrying) (targetTemp?.toInt()?.coerceIn(45, 65) ?: 50) else (initialPreset?.temp ?: 50)) }
+    var temp by remember(ams.amsId(), isDrying) { mutableStateOf(if (isDrying) (targetTemp?.toInt()?.coerceIn(45, ams.maxDryingTemp) ?: 50) else (initialPreset?.temp ?: 50)) }
     var duration by remember(ams.amsId(), isDrying) { mutableStateOf(if (isDrying && remainingHours != null && remainingHours > 0.0) remainingHours.toInt().coerceIn(1, 24) else (initialPreset?.duration ?: 4)) }
     var rotateTray by remember(ams.amsId(), isDrying) { mutableStateOf(true) }
     var selectedPreset by remember(ams.amsId(), isDrying) { mutableStateOf<String?>(initialPreset?.name) }
@@ -679,7 +689,7 @@ fun AmsDryingSheet(
                 T("Presets", 13.sp, C.Sub)
                 Gap(8.dp)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DRYING_PRESETS.forEach { preset ->
+                    presets.forEach { preset ->
                         val sel = selectedPreset == preset.name
                         Box(
                             Modifier
@@ -709,13 +719,13 @@ fun AmsDryingSheet(
                             selectedPreset = null
                         }
                         Spacer(Modifier.width(8.dp))
-                        StepButton(Icons.Default.Add, enabled = temp < 65, "Increase temperature") {
-                            temp = (temp + 5).coerceAtMost(65)
+                        StepButton(Icons.Default.Add, enabled = temp < ams.maxDryingTemp, "Increase temperature") {
+                            temp = (temp + 5).coerceAtMost(ams.maxDryingTemp)
                             selectedPreset = null
                         }
                     }
                     Gap(4.dp)
-                    T("Supported range: 45°C – 65°C", 11.sp, C.Sub)
+                    T("Supported range: 45°C – ${ams.maxDryingTemp}°C", 11.sp, C.Sub)
                 }
                 Gap(12.dp)
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(14.dp)) {

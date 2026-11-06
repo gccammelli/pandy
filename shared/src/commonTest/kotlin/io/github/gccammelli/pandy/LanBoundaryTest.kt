@@ -216,6 +216,14 @@ class LanBoundaryTest {
         val startCmdNoRotate = amsDryingCommand("101", 0, 50, 4, false)["print"]!!.jsonObject
         assertEquals("false", startCmdNoRotate.s("rotate_tray"))
 
+        val htStartCmd = amsDryingCommand("103", 128, 85, 12, false)["print"]!!.jsonObject
+        assertEquals("ams_filament_drying", htStartCmd.s("command"))
+        assertEquals("1", htStartCmd.s("mode"))
+        assertEquals("128", htStartCmd.s("ams_id"))
+        assertEquals("85", htStartCmd.s("temp"))
+        assertEquals("12", htStartCmd.s("duration"))
+        assertEquals("false", htStartCmd.s("rotate_tray"))
+
         val amsReport = """{
             "print": {
                 "ams": {
