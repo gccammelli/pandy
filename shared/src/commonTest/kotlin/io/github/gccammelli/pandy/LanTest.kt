@@ -57,6 +57,16 @@ class LanTest {
         assertEquals("future-model",modelName("future-model"))
         assertEquals("X2D", modelName("X2D"))
         assertEquals("X2S", modelName("X2S"))
+        assertEquals("H2C", modelName("Bambu Lab H2C"))
+        assertEquals("H2C", modelName("H2C"))
+        assertEquals("H2C", modelName(null, "H2C123"))
+        assertEquals("H2D Pro", modelName("Bambu Lab H2D Pro"))
+        assertEquals("H2D Pro", modelName("H2DPRO"))
+        assertEquals("H2D Pro", modelName("H2D Pro"))
+        assertEquals("H2D Pro", modelName(null, "H2DPRO123"))
+        assertEquals("A2L", modelName("Bambu Lab A2L"))
+        assertEquals("A2L", modelName("A2L"))
+        assertEquals("A2L", modelName(null, "A2L123"))
         assertEquals("Bambu printer",modelName(null,"future-serial"))
         assertEquals("X1C",modelName("Bambu X1-Carbon"))
         assertEquals("X1E",modelName("Bambu X1E"))
@@ -76,7 +86,7 @@ class LanTest {
             54 to "waiting_for_heatbed_temperature",
             6 to "paused_filament_runout",11 to "identifying_build_plate_type",14 to "cleaning_nozzle_tip",
             20 to "paused_nozzle_temperature_malfunction",22 to "filament_unloading",26 to "paused_ams_lost",
-            49 to "heating_chamber",99 to "stage_99",
+            39 to "calibrate_nozzle_offset",49 to "heating_chamber",99 to "stage_99",
         )) {
             val source=json.parseToJsonElement("""{"print":{"stg_cur":$stage,"print_error":65537,"gcode_state":"PAUSE"}}""").jsonObject
             val p=printer(source)
@@ -309,6 +319,14 @@ class LanFirmwareTest {
         assertEquals(210.0, p.rightNozzle)
         assertEquals(220.0, p.rightNozzleTarget)
         assertEquals("right", p.activeNozzle)
+        assertTrue(Printer(info.copy(model = "H2C", ids = emptyMap()), emptyMap()).isDualNozzle)
+        assertTrue(Printer(info.copy(model = "H2D Pro", ids = emptyMap()), emptyMap()).isDualNozzle)
+        assertTrue(Printer(info.copy(model = "H2DPRO", ids = emptyMap()), emptyMap()).isDualNozzle)
+        assertTrue(Printer(info.copy(model = "H2D", ids = emptyMap()), emptyMap()).isDualNozzle)
+        assertTrue(Printer(info.copy(model = "X2D", ids = emptyMap()), emptyMap()).isDualNozzle)
+        assertFalse(Printer(info.copy(model = "A2L", ids = emptyMap()), emptyMap()).isDualNozzle)
+        assertFalse(Printer(info.copy(model = "H2S", ids = emptyMap()), emptyMap()).isDualNozzle)
+        assertFalse(Printer(info.copy(model = "P2S", ids = emptyMap()), emptyMap()).isDualNozzle)
     }
 }
 

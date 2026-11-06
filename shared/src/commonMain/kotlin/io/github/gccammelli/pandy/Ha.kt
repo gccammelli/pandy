@@ -218,7 +218,8 @@ class Entity(val id: String, val state: String, val attrs: JsonObject) {
  * The integration's translation keys are the same on every install; entity ids are not (users rename them).
  */
 data class PrinterInfo(val haId: String, val serial: String, val name: String, val model: String, val firmware: String?,
-                       val ids: Map<String, String>, val ams: List<AmsInfo>, val external: List<String>, val externalDevice: String? = null)
+                       val ids: Map<String, String>, val ams: List<AmsInfo>, val external: List<String>, val externalDevice: String? = null,
+                       val externalDevices: List<String> = emptyList())
 
 /** One AMS: [trays] are the tray sensors' entity ids by slot (1–4; an AMS HT has one). */
 data class AmsInfo(val haId: String, val index: Int, val model: String, val ids: Map<String, String>, val trays: Map<Int, String>, val protocolId: Int? = null)
@@ -301,10 +302,22 @@ fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
             if (protocolId != null && protocolId >= 128) nextHtId = maxOf(nextHtId, protocolId + 1)
             AmsInfo(c.s("id")!!, i + 1, model, keyed(c.s("id")), trays, protocolId ?: if (singleSlot) nextHtId++ else null)
         }
-        val extDev = children.firstOrNull { c -> byDevice[c.s("id")].orEmpty().any { it.s("translation_key") == "external_spool" } }?.s("id")
-        val ext = children.flatMap { c -> byDevice[c.s("id")].orEmpty().filter { it.s("translation_key") == "external_spool" }.mapNotNull { it.s("entity_id") } }
+        val extChildren = children.filter { c -> byDevice[c.s("id")].orEmpty().any { it.s("translation_key") == "external_spool" } }
+            .sortedBy { c ->
+                val id = c.s("id").orEmpty()
+                val name = c.s("name").orEmpty()
+                val ident = c.a("identifiers")?.toString().orEmpty()
+                if (id.endsWith("2") || name.endsWith("2") || ident.contains("ExternalSpool2", ignoreCase = true) || id.contains("ext2", ignoreCase = true)) 1 else 0
+            }
+        val extDev = extChildren.firstOrNull()?.s("id")
+        val extDevices = extChildren.mapNotNull { it.s("id") }
+        val ext = extChildren.flatMap { c ->
+            byDevice[c.s("id")].orEmpty()
+                .filter { it.s("translation_key") == "external_spool" && it.s("entity_id")?.startsWith("binary_sensor.") != true }
+                .mapNotNull { it.s("entity_id") }
+        }.sortedBy { id -> if (id.contains("spool2", ignoreCase = true) || id.contains("spool_2", ignoreCase = true) || id.contains("external_2", ignoreCase = true) || id.contains("ext2", ignoreCase = true)) 1 else 0 }
         val serial = p.a("identifiers")!!.map { it.jsonArray }.first { (it[0] as JsonPrimitive).content == "bambu_lab" }[1].let { (it as JsonPrimitive).content }
-        PrinterInfo(p.s("id")!!, serial, p.s("name_by_user") ?: p.s("name") ?: serial, p.s("model") ?: "", p.s("sw_version"), keyed(p.s("id"), serial), ams, ext, extDev)
+        PrinterInfo(p.s("id")!!, serial, p.s("name_by_user") ?: p.s("name") ?: serial, p.s("model") ?: "", p.s("sw_version"), keyed(p.s("id"), serial), ams, ext, extDev, extDevices.ifEmpty { listOfNotNull(extDev) })
     }
 }
 
@@ -343,7 +356,7 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val speed get() = state("select.printing_speed") ?: state("sensor.speed_profile")
     val nozzle get() = get("sensor.nozzle_temp")?.celsius
     val nozzleTarget get() = get("sensor.target_nozzle_temp")?.celsius
-    val isDualNozzle: Boolean get() = info.ids.containsKey("sensor.left_nozzle_temp") || info.ids.containsKey("sensor.right_nozzle_temp") || model.contains("2D")
+    val isDualNozzle: Boolean get() = info.ids.containsKey("sensor.left_nozzle_temp") || info.ids.containsKey("sensor.right_nozzle_temp") || model.contains("2D") || model.startsWith("H2C") || model.startsWith("H2D")
     val leftNozzle: Double? get() = get("sensor.left_nozzle_temp")?.celsius ?: if (isDualNozzle && activeNozzle == "left") nozzle else null
     val leftNozzleTarget: Double? get() = get("sensor.left_target_nozzle_temp")?.celsius ?: if (isDualNozzle && activeNozzle == "left") nozzleTarget else null
     val rightNozzle: Double? get() = get("sensor.right_nozzle_temp")?.celsius ?: if (isDualNozzle && activeNozzle != "left") nozzle else null
@@ -450,8 +463,14 @@ suspend fun HaBackend.setNumber(id: String, value: Double) =
     call("number", "set_value", buildJsonObject { put("entity_id", id); put("value", value) })
 
 /** Starts the printer's machine calibration; this command is available in direct LAN mode only. */
-fun Printer.calibrate(option: Int, err: (String) -> Unit) = Repo.act(err) {
-    bambu("calibration", this@calibrate, buildJsonObject { put("option", option) })
+fun Printer.calibrate(option: Int, err: (String) -> Unit) = calibrate(option, nozzleOffset = (option and 16) != 0, err = err)
+
+fun Printer.calibrate(option: Int, nozzleOffset: Boolean, err: (String) -> Unit) = Repo.act(err) {
+    val finalOption = if (nozzleOffset) option or 16 else option
+    bambu("calibration", this@calibrate, buildJsonObject {
+        put("option", finalOption)
+        if (nozzleOffset || (finalOption and 16) != 0) put("nozzle_offset", true)
+    })
 }
 
 /** Enables one of the printer's XCam modules, when the printer reports it. */
@@ -498,7 +517,7 @@ fun Printer.setAmsSettings(amsId: Int, startup: Boolean, insertion: Boolean, rem
 
 suspend fun HaBackend.startAmsDrying(p: Printer, a: AmsInfo, temp: Int, durationHours: Int, rotateTray: Boolean) {
     if (!a.supportsDrying()) throw ApiException("${a.model.ifBlank { "This AMS" }} cannot dry filament")
-    val validTemp = temp.coerceIn(45, a.maxDryingTemp())
+    val validTemp = temp.coerceIn(45, a.maxDryingTemp)
     val validDuration = durationHours.coerceIn(1, 24)
     val data = buildJsonObject {
         put("device_id", a.haId.ifBlank { p.info.haId })
@@ -619,16 +638,21 @@ fun buildPlateLabel(value: String?) = when (value?.lowercase()) {
 /** Stable key for a model filament; presets must never be reused solely because two models have the same slot number. */
 fun filamentKey(type: String, colour: String) = "${type.trim().uppercase()}|${hexColor(colour).toString(16)}"
 
+val AmsInfo.isHt: Boolean
+    get() = model.equals("AMS HT", ignoreCase = true) || model.contains("HT", ignoreCase = true) || model.contains("N3S", ignoreCase = true)
+
+/** The hottest drying setpoint the unit takes: the AMS 2 Pro stops at 65 °C, the AMS HT goes to 85 °C. */
+val AmsInfo.maxDryingTemp: Int
+    get() = if (isHt) 85 else 65
+
 /** The absolute tray ID used by the printer protocol: standard AMS 0–103, AMS HT 128–135. */
-fun AmsInfo.isSingleSlot() = model.contains("HT", ignoreCase = true) || model.contains("N3S", ignoreCase = true) || protocolId?.let { it >= 128 } == true
+fun AmsInfo.isSingleSlot() = isHt || protocolId?.let { it >= 128 } == true
 fun AmsInfo.isAms2Pro() = !isSingleSlot() && !model.contains("Lite", ignoreCase = true) && (
     model.contains("2 Pro", ignoreCase = true) || model.contains("N3F", ignoreCase = true) || model.contains("AMS 2", ignoreCase = true) ||
     ids.containsKey("binary_sensor.drying") || ids.containsKey("sensor.remaining_drying_time") || ids.containsKey("sensor.drying_target_temp") ||
     ids.keys.any { it.contains("drying") }
 )
-fun AmsInfo.supportsDrying() = isAms2Pro() || isSingleSlot()
-/** The hottest drying setpoint the unit takes: the AMS 2 Pro stops at 65 °C, the AMS HT goes to 85 °C. */
-fun AmsInfo.maxDryingTemp() = if (isSingleSlot()) 85 else 65
+fun AmsInfo.supportsDrying() = isAms2Pro() || isHt || isSingleSlot()
 fun AmsInfo.displayName() = if (isSingleSlot()) "AMS HT" else "AMS ${'A' + index - 1}"
 fun AmsInfo.modelBadge(): String? = when {
     isAms2Pro() -> "AMS 2 Pro"
@@ -652,15 +676,15 @@ fun AmsInfo.slotForTrayId(id: Int): Int? {
 
 fun isAmsTrayId(id: Int) = id in 0..103 || id in 128..135
 
-/** The currently loaded absolute tray IDs (plus 254 for the external spool). */
+/** The currently loaded absolute tray IDs (plus 254 and 255 for external spools). */
 fun Printer.loadedTrayIds(): Set<Int> = ams.flatMap { (a, spools) ->
     spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) } }
-}.toSet() + external.filter { it.known }.map { 254 }
+}.toSet() + external.mapIndexedNotNull { i, s -> if (s.known) (if (i == 0) 254 else 255) else null }
 
-/** The loaded spools with their absolute tray IDs (254 for the external spool), in AMS order. */
+/** The loaded spools with their absolute tray IDs (254 and 255 for external spools), in AMS order. */
 fun Printer.loadedSpools(): List<Pair<Int, Spool>> =
     ams.flatMap { (a, spools) -> spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) to it } } } +
-        external.filter { it.known }.map { 254 to it }
+        external.mapIndexedNotNull { i, s -> if (s.known) (if (i == 0) 254 else 255) to s else null }
 
 /** A colour as "#RRGGBB". */
 fun colorHex(c: Long) = "#" + (c and 0xFFFFFF).toString(16).padStart(6, '0').uppercase()
@@ -668,7 +692,7 @@ fun colorHex(c: Long) = "#" + (c and 0xFFFFFF).toString(16).padStart(6, '0').upp
 /** For each filament of a print, the loaded tray that matches best: same type and nearest colour; null if none fits. */
 fun autoMapping(p: Printer, filaments: List<Map<String, String>>): List<Int>? {
     val trays = p.ams.flatMap { (a, spools) -> spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) to it } } } +
-        p.external.filter { it.known }.map { 254 to it }
+        p.external.mapIndexedNotNull { i, s -> if (s.known) (if (i == 0) 254 else 255) to s else null }
     if (trays.isEmpty() || filaments.isEmpty()) return null
     val mapped = filaments.map { f ->
         val want = hexColor(f["color"])

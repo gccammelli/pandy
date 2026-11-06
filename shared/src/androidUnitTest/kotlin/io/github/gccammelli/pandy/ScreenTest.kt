@@ -333,6 +333,7 @@ class ScreenTest {
         })
         show("Calibration") { CalibrationScreen(p) }
         compose.onNodeWithText("Micro lidar calibration").assertDoesNotExist()
+        compose.onNodeWithText("Nozzle Offset Calibration").assertDoesNotExist()
         compose.onAllNodes(isToggleable()).onFirst().performClick()
         compose.onAllNodes(isToggleable())[1].performClick()
         compose.onNodeWithText("Start calibration").assertIsNotEnabled()
@@ -1614,6 +1615,7 @@ class ScreenTest {
     @Test fun idleCalibrationRequiresConfirmationAndSendsChosenChecks() {
         val idle=changed("sensor.print_status" to "idle")
         show("Calibration") { CalibrationScreen(idle) }
+        compose.onNodeWithText("Nozzle Offset Calibration").assertDoesNotExist()
         compose.onAllNodes(isToggleable()).onLast().performClick()
         compose.onNodeWithText("Start calibration").performClick()
         compose.onNodeWithText("Start calibration?").assertExists()
@@ -1624,6 +1626,28 @@ class ScreenTest {
         compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("calibration") } }
         val body=json.parseToJsonElement(commands.last().second).jsonObject
         assertEquals("15",body.s("option"))
+    }
+
+    @Test fun dualNozzleCalibrationShowsNozzleOffsetAndSendsOption() {
+        val dual = Printer(printer.info.copy(model = "X2D"), snapshot.toMutableMap().apply {
+            val id = printer.info.ids.getValue("sensor.print_status")
+            put(id, Entity(id, "idle", JsonObject(emptyMap())))
+        })
+        show("Calibration") { CalibrationScreen(dual) }
+        compose.onNodeWithText("Nozzle Offset Calibration").assertExists()
+        compose.onNodeWithText("Calibrates the offset between the two nozzles").assertExists()
+
+        // Lidar (1) + Bed (2) + Vibration (4) + Motor (0) + NozzleOffset (16) = 23
+        compose.onNodeWithText("Start calibration").performClick()
+        compose.onNodeWithText("Start calibration?").assertExists()
+        compose.onNodeWithText("Start").performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(100)
+        compose.runOnIdle { }
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("calibration") } }
+        val body = json.parseToJsonElement(commands.last().second).jsonObject
+        assertEquals("23", body.s("option"))
+        assertEquals("true", body.s("nozzle_offset"))
     }
 
     @Test fun reportedPrintOptionsCanBeChanged() {
@@ -2731,6 +2755,56 @@ class ScreenTest {
         compose.onAllNodesWithText("R").onFirst().assertExists()
     }
 
+    private fun dualExternalSpoolPrinter(): Printer {
+        val ext1 = entity("Generic PLA", mapOf("name" to "Generic PLA", "type" to "PLA", "color" to "#F98C36FF", "empty" to "false", "active" to "true"))
+        val ext2 = entity("Generic PETG", mapOf("name" to "Generic PETG", "type" to "PETG", "color" to "#00AE42FF", "empty" to "false", "active" to "false"))
+        val info = printer.info.copy(
+            model = "X2D",
+            external = listOf("sensor.spool_1", "sensor.spool_2")
+        )
+        return variant(info = info, set = arrayOf(
+            "sensor.spool_1" to ext1,
+            "sensor.spool_2" to ext2
+        ))
+    }
+
+    @Test fun dualExternalSpoolsRenderCleanlyOnFilamentScreen() {
+        val p = dualExternalSpoolPrinter()
+        assertEquals(2, p.external.size)
+
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    FilamentScreen(p)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("External Spools").assertExists()
+        compose.onNodeWithText("External Spool 1 (Left / Main)").assertExists()
+        compose.onNodeWithText("External Spool 2 (Right / Aux)").assertExists()
+        compose.onNodeWithText("Ext 1").assertExists()
+        compose.onNodeWithText("Ext 2").assertExists()
+        compose.onNodeWithText("Generic PLA").assertExists()
+        compose.onNodeWithText("Generic PETG").assertExists()
+    }
+
+    @Test fun dualExternalSpoolsRenderCleanlyOnDevicesTab() {
+        val p = dualExternalSpoolPrinter()
+        assertEquals(2, p.external.size)
+
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    DevicesTab(st.copy(printers = listOf(p)), p)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onAllNodesWithText("External Spool 1 (Left / Main)").onFirst().assertExists()
+        compose.onAllNodesWithText("External Spool 2 (Right / Aux)").onFirst().assertExists()
+    }
+
     @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {
         show("Direct LAN connection") { AddDirectScreen() }
         compose.onNodeWithText("Connect",substring=false).assertIsNotEnabled()
@@ -3677,6 +3751,30 @@ class ScreenTest {
         return p to ams2Pro
     }
 
+    private fun sampleAmsHtPrinter(drying: Boolean = false): Pair<Printer, AmsInfo> {
+        val baseAms = printer.info.ams.first()
+        val amsHt = baseAms.copy(
+            model = "AMS HT",
+            protocolId = 128,
+            ids = baseAms.ids + mapOf(
+                "binary_sensor.drying" to "binary_sensor.drying_active",
+                "sensor.remaining_drying_time" to "sensor.drying_remaining",
+                "sensor.drying_target_temp" to "sensor.drying_target",
+                "sensor.ams_temp" to "sensor.ams_temp_val"
+            )
+        )
+        val p = variant(
+            info = printer.info.copy(ams = listOf(amsHt)),
+            set = arrayOf(
+                "binary_sensor.drying_active" to entity(if (drying) "on" else "off"),
+                "sensor.drying_remaining" to entity(if (drying) "4.2" else "0.0"),
+                "sensor.drying_target" to entity(if (drying) "70.0" else "0.0"),
+                "sensor.ams_temp_val" to entity("42.0")
+            )
+        )
+        return p to amsHt
+    }
+
     @Test fun dryingStatusHandlesUnavailableAndMissingTelemetry() {
         val (sample, ams) = sampleAms2ProPrinter()
         fun withStates(vararg states: Pair<String, String>) = Printer(sample.info, states.associate { (id, value) -> id to entity(value) })
@@ -3797,6 +3895,7 @@ class ScreenTest {
         compose.waitForIdle()
 
         compose.onNodeWithText("Filament Drying - AMS A").assertExists()
+        compose.onNodeWithText("Supported range: 45°C – 65°C").assertExists()
         compose.onNodeWithText("Rotate spool when drying").assertExists()
         compose.onNodeWithText("Unload filament from feeder and secure the tip into the spool rim before rotating.").assertExists()
         compose.onNodeWithText("Start drying").assertExists()
@@ -3917,5 +4016,80 @@ class ScreenTest {
 
         ams2ProPrinter.stopAmsDrying(ams2Pro) { errMessage = it }
         compose.waitUntil(5000) { compose.waitForIdle(); commands.count { it.first.endsWith("stop_filament_drying") } > stopCount }
+    }
+
+    @Test fun amsHtFilamentScreenAndDryingSheetInteractCleanly() {
+        val (amsHtPrinter, amsHt) = sampleAmsHtPrinter(drying = false)
+        val (dryingPrinter, _) = sampleAmsHtPrinter(drying = true)
+        var errMessage = ""
+        val mode = androidx.compose.runtime.mutableStateOf("sheet")
+
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    when (mode.value) {
+                        "sheet" -> AmsDryingSheet(amsHtPrinter, amsHt, {}) { errMessage = it }
+                        "active_sheet" -> AmsDryingSheet(dryingPrinter, amsHt, {}) { errMessage = it }
+                    }
+                }
+            }
+        }
+
+        // Title and supported range for AMS HT
+        compose.onNodeWithText("Filament Drying - AMS HT").assertExists()
+        compose.onNodeWithText("Supported range: 45°C – 85°C").assertExists()
+
+        // Presets: PLA (50), PETG (55), PA/PC (70), Engineering (85)
+        compose.onNodeWithText("PLA").assertExists()
+        compose.onNodeWithText("PETG").assertExists()
+        compose.onNodeWithText("PA/PC").assertExists()
+        compose.onNodeWithText("Engineering").assertExists()
+
+        // Non-HT preset ABS/ASA should NOT exist
+        compose.onNodeWithText("ABS/ASA").assertDoesNotExist()
+
+        // Default initial preset is PLA (50°C, 4h)
+        compose.onNodeWithText("50°C").assertExists()
+        compose.onNodeWithText("4h").assertExists()
+
+        // Tap PA/PC preset -> 70°C, 12h
+        compose.onNodeWithText("PA/PC").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("70°C").assertExists()
+        compose.onNodeWithText("12h").assertExists()
+
+        // Tap Engineering preset -> 85°C, 12h
+        compose.onNodeWithText("Engineering").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("85°C").assertExists()
+
+        // Stepper at 85°C limit: cannot increase past 85°C
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("85°C").assertExists()
+
+        // Decrease temperature down to 45°C limit
+        for (i in 1..9) {
+            compose.onNodeWithContentDescription("Decrease temperature").performClick()
+            compose.waitForIdle()
+        }
+        compose.onNodeWithText("45°C").assertExists()
+        compose.onNodeWithContentDescription("Decrease temperature").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("45°C").assertExists()
+
+        // Step up by 5°C increments from 45°C to 85°C (8 steps)
+        for (i in 1..8) {
+            compose.onNodeWithContentDescription("Increase temperature").performClick()
+            compose.waitForIdle()
+        }
+        compose.onNodeWithText("85°C").assertExists()
+
+        // Active drying sheet
+        mode.value = "active_sheet"
+        compose.waitForIdle()
+        compose.onNodeWithText("Drying in progress").assertExists()
+        compose.onNodeWithText("70°C").assertExists()
+        compose.onNodeWithText("Stop drying").assertExists()
     }
 }

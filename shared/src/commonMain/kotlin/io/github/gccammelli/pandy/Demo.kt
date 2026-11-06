@@ -24,13 +24,15 @@ import kotlin.time.Clock
  * speed, pause, stop, skip), so every screen can be tried without a printer. Also what Pandy is developed against.
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-class FakeHomeAssistant : HaBackend, PrinterFiles {
+class FakeHomeAssistant(val model: String = "X1C", val isDualNozzle: Boolean = false) : HaBackend, PrinterFiles {
     override val base = "demo"
 
     private val dev = "demo_printer"
     private val amsDev = "demo_ams"
     private val extDev = "demo_ext"
+    private val extDev2 = "demo_ext2"
     private val prefix = "x1c_demo"
+    private val isDual = isDualNozzle || model.contains("2D") || model.contains("Dual", ignoreCase = true)
 
     /** (device, domain, translation key, unique id suffix) → initial state and attributes. */
     private data class Row(val device: String, val domain: String, val key: String, val uid: String = key)
@@ -122,7 +124,16 @@ class FakeHomeAssistant : HaBackend, PrinterFiles {
         add("binary_sensor", "drying", "off", device = amsDev, uid = "AMS_1_drying")
         add("sensor", "remaining_drying_time", 0.0, device = amsDev, uid = "AMS_1_remaining_drying_time")
         add("sensor", "drying_target_temp", 50.0, device = amsDev, uid = "AMS_1_drying_target_temp")
+        if (isDual) {
+            add("sensor", "left_nozzle_temp", 219.6); add("sensor", "left_target_nozzle_temp", 220)
+            add("sensor", "right_nozzle_temp", 219.6); add("sensor", "right_target_nozzle_temp", 220)
+            add("number", "target_left_nozzle_temperature", 220, buildJsonObject { put("min", 0); put("max", 320) })
+            add("number", "target_right_nozzle_temperature", 220, buildJsonObject { put("min", 0); put("max", 320) })
+        }
         add("sensor", "external_spool", "Generic PLA", tray("Generic PLA", "PLA", "#F98C36FF", -1), extDev, "ExternalSpool_external_spool")
+        if (isDual) {
+            add("sensor", "external_spool", "Generic PETG", tray("Generic PETG", "PETG", "#00AE42FF", -1), extDev2, "ExternalSpool2_external_spool")
+        }
         layerFromProgress()
     }
 
@@ -153,16 +164,19 @@ class FakeHomeAssistant : HaBackend, PrinterFiles {
             put("via_device_id", via); put("name_by_user", JsonNull)
             putJsonArray("identifiers") { add(buildJsonArray { add(JsonPrimitive("bambu_lab")); add(JsonPrimitive(ident)) }) }
         })
-        d(dev, "X1C_00M000000000000", "X1C", "00M000000000000", null)
-        d(amsDev, "X1C_00M000000000000_AMS_1", "AMS", "00M000000000000_AMS_1", dev)
-        d(extDev, "X1C_00M000000000000_ExternalSpool", "External Spool", "00M000000000000_ExternalSpool", dev)
+        d(dev, "${model}_00M000000000000", model, "00M000000000000", null)
+        d(amsDev, "${model}_00M000000000000_AMS_1", "AMS", "00M000000000000_AMS_1", dev)
+        d(extDev, "${model}_00M000000000000_ExternalSpool", "External Spool", "00M000000000000_ExternalSpool", dev)
+        if (isDual) {
+            d(extDev2, "${model}_00M000000000000_ExternalSpool2", "External Spool", "00M000000000000_ExternalSpool2", dev)
+        }
     }
 
     private fun entityRegistry() = buildJsonArray {
         rows.forEach { r ->
             add(buildJsonObject {
                 put("entity_id", id(r)); put("device_id", r.device); put("platform", "bambu_lab")
-                put("translation_key", r.key); put("unique_id", "X1C_00M000000000000_${r.uid}"); put("disabled_by", JsonNull)
+                put("translation_key", r.key); put("unique_id", "${model}_00M000000000000_${r.uid}"); put("disabled_by", JsonNull)
             })
         }
     }
@@ -288,7 +302,11 @@ class FakeHomeAssistant : HaBackend, PrinterFiles {
                     "nozzle_temp_min" to JsonPrimitive(preset.min.toString()), "nozzle_temp_max" to JsonPrimitive(preset.max.toString())))
                 setById(target, preset.name, attrs)
             }
-            "bambu_lab/calibration" -> set("sensor", "stage", "calibrating")
+            "bambu_lab/calibration" -> {
+                val opt = d.s("option")?.toIntOrNull() ?: 0
+                val isNozzleOffset = (opt and 16) != 0 || d.s("nozzle_offset") == "true" || d.s("nozzleOffset") == "true"
+                set("sensor", "stage", if (isNozzleOffset && (opt == 16 || opt == 0)) "calibrate_nozzle_offset" else "calibrating")
+            }
             "bambu_lab/xcam_control_set" -> d.s("module_name")?.let { module ->
                 rows.firstOrNull { it.device == dev && it.key == module }?.let { setById(id(it), if (d.s("enable") == "true") "on" else "off") }
             }

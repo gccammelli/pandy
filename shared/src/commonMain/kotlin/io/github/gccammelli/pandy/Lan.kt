@@ -59,9 +59,16 @@ expect suspend fun discoverPrinters(millis: Long): List<FoundPrinter>
 
 /** Bambu's model codes (SSDP and serial prefixes) → the names Handy shows. */
 fun modelName(code: String?, serial: String = ""): String = when {
-    code == null || code.isBlank() -> when (serial.take(3)) {
-        "00M" -> "X1C"; "00W" -> "X1"; "03W" -> "X1E"; "01S" -> "P1P"; "01P" -> "P1S"; "22E" -> "P2S"
-        "039" -> "A1"; "030" -> "A1 mini"; "094" -> "H2D"; "239" -> "H2S"; "20P" -> "X2D"; else -> "Bambu printer"
+    code == null || code.isBlank() -> when {
+        serial.startsWith("H2DPRO", ignoreCase = true) || serial.startsWith("H2D Pro", ignoreCase = true) || serial.startsWith("MOCK-H2DPRO", ignoreCase = true) -> "H2D Pro"
+        serial.startsWith("MOCK-H2C", ignoreCase = true) -> "H2C"
+        serial.startsWith("MOCK-A2L", ignoreCase = true) -> "A2L"
+        else -> when (serial.take(3).uppercase()) {
+            "00M" -> "X1C"; "00W" -> "X1"; "03W" -> "X1E"; "01S" -> "P1P"; "01P" -> "P1S"; "22E" -> "P2S"
+            "039" -> "A1"; "030" -> "A1 mini"; "094" -> "H2D"; "239" -> "H2S"; "20P" -> "X2D"
+            "H2C" -> "H2C"; "A2L" -> "A2L"
+            else -> "Bambu printer"
+        }
     }
     code.contains("X1-Carbon", true) || code == "BL-P001" -> "X1C"
     code.contains("X1E", true) || code == "C13" -> "X1E"
@@ -74,6 +81,9 @@ fun modelName(code: String?, serial: String = ""): String = when {
     code == "O1D" -> "H2D"
     code == "O1S" -> "H2S"
     code.equals("N6", true) || code.equals("X2D", true) -> "X2D"
+    code.equals("H2C", true) || code.equals("Bambu Lab H2C", true) -> "H2C"
+    code.equals("H2DPRO", true) || code.equals("H2D Pro", true) || code.equals("Bambu Lab H2D Pro", true) || code.equals("Bambu Lab H2DPRO", true) -> "H2D Pro"
+    code.equals("A2L", true) || code.equals("Bambu Lab A2L", true) -> "A2L"
     else -> code
 }
 
@@ -130,6 +140,7 @@ fun stageName(n: Int?): String = when (n) {
     19 -> "calibrating_extrusion_flow"; 20 -> "paused_nozzle_temperature_malfunction"; 21 -> "paused_heat_bed_temperature_malfunction"
     22 -> "filament_unloading"; 23 -> "paused_skipped_step"; 24 -> "filament_loading"; 25 -> "calibrating_motor_noise"
     26 -> "paused_ams_lost"; 29 -> "cooling_chamber"; 30 -> "paused_user_gcode"; 34 -> "paused_first_layer_error"; 35 -> "paused_nozzle_clog"
+    39 -> "calibrate_nozzle_offset"
     49 -> "heating_chamber"; 54 -> "waiting_for_heatbed_temperature"
     else -> "stage_$n"
 }
@@ -241,7 +252,7 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
         blob?.let { add("switch", "nozzle_blob_detect", if (it) "on" else "off") }
     }
     p.hexBit("cfg", 19)?.let { add("switch", "print_cache", if (it) "on" else "off") }
-    if (c.model !in listOf("A1", "A1 mini", "P1P")) {
+    if (c.model !in listOf("A1", "A1 mini", "P1P", "A2L")) {
         (p.flag("door_open_check") ?: (p.str("cfg")?.toLongOrNull(16)?.let { ((it shr 20) and 3L) != 0L }) ?: p.bit("home_flag", 26))?.let { add("switch", "door_open_check", if (it) "on" else "off") }
         // Only home_flag bit 23 follows the door: on a real X1C `stat` bit 23 stays set whether the door is open or closed.
         p.bit("home_flag", 23)?.let { add("binary_sensor", "door_open", if (it) "on" else "off") }
@@ -362,10 +373,23 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
             add("sensor", "tray", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayId.toString() == trayNow, ti + 1), dev, "AMS_${amsIndex + 1}_tray_${ti + 1}", deviceModel, htId)
         }
     }
-    p.o("vt_tray")?.let { t ->
-        val type = t.str("tray_type").orEmpty()
-        val name = t.str("tray_sub_brands")?.takeIf { it.isNotBlank() } ?: type
-        add("sensor", "external_spool", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayNow == "254", 0), "ext", "ExternalSpool_external_spool")
+    val virSlots = (p["vir_slot"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+    if (virSlots.isNotEmpty()) {
+        virSlots.sortedBy { it.str("id")?.toIntOrNull() ?: it.int("id") ?: 0 }.forEach { t ->
+            val id = t.str("id")?.toIntOrNull() ?: t.int("id") ?: 254
+            val type = t.str("tray_type").orEmpty()
+            val name = t.str("tray_sub_brands")?.takeIf { it.isNotBlank() } ?: type
+            val isExt2 = id == 255
+            val dev = if (isExt2) "ext2" else "ext"
+            val uid = if (isExt2) "ExternalSpool2_external_spool" else "ExternalSpool_external_spool"
+            add("sensor", "external_spool", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayNow == id.toString(), 0), dev, uid)
+        }
+    } else {
+        p.o("vt_tray")?.let { t ->
+            val type = t.str("tray_type").orEmpty()
+            val name = t.str("tray_sub_brands")?.takeIf { it.isNotBlank() } ?: type
+            add("sensor", "external_spool", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayNow == "254", 0), "ext", "ExternalSpool_external_spool")
+        }
     }
     return out
 }
@@ -647,6 +671,7 @@ class DirectPrinter(
                 d(amsDevice, rows.firstOrNull { it.device == amsDevice && it.deviceModel.isNotBlank() }?.deviceModel ?: "AMS", "${config.serial}_$amsDevice", "printer")
             }
             if (rows.any { it.device == "ext" }) d("ext", "External Spool", "${config.serial}_ExternalSpool", "printer")
+            if (rows.any { it.device == "ext2" }) d("ext2", "External Spool", "${config.serial}_ExternalSpool2", "printer")
         }
         val registry = buildJsonArray {
             rows.forEach { r ->
@@ -809,7 +834,7 @@ class DirectPrinter(
             })
             "bambu_lab/load_filament" -> {
                 val (ams, slot) = trayAddress(target)
-                val global = if (ams == 254 || ams >= 128) ams else ams * 4 + slot
+                val global = if (ams == 254 || ams == 255 || ams >= 128) ams else ams * 4 + slot
                 publish(printCmd("ams_change_filament") {
                     JsonObject(this + mapOf("ams_id" to JsonPrimitive(ams), "slot_id" to JsonPrimitive(slot), "target" to JsonPrimitive(global),
                         "curr_temp" to JsonPrimitive(215), "tar_temp" to JsonPrimitive(215)))
@@ -818,8 +843,8 @@ class DirectPrinter(
             "bambu_lab/set_filament" -> {
                 val preset = FILAMENT_PRESETS.firstOrNull { it.id == d.s("filament_id") } ?: throw ApiException("Unknown filament")
                 val (ams, slot) = trayAddress(target)
-                val external = ams == 254
-                publish(amsFilamentSettingCommand(nextSeq(), if (external) 255 else ams, if (external) 0 else slot, if (external) 254 else slot, preset, d.s("color").orEmpty()))
+                val external = ams == 254 || ams == 255
+                publish(amsFilamentSettingCommand(nextSeq(), if (external) 255 else ams, if (external) 0 else slot, if (external) ams else slot, preset, d.s("color").orEmpty()))
             }
             "bambu_lab/print_project_file" -> {
                 val file = d.s("filepath") ?: throw ApiException("No file")
@@ -842,7 +867,11 @@ class DirectPrinter(
                     JsonObject(this + options)
                 })
             }
-            "bambu_lab/calibration" -> publish(calibrationCommand(nextSeq(), d.s("option")?.toIntOrNull() ?: 0))
+            "bambu_lab/calibration" -> {
+                var opt = d.s("option")?.toIntOrNull() ?: 0
+                if (d.s("nozzle_offset") == "true" || d.s("nozzleOffset") == "true") opt = opt or 16
+                publish(calibrationCommand(nextSeq(), opt))
+            }
             "bambu_lab/xcam_control_set" -> publish(xcamCommand(nextSeq(), d.s("module_name").orEmpty(), d.s("enable") == "true", d.s("print_halt") == "true"))
             "bambu_lab/print_option" -> {
                 val option = listOf("auto_recovery", "auto_switch_filament", "filament_tangle_detect", "nozzle_blob_detect", "air_print_detect", "sound_enable", "prompt_sound")
@@ -882,6 +911,7 @@ class DirectPrinter(
     private fun trayAddress(entityId: String?): Pair<Int, Int> {
         val r = rowOf(entityId) ?: throw ApiException("Unknown tray")
         if (r.device == "ext") return 254 to 0
+        if (r.device == "ext2") return 255 to 0
         val (_, t) = Regex("""AMS_(\d+)_tray_(\d+)""").find(r.uid)!!.destructured
         return r.trayAmsId!! to t.toInt() - 1
     }

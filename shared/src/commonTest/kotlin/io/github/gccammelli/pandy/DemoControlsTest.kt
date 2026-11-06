@@ -96,6 +96,10 @@ class DemoControlsTest {
         assertEquals("220", ha.state("sensor", "target_nozzle_temp").s("state"))
         ha.command("bambu_lab/calibration")
         assertEquals("calibrating", ha.state("sensor", "stage").s("state"))
+        ha.command("bambu_lab/calibration", "option" to "16")
+        assertEquals("calibrate_nozzle_offset", ha.state("sensor", "stage").s("state"))
+        ha.command("bambu_lab/calibration", "nozzle_offset" to "true")
+        assertEquals("calibrate_nozzle_offset", ha.state("sensor", "stage").s("state"))
     }
 
     @Test fun optionsAndAmsSettingsAreSessionLocal() = runTest {
@@ -202,5 +206,22 @@ class DemoControlsTest {
         assertEquals("left", json.parseToJsonElement(ha.get("/api/states/sensor.x1c_demo_active_nozzle")).jsonObject.s("state"))
         ha.command("bambu_lab/select_extruder", "extruder_index" to "0")
         assertEquals("right", json.parseToJsonElement(ha.get("/api/states/sensor.x1c_demo_active_nozzle")).jsonObject.s("state"))
+    }
+
+    @Test fun demoDualNozzleSimulatesExternalSpool2AndAllowsFilamentSetting() = runTest {
+        val ha = FakeHomeAssistant(model = "X2D")
+        val state1 = json.parseToJsonElement(ha.get("/api/states/sensor.x1c_demo_ExternalSpool_external_spool")).jsonObject
+        val state2 = json.parseToJsonElement(ha.get("/api/states/sensor.x1c_demo_ExternalSpool2_external_spool")).jsonObject
+        assertEquals("Generic PLA", state1.s("state"))
+        assertEquals("Generic PETG", state2.s("state"))
+
+        ha.command("bambu_lab/set_filament",
+            "entity_id" to "sensor.x1c_demo_ExternalSpool2_external_spool",
+            "filament_id" to "GFL99",
+            "color" to "#123456"
+        )
+        val updated2 = json.parseToJsonElement(ha.get("/api/states/sensor.x1c_demo_ExternalSpool2_external_spool")).jsonObject
+        assertEquals("Generic PLA", updated2.s("state"))
+        assertEquals("#123456FF", updated2.o("attributes")!!.s("color"))
     }
 }

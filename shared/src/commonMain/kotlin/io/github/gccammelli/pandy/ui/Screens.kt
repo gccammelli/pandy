@@ -63,6 +63,8 @@ import io.github.gccammelli.pandy.Repo
 import io.github.gccammelli.pandy.amsId
 import io.github.gccammelli.pandy.displayName
 import io.github.gccammelli.pandy.isSingleSlot
+import io.github.gccammelli.pandy.isHt
+import io.github.gccammelli.pandy.maxDryingTemp
 import io.github.gccammelli.pandy.modelBadge
 import io.github.gccammelli.pandy.startAmsDrying
 import io.github.gccammelli.pandy.stopAmsDrying
@@ -249,13 +251,19 @@ fun FilamentScreen(p: Printer) {
                 Gap(12.dp)
             }
             if (p.external.isNotEmpty()) Card {
-                T("External Spool", 16.sp, weight = FontWeight.Bold)
+                T(if (p.external.size > 1) "External Spools" else "External Spool", 16.sp, weight = FontWeight.Bold)
                 Gap(12.dp)
-                p.external.forEach { s ->
+                p.external.forEachIndexed { i, s ->
+                    if (i > 0) Gap(10.dp)
                     Row(Modifier.fillMaxWidth().clickable { open = s }, verticalAlignment = Alignment.CenterVertically) {
-                        SlotTile(s, "Ext", Modifier.width(64.dp))
+                        val badge = if (p.external.size > 1) "Ext ${i + 1}" else "Ext"
+                        SlotTile(s, badge, Modifier.width(64.dp))
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
+                            if (p.external.size > 1) {
+                                val side = if (i == 0) "Left / Main" else "Right / Aux"
+                                T("External Spool ${i + 1} ($side)", 12.sp, C.Sub)
+                            }
                             T(if (s.known) s.name else "Not set", 15.sp)
                             T(if (s.active) "In use" else s.type, 12.sp, if (s.active) C.Accent else C.Sub)
                         }
@@ -344,7 +352,7 @@ fun PrinterSettingsScreen(p: Printer) {
     )
 }
 
-/** Starts the printer's machine calibration with the four documented option bits. */
+/** Starts the printer's machine calibration with the documented option bits. */
 @Composable
 fun CalibrationScreen(p: Printer) {
     val err = errorToast()
@@ -353,8 +361,9 @@ fun CalibrationScreen(p: Printer) {
     var bed by remember { mutableStateOf(true) }
     var vibration by remember { mutableStateOf(true) }
     var motor by remember { mutableStateOf(false) }
+    var nozzleOffset by remember { mutableStateOf(p.isDualNozzle) }
     val canSend = (Repo.direct || Repo.demo) && p.online
-    val option = (if (lidar) 1 else 0) or (if (bed) 2 else 0) or (if (vibration) 4 else 0) or (if (motor) 8 else 0)
+    val option = (if (lidar) 1 else 0) or (if (bed) 2 else 0) or (if (vibration) 4 else 0) or (if (motor) 8 else 0) or (if (p.isDualNozzle && nozzleOffset) 16 else 0)
     Page("Calibration", { Nav.back() }) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
             T("Choose the checks to run on the printer. Calibration can move the toolhead and heat the bed.", 14.sp, C.Sub, lh = 19.sp, modifier = Modifier.padding(horizontal = 6.dp))
@@ -364,6 +373,7 @@ fun CalibrationScreen(p: Printer) {
                 ToggleRow("Bed leveling", bed, enabled = canSend && !p.printing) { bed = it }
                 ToggleRow("Vibration compensation", vibration, enabled = canSend && !p.printing) { vibration = it }
                 ToggleRow("Motor noise cancellation", motor, enabled = canSend && !p.printing) { motor = it }
+                if (p.isDualNozzle) ToggleRow("Nozzle Offset Calibration", nozzleOffset, enabled = canSend && !p.printing, subtitle = "Calibrates the offset between the two nozzles") { nozzleOffset = it }
             }
             Gap(16.dp)
             if (!Repo.direct && !Repo.demo) T("Home Assistant does not expose this printer command. Connect directly to use it.", 13.sp, C.Sub, lh = 18.sp, modifier = Modifier.padding(horizontal = 6.dp))
@@ -376,7 +386,7 @@ fun CalibrationScreen(p: Printer) {
         onDismissRequest = { confirm = false },
         title = { T("Start calibration?", weight = FontWeight.Medium) },
         text = { T("The printer may move the toolhead and heat the bed. Make sure it is clear before continuing.", 14.sp, C.Sub) },
-        confirmButton = { TextButton(onClick = { confirm = false; p.calibrate(option, err) }) { T("Start", color = C.Accent) } },
+        confirmButton = { TextButton(onClick = { confirm = false; p.calibrate(option, nozzleOffset = p.isDualNozzle && nozzleOffset, err = err) }) { T("Start", color = C.Accent) } },
         dismissButton = { TextButton(onClick = { confirm = false }) { T("Cancel", color = C.Text) } },
     )
 }
@@ -559,6 +569,13 @@ fun Empty(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector = 
 
 data class DryingPreset(val name: String, val temp: Int, val duration: Int)
 
+val HT_DRYING_PRESETS = listOf(
+    DryingPreset("PLA", 50, 4),
+    DryingPreset("PETG", 55, 6),
+    DryingPreset("PA/PC", 70, 12),
+    DryingPreset("Engineering", 85, 12),
+)
+
 val DRYING_PRESETS = listOf(
     DryingPreset("PLA", 50, 4),
     DryingPreset("PETG", 55, 6),
@@ -610,12 +627,13 @@ fun AmsDryingSheet(
     val targetTemp = p.amsDryingTargetTemp(ams)
     val currentTemp = p.amsTemp(ams)
 
+    val presets = if (ams.isHt) HT_DRYING_PRESETS else DRYING_PRESETS
     val initialPreset = if (isDrying) {
-        DRYING_PRESETS.firstOrNull { it.temp == targetTemp?.toInt() }
+        presets.firstOrNull { it.temp == targetTemp?.toInt() }
     } else {
-        DRYING_PRESETS.first()
+        presets.first()
     }
-    var temp by remember(ams.amsId(), isDrying) { mutableStateOf(if (isDrying) (targetTemp?.toInt()?.coerceIn(45, 65) ?: 50) else (initialPreset?.temp ?: 50)) }
+    var temp by remember(ams.amsId(), isDrying) { mutableStateOf(if (isDrying) (targetTemp?.toInt()?.coerceIn(45, ams.maxDryingTemp) ?: 50) else (initialPreset?.temp ?: 50)) }
     var duration by remember(ams.amsId(), isDrying) { mutableStateOf(if (isDrying && remainingHours != null && remainingHours > 0.0) remainingHours.toInt().coerceIn(1, 24) else (initialPreset?.duration ?: 4)) }
     var rotateTray by remember(ams.amsId(), isDrying) { mutableStateOf(true) }
     var selectedPreset by remember(ams.amsId(), isDrying) { mutableStateOf<String?>(initialPreset?.name) }
@@ -679,7 +697,7 @@ fun AmsDryingSheet(
                 T("Presets", 13.sp, C.Sub)
                 Gap(8.dp)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DRYING_PRESETS.forEach { preset ->
+                    presets.forEach { preset ->
                         val sel = selectedPreset == preset.name
                         Box(
                             Modifier
@@ -709,13 +727,13 @@ fun AmsDryingSheet(
                             selectedPreset = null
                         }
                         Spacer(Modifier.width(8.dp))
-                        StepButton(Icons.Default.Add, enabled = temp < 65, "Increase temperature") {
-                            temp = (temp + 5).coerceAtMost(65)
+                        StepButton(Icons.Default.Add, enabled = temp < ams.maxDryingTemp, "Increase temperature") {
+                            temp = (temp + 5).coerceAtMost(ams.maxDryingTemp)
                             selectedPreset = null
                         }
                     }
                     Gap(4.dp)
-                    T("Supported range: 45°C – 65°C", 11.sp, C.Sub)
+                    T("Supported range: 45°C – ${ams.maxDryingTemp}°C", 11.sp, C.Sub)
                 }
                 Gap(12.dp)
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(14.dp)) {

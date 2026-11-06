@@ -64,6 +64,22 @@ class PrintersFromTest {
         assertEquals("S", bare.name); assertTrue(bare.ids.isEmpty())
     }
 
+    @Test fun dualExternalSpoolsAreDiscoveredInOrder() {
+        val dualDevices = array("""[
+            {"id":"p1","name":"Bambu X2D","model":"X2D","identifiers":[["bambu_lab","SERIAL_X2D"]]},
+            {"id":"ext2","via_device_id":"p1","name":"X2D_SERIAL_X2D_ExternalSpool2","model":"External Spool","identifiers":[["bambu_lab","SERIAL_X2D_ExternalSpool2"]]},
+            {"id":"ext1","via_device_id":"p1","name":"X2D_SERIAL_X2D_ExternalSpool","model":"External Spool","identifiers":[["bambu_lab","SERIAL_X2D_ExternalSpool"]]}
+        ]""")
+        val dualEntities = array("""[
+            {"entity_id":"sensor.spool_2","device_id":"ext2","platform":"bambu_lab","translation_key":"external_spool","unique_id":"X2D_SERIAL_X2D_ExternalSpool2_external_spool"},
+            {"entity_id":"sensor.spool_1","device_id":"ext1","platform":"bambu_lab","translation_key":"external_spool","unique_id":"X2D_SERIAL_X2D_ExternalSpool_external_spool"}
+        ]""")
+        val printer = printersFrom(dualDevices, dualEntities).single()
+        assertEquals(listOf("sensor.spool_1", "sensor.spool_2"), printer.external)
+        assertEquals("ext1", printer.externalDevice)
+        assertEquals(listOf("ext1", "ext2"), printer.externalDevices)
+    }
+
     @Test fun switchesAndFlagsReadEveryDocumentedSpellingAndRejectOthers() {
         val ids = mapOf("switch.printing_monitor" to "switch.pm", "binary_sensor.developer_lan_mode" to "binary_sensor.lan",
             "binary_sensor.hybrid_mode_blocks_control" to "binary_sensor.hybrid")

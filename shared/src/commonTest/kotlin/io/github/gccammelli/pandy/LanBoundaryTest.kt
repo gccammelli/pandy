@@ -82,8 +82,8 @@ class LanBoundaryTest {
 
     @Test fun chamberTemperaturesAreLimitedToSupportedModelsAndBedTypeUsesFallback() {
         val report = """{"print":{"device":{"ctc":{"info":{"temp":25}}},"print_bed_type":"cool_plate","sdcard":"false","ipcam":{"timelapse":"disable"}}}"""
-        for (model in listOf("X1C", "H2D", "P2S", "X2D")) assertEquals("25.0", entities(report, model).getValue("chamber_temp").state)
-        for (model in listOf("P1S", "A1")) assertFalse(entities(report, model).containsKey("chamber_temp"))
+        for (model in listOf("X1C", "H2D", "P2S", "X2D", "H2C", "H2D Pro")) assertEquals("25.0", entities(report, model).getValue("chamber_temp").state)
+        for (model in listOf("P1S", "A1", "A2L")) assertFalse(entities(report, model).containsKey("chamber_temp"))
         val e = entities(report)
         assertEquals("cool_plate", e.getValue("print_bed_type").state)
         assertEquals("missing", e.getValue("sdcard_status").state); assertEquals("off", e.getValue("timelapse").state)
@@ -129,7 +129,7 @@ class LanBoundaryTest {
     }
 
     @Test fun advertisedCameraAndNozzleVariantsRemainReadableAcrossPrinterFamilies() {
-        for((model,rtsp) in listOf("X1C" to true,"H2D" to true,"P2S" to true,"X2D" to true,"P1S" to false,"A1" to false))
+        for((model,rtsp) in listOf("X1C" to true,"H2D" to true,"P2S" to true,"X2D" to true,"H2C" to true,"H2D Pro" to true,"P1S" to false,"A1" to false,"A2L" to false))
             assertEquals(rtsp,rtspCamera(model))
         for((raw,expected) in listOf("HS00" to "stainless_steel","HH01" to "high_flow_hardened_steel",
             "HH05" to "high_flow_tungsten_carbide","HS99" to "unknown","1234" to "1234","HHxx" to "HHxx","brass" to "brass"))
@@ -175,6 +175,12 @@ class LanBoundaryTest {
         assertFalse(entities(openFramePayload, model = "A1").containsKey("door_open"))
         assertFalse(entities(openFramePayload, model = "A1 mini").containsKey("door_open_check"))
         assertFalse(entities(openFramePayload, model = "P1P").containsKey("door_open"))
+        assertFalse(entities(openFramePayload, model = "A2L").containsKey("door_open"))
+        assertFalse(entities(openFramePayload, model = "A2L").containsKey("door_open_check"))
+        assertTrue(entities(openFramePayload, model = "H2C").containsKey("door_open"))
+        assertTrue(entities(openFramePayload, model = "H2C").containsKey("door_open_check"))
+        assertTrue(entities(openFramePayload, model = "H2D Pro").containsKey("door_open"))
+        assertTrue(entities(openFramePayload, model = "H2D Pro").containsKey("door_open_check"))
 
         val doorCmd = doorStatCommand("42", 1)["system"]!!.jsonObject
         assertEquals("set_door_stat", doorCmd.s("command"))
@@ -215,6 +221,14 @@ class LanBoundaryTest {
 
         val startCmdNoRotate = amsDryingCommand("101", 0, 50, 4, false)["print"]!!.jsonObject
         assertEquals("false", startCmdNoRotate.s("rotate_tray"))
+
+        val htStartCmd = amsDryingCommand("103", 128, 85, 12, false)["print"]!!.jsonObject
+        assertEquals("ams_filament_drying", htStartCmd.s("command"))
+        assertEquals("1", htStartCmd.s("mode"))
+        assertEquals("128", htStartCmd.s("ams_id"))
+        assertEquals("85", htStartCmd.s("temp"))
+        assertEquals("12", htStartCmd.s("duration"))
+        assertEquals("false", htStartCmd.s("rotate_tray"))
 
         val amsReport = """{
             "print": {
@@ -402,5 +416,122 @@ class LanBoundaryTest {
 
         val soundCmd = printOptionCommand("45", "sound_enable", false)["print"]!!.jsonObject
         assertEquals("false", soundCmd.s("sound_enable"))
+    }
+
+    @Test fun calibrationDispatchesNozzleOffsetAndMapsStage39() {
+        val cmd = calibrationCommand("42", 16)["print"]!!.jsonObject
+        assertEquals("calibration", cmd.s("command"))
+        assertEquals("16", cmd.s("option"))
+
+        val combined = calibrationCommand("43", 2 or 4 or 16)["print"]!!.jsonObject
+        assertEquals("22", combined.s("option"))
+
+        assertEquals("calibrate_nozzle_offset", stageName(39))
+    }
+
+    @Test fun dualExternalSpoolParsingAndCommands() {
+        val dualVirSlotReport = """{
+            "print": {
+                "ams": {
+                    "tray_now": "254"
+                },
+                "vir_slot": [
+                    {
+                        "id": "254",
+                        "tray_type": "PLA",
+                        "tray_sub_brands": "Bambu PLA Basic",
+                        "tray_color": "F98C36FF",
+                        "remain": 75,
+                        "nozzle_temp_min": "190",
+                        "nozzle_temp_max": "230",
+                        "tray_info_idx": "GFA00"
+                    },
+                    {
+                        "id": "255",
+                        "tray_type": "PETG",
+                        "tray_sub_brands": "Bambu PETG HF",
+                        "tray_color": "00AE42FF",
+                        "remain": 45,
+                        "nozzle_temp_min": "220",
+                        "nozzle_temp_max": "260",
+                        "tray_info_idx": "GFB00"
+                    }
+                ]
+            }
+        }"""
+        val x2dConfig = config.copy(model = "X2D")
+        val rows = lanEntities(x2dConfig, obj(dualVirSlotReport), true)
+        val extSpools = rows.filter { it.first.key == "external_spool" }
+        assertEquals(2, extSpools.size)
+
+        val ext1 = extSpools.first { it.first.device == "ext" }
+        assertEquals("ExternalSpool_external_spool", ext1.first.uid)
+        assertEquals("Bambu PLA Basic", ext1.second.state)
+        assertEquals("PLA", ext1.second.attrs.s("type"))
+        assertEquals("true", ext1.second.attrs.s("active"))
+        assertEquals("false", ext1.second.attrs.s("empty"))
+
+        val ext2 = extSpools.first { it.first.device == "ext2" }
+        assertEquals("ExternalSpool2_external_spool", ext2.first.uid)
+        assertEquals("Bambu PETG HF", ext2.second.state)
+        assertEquals("PETG", ext2.second.attrs.s("type"))
+        assertEquals("false", ext2.second.attrs.s("active"))
+        assertEquals("false", ext2.second.attrs.s("empty"))
+
+        // When tray_now switches to 255
+        val switchedReport = """{
+            "print": {
+                "ams": { "tray_now": "255" },
+                "vir_slot": [
+                    { "id": "254", "tray_type": "PLA" },
+                    { "id": "255", "tray_type": "PETG" }
+                ]
+            }
+        }"""
+        val switchedRows = lanEntities(x2dConfig, obj(switchedReport), true).filter { it.first.key == "external_spool" }
+        assertEquals("false", switchedRows.first { it.first.device == "ext" }.second.attrs.s("active"))
+        assertEquals("true", switchedRows.first { it.first.device == "ext2" }.second.attrs.s("active"))
+
+        // Devices and entity registries via printersFrom
+        val devs = json.parseToJsonElement("""[
+            {"id":"p1","name":"X2D","model":"X2D","identifiers":[["bambu_lab","TESTSERIAL"]]},
+            {"id":"p1_ext","via_device_id":"p1","model":"External Spool","identifiers":[["bambu_lab","TESTSERIAL_ExternalSpool"]]},
+            {"id":"p1_ext2","via_device_id":"p1","model":"External Spool","identifiers":[["bambu_lab","TESTSERIAL_ExternalSpool2"]]}
+        ]""").jsonArray
+        val ents = json.parseToJsonElement("""[
+            {"entity_id":"sensor.p1_external_spool","device_id":"p1_ext","platform":"bambu_lab","translation_key":"external_spool","unique_id":"TESTSERIAL_ExternalSpool_external_spool"},
+            {"entity_id":"sensor.p1_external_spool_2","device_id":"p1_ext2","platform":"bambu_lab","translation_key":"external_spool","unique_id":"TESTSERIAL_ExternalSpool2_external_spool"}
+        ]""").jsonArray
+        val printers = printersFrom(devs, ents)
+        val pInfo = printers.single()
+        assertEquals(listOf("sensor.p1_external_spool", "sensor.p1_external_spool_2"), pInfo.external)
+        val p = Printer(pInfo, mapOf(
+            "sensor.p1_external_spool" to ext1.second,
+            "sensor.p1_external_spool_2" to ext2.second
+        ))
+        assertEquals(2, p.external.size)
+        assertEquals("PLA", p.external[0].type)
+        assertEquals("PETG", p.external[1].type)
+        assertEquals(setOf(254, 255), p.loadedTrayIds())
+        assertEquals(listOf(254 to p.external[0], 255 to p.external[1]), p.loadedSpools())
+
+        // Auto mapping
+        val mapped = autoMapping(p, listOf(
+            mapOf("type" to "PETG", "color" to "#00AE42FF"),
+            mapOf("type" to "PLA", "color" to "#F98C36FF")
+        ))
+        assertEquals(listOf(255, 254), mapped)
+
+        // Setting commands for external spools
+        val preset = FILAMENT_PRESETS.first { it.type == "PLA" }
+        val ext1Cmd = amsFilamentSettingCommand("201", 255, 0, 254, preset, "F98C36")["print"]!!.jsonObject
+        assertEquals("255", ext1Cmd.s("ams_id"))
+        assertEquals("0", ext1Cmd.s("slot_id"))
+        assertEquals("254", ext1Cmd.s("tray_id"))
+
+        val ext2Cmd = amsFilamentSettingCommand("202", 255, 0, 255, preset, "00AE42")["print"]!!.jsonObject
+        assertEquals("255", ext2Cmd.s("ams_id"))
+        assertEquals("0", ext2Cmd.s("slot_id"))
+        assertEquals("255", ext2Cmd.s("tray_id"))
     }
 }

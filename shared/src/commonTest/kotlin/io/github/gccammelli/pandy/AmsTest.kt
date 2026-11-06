@@ -151,30 +151,40 @@ class AmsTest {
     fun ams2ProModelIdentificationAndBadges() {
         val ams2ProExplicit = AmsInfo("ams_pro", 1, "AMS 2 Pro", emptyMap(), emptyMap())
         assertEquals(true, ams2ProExplicit.isAms2Pro())
+        assertEquals(false, ams2ProExplicit.isHt)
+        assertEquals(65, ams2ProExplicit.maxDryingTemp)
         assertEquals(true, ams2ProExplicit.supportsDrying())
         assertEquals("AMS A", ams2ProExplicit.displayName())
         assertEquals("AMS 2 Pro", ams2ProExplicit.modelBadge())
 
         val ams2ProHw = AmsInfo("ams_hw", 2, "N3F05", emptyMap(), emptyMap())
         assertEquals(true, ams2ProHw.isAms2Pro())
+        assertEquals(false, ams2ProHw.isHt)
+        assertEquals(65, ams2ProHw.maxDryingTemp)
         assertEquals(true, ams2ProHw.supportsDrying())
         assertEquals("AMS B", ams2ProHw.displayName())
         assertEquals("AMS 2 Pro", ams2ProHw.modelBadge())
 
         val standard = AmsInfo("ams_std", 1, "AMS", emptyMap(), emptyMap())
         assertEquals(false, standard.isAms2Pro())
+        assertEquals(false, standard.isHt)
+        assertEquals(65, standard.maxDryingTemp)
         assertEquals(false, standard.supportsDrying())
         assertEquals("AMS A", standard.displayName())
         assertNull(standard.modelBadge())
 
         val ht = AmsInfo("ams_ht", 1, "AMS HT", emptyMap(), emptyMap())
         assertEquals(false, ht.isAms2Pro())
+        assertEquals(true, ht.isHt)
+        assertEquals(85, ht.maxDryingTemp)
         assertEquals(true, ht.supportsDrying())
         assertEquals("AMS HT", ht.displayName())
         assertNull(ht.modelBadge())
 
         val amsLite = AmsInfo("ams_lite", 1, "AMS Lite", emptyMap(), emptyMap())
         assertEquals(false, amsLite.isAms2Pro())
+        assertEquals(false, amsLite.isHt)
+        assertEquals(65, amsLite.maxDryingTemp)
         assertEquals(false, amsLite.supportsDrying())
         assertEquals("AMS A", amsLite.displayName())
         assertEquals("AMS Lite", amsLite.modelBadge())
@@ -295,6 +305,13 @@ class AmsTest {
         assertEquals("80", b.posts.last().second.s("temp"))
         assertEquals("8", b.posts.last().second.s("duration"))
 
+        b.startAmsDrying(p, htAms, 85, 12, true)
+        assertEquals("ams_ht_dev", b.posts.last().second.s("device_id"))
+        assertEquals("128", b.posts.last().second.s("ams_id"))
+        assertEquals("85", b.posts.last().second.s("temp"))
+        assertEquals("12", b.posts.last().second.s("duration"))
+        assertEquals("true", b.posts.last().second.s("rotate_tray"))
+
         // Out-of-range inputs clamped to the unit's own range and [1..24]: the AMS 2 Pro stops at 65, the AMS HT at 85
         b.startAmsDrying(p, ams, 30, 0, true)
         assertEquals("45", b.posts.last().second.s("temp"))
@@ -312,6 +329,29 @@ class AmsTest {
         val lite = AmsInfo("ams_lite", 3, "AMS Lite", emptyMap(), emptyMap(), 0)
         assertFailsWith<ApiException> { b.startAmsDrying(p, lite, 55, 4, false) }
         assertEquals(sent, b.posts.size)
+    }
+
+    @Test fun amsHtDetectionAndTemperatureLimits() {
+        val ht = AmsInfo("ht", 1, "AMS HT", emptyMap(), emptyMap(), 128)
+        assertTrue(ht.isHt)
+        assertEquals(85, ht.maxDryingTemp)
+        assertTrue(ht.supportsDrying())
+
+        val htCaseInsensitive = AmsInfo("ht2", 2, "ams ht", emptyMap(), emptyMap(), 129)
+        assertTrue(htCaseInsensitive.isHt)
+        assertEquals(85, htCaseInsensitive.maxDryingTemp)
+
+        val htCode = AmsInfo("ht3", 3, "N3S", emptyMap(), emptyMap(), 130)
+        assertTrue(htCode.isHt)
+        assertEquals(85, htCode.maxDryingTemp)
+
+        val ams2 = AmsInfo("ams2", 1, "AMS 2 Pro", emptyMap(), emptyMap(), 0)
+        assertFalse(ams2.isHt)
+        assertEquals(65, ams2.maxDryingTemp)
+
+        val ams1 = AmsInfo("ams1", 1, "AMS", emptyMap(), emptyMap(), 0)
+        assertFalse(ams1.isHt)
+        assertEquals(65, ams1.maxDryingTemp)
     }
 
     @Test fun amsModelBadgeAndDisplayNamesCoverAllVariants() {

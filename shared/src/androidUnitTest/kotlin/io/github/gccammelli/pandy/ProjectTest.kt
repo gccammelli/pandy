@@ -191,9 +191,17 @@ class PresetTest {
 
     @Test fun namesPreserveNewPrinterModelsAndDefaultInvalidNozzleSizes() {
         assertNull(shortModel(null))
-        for (model in listOf("X1","X1E","P1S","P1P","P2S","A1","A1 mini","H2D","H2S","X2D","Future")) {
+        assertNull(bambuModelFromName(null))
+        for (model in listOf("X1","X1E","P1S","P1P","P2S","A1","A1 mini","H2D","H2S","X2D","H2C","H2D Pro","A2L","Future")) {
             assertEquals(model,shortModel("Bambu Lab $model"))
+            assertEquals(model,bambuModelFromName("Bambu Lab $model"))
         }
+        assertEquals("H2D Pro", shortModel("Bambu Lab H2DPRO"))
+        assertEquals("H2D Pro", bambuModelFromName("Bambu Lab H2DPRO"))
+        assertEquals("Bambu Lab H2C 0.4 nozzle", printerPreset("H2C", "0.4"))
+        assertEquals("Bambu Lab H2D Pro 0.4 nozzle", printerPreset("H2D Pro", "0.4"))
+        assertEquals("Bambu Lab H2D Pro 0.4 nozzle", printerPreset("H2DPRO", "0.4"))
+        assertEquals("Bambu Lab A2L 0.4 nozzle", printerPreset("A2L", "0.4"))
         assertEquals("Bambu Lab P1S 1.0 nozzle",printerPreset("P1S","1"))
         assertEquals("Bambu Lab P1S 0.4 nozzle",printerPreset("P1S","unknown"))
     }
