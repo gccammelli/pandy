@@ -8,10 +8,12 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -102,8 +104,9 @@ fun ControlScreen(p: Printer) {
                 LightCard(p, Modifier.weight(1f), err)
             }
             Gap(10.dp)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                NozzleCard(p, Modifier.weight(1f)) { sheet = "nozzle" }
+            // The nozzle card is as tall as the heatbed + chamber pair beside it, so the next row starts at the same height on both sides.
+            Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NozzleCard(p, Modifier.weight(1f).fillMaxHeight()) { sheet = "nozzle" }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     TempCard("Heatbed", p.bed, p.bedTarget, Modifier.fillMaxWidth()) { sheet = "bed" }
                     TempCard("Chamber", p.chamber, p.chamberTarget, Modifier.fillMaxWidth(), p.chamber?.let { { sheet = if (p.hasChamberHeater) "chamber" else "chamberInfo" } })

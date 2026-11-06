@@ -2440,6 +2440,18 @@ class ScreenTest {
         assertTrue(commands.none { it.first.endsWith("extrude_retract") })
     }
 
+    @Test fun theNozzleCardIsAsTallAsTheHeatbedAndChamberCardsBesideIt() {
+        val p = variant(info = printer.info, set = arrayOf("sensor.print_status" to entity("idle")))
+        show("Device Control") { ControlScreen(p) }
+        fun bounds(text: String) = compose.onAllNodesWithText(text).onFirst().fetchSemanticsNode().boundsInRoot
+        val nozzle = bounds("Nozzle & Extruder")
+        val heatbed = bounds("Heatbed")
+        val chamber = bounds("Chamber")
+        // Top edges meet the Heatbed card's, bottom edges meet the Chamber card's: no extra gap before the Fan row.
+        assertEquals(heatbed.top, nozzle.top, 1f)
+        assertEquals(chamber.bottom, nozzle.bottom, 1f)
+    }
+
     @Test fun dualNozzleDoesNotSwitchFromLeftToRightWhilePrinting() {
         val extraIds = mapOf(
             "sensor.left_nozzle_temp" to "sensor.left_nozzle_temp",
