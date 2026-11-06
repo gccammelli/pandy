@@ -633,10 +633,12 @@ private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, en
     }.firstOrNull() else null
     val loaded = when {
         slot == 254 -> p.external.firstOrNull { it.known }
+        slot == 255 -> p.external.getOrNull(1)?.takeIf { it.known } ?: p.external.firstOrNull { it.known }
         else -> loadedAms?.second
     }
     val trayLabel = when {
-        slot == 254 -> "Ext"
+        slot == 254 -> if (p.external.size > 1) "Ext 1" else "Ext"
+        slot == 255 -> "Ext 2"
         loadedAms == null -> "--"
         loadedAms.first.isSingleSlot() -> "HT"
         else -> "${'A' + loadedAms.first.index - 1}${loadedAms.first.slotForTrayId(slot)!! + 1}"
@@ -677,6 +679,7 @@ private fun PreviewView(p: Printer, project: Project, plate: Int, auto: List<Int
     val modelColors = project.filaments.map { (_, colour) -> hexColor(colour) }
     fun spoolColor(slot: Int): Long? = when {
         slot == 254 -> p.external.firstOrNull { it.known }?.color
+        slot == 255 -> p.external.getOrNull(1)?.takeIf { it.known }?.color ?: p.external.firstOrNull { it.known }?.color
         slot >= 0 -> p.ams.asSequence().mapNotNull { (ams, spools) ->
             ams.slotForTrayId(slot)?.let { spools.getOrNull(it)?.takeIf { spool -> spool.known }?.color }
         }.firstOrNull()
@@ -843,9 +846,11 @@ private fun FilamentPicker(p: Printer, project: Project, index: Int, auto: List<
                 Spacer(Modifier.width(10.dp)); T(if (ams.model.contains("HT", ignoreCase = true) || ams.model.contains("N3S", ignoreCase = true)) "AMS HT" else "AMS ${ams.index} · slot ${slot % 4 + 1}", 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (slot == current) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
             }
         }
-        p.external.forEachIndexed { _, spool ->
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { choose(254) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(28.dp).clip(CircleShape).background(Color(spool.color))); Spacer(Modifier.width(10.dp)); T("External spool", 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (current == 254) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
+        p.external.forEachIndexed { i, spool ->
+            val slotId = if (i == 0) 254 else 255
+            val label = if (p.external.size > 1) "External spool ${i + 1}" else "External spool"
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { choose(slotId) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(28.dp).clip(CircleShape).background(Color(spool.color))); Spacer(Modifier.width(10.dp)); T(label, 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (current == slotId) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
             }
         }
     }

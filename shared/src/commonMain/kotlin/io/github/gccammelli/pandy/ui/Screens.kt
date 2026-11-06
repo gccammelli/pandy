@@ -249,13 +249,19 @@ fun FilamentScreen(p: Printer) {
                 Gap(12.dp)
             }
             if (p.external.isNotEmpty()) Card {
-                T("External Spool", 16.sp, weight = FontWeight.Bold)
+                T(if (p.external.size > 1) "External Spools" else "External Spool", 16.sp, weight = FontWeight.Bold)
                 Gap(12.dp)
-                p.external.forEach { s ->
+                p.external.forEachIndexed { i, s ->
+                    if (i > 0) Gap(10.dp)
                     Row(Modifier.fillMaxWidth().clickable { open = s }, verticalAlignment = Alignment.CenterVertically) {
-                        SlotTile(s, "Ext", Modifier.width(64.dp))
+                        val badge = if (p.external.size > 1) "Ext ${i + 1}" else "Ext"
+                        SlotTile(s, badge, Modifier.width(64.dp))
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
+                            if (p.external.size > 1) {
+                                val side = if (i == 0) "Left / Main" else "Right / Aux"
+                                T("External Spool ${i + 1} ($side)", 12.sp, C.Sub)
+                            }
                             T(if (s.known) s.name else "Not set", 15.sp)
                             T(if (s.active) "In use" else s.type, 12.sp, if (s.active) C.Accent else C.Sub)
                         }

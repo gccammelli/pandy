@@ -503,12 +503,18 @@ private fun FilamentCard(p: Printer, onClick: () -> Unit) = Card(padding = andro
         }
         Gap(12.dp)
     }
-    p.external.forEach { s ->
+    p.external.forEachIndexed { i, s ->
+        if (i > 0) Gap(8.dp)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SlotTile(s, "Ext", Modifier.width(64.dp))
+            val badge = if (p.external.size > 1) "Ext ${i + 1}" else "Ext"
+            SlotTile(s, badge, Modifier.width(64.dp))
             Spacer(Modifier.width(12.dp))
             Column {
-                T("External Spool", 14.sp, weight = FontWeight.Medium)
+                val title = if (p.external.size > 1) {
+                    val side = if (i == 0) "Left / Main" else "Right / Aux"
+                    "External Spool ${i + 1} ($side)"
+                } else "External Spool"
+                T(title, 14.sp, weight = FontWeight.Medium)
                 T(if (s.known) s.name else "Not set", 12.sp, C.Sub)
             }
         }

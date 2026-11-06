@@ -218,7 +218,8 @@ class Entity(val id: String, val state: String, val attrs: JsonObject) {
  * The integration's translation keys are the same on every install; entity ids are not (users rename them).
  */
 data class PrinterInfo(val haId: String, val serial: String, val name: String, val model: String, val firmware: String?,
-                       val ids: Map<String, String>, val ams: List<AmsInfo>, val external: List<String>, val externalDevice: String? = null)
+                       val ids: Map<String, String>, val ams: List<AmsInfo>, val external: List<String>, val externalDevice: String? = null,
+                       val externalDevices: List<String> = emptyList())
 
 /** One AMS: [trays] are the tray sensors' entity ids by slot (1–4; an AMS HT has one). */
 data class AmsInfo(val haId: String, val index: Int, val model: String, val ids: Map<String, String>, val trays: Map<Int, String>, val protocolId: Int? = null)
@@ -301,10 +302,22 @@ fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
             if (protocolId != null && protocolId >= 128) nextHtId = maxOf(nextHtId, protocolId + 1)
             AmsInfo(c.s("id")!!, i + 1, model, keyed(c.s("id")), trays, protocolId ?: if (singleSlot) nextHtId++ else null)
         }
-        val extDev = children.firstOrNull { c -> byDevice[c.s("id")].orEmpty().any { it.s("translation_key") == "external_spool" } }?.s("id")
-        val ext = children.flatMap { c -> byDevice[c.s("id")].orEmpty().filter { it.s("translation_key") == "external_spool" }.mapNotNull { it.s("entity_id") } }
+        val extChildren = children.filter { c -> byDevice[c.s("id")].orEmpty().any { it.s("translation_key") == "external_spool" } }
+            .sortedBy { c ->
+                val id = c.s("id").orEmpty()
+                val name = c.s("name").orEmpty()
+                val ident = c.a("identifiers")?.toString().orEmpty()
+                if (id.endsWith("2") || name.endsWith("2") || ident.contains("ExternalSpool2", ignoreCase = true) || id.contains("ext2", ignoreCase = true)) 1 else 0
+            }
+        val extDev = extChildren.firstOrNull()?.s("id")
+        val extDevices = extChildren.mapNotNull { it.s("id") }
+        val ext = extChildren.flatMap { c ->
+            byDevice[c.s("id")].orEmpty()
+                .filter { it.s("translation_key") == "external_spool" && it.s("entity_id")?.startsWith("binary_sensor.") != true }
+                .mapNotNull { it.s("entity_id") }
+        }.sortedBy { id -> if (id.contains("spool2", ignoreCase = true) || id.contains("spool_2", ignoreCase = true) || id.contains("external_2", ignoreCase = true) || id.contains("ext2", ignoreCase = true)) 1 else 0 }
         val serial = p.a("identifiers")!!.map { it.jsonArray }.first { (it[0] as JsonPrimitive).content == "bambu_lab" }[1].let { (it as JsonPrimitive).content }
-        PrinterInfo(p.s("id")!!, serial, p.s("name_by_user") ?: p.s("name") ?: serial, p.s("model") ?: "", p.s("sw_version"), keyed(p.s("id"), serial), ams, ext, extDev)
+        PrinterInfo(p.s("id")!!, serial, p.s("name_by_user") ?: p.s("name") ?: serial, p.s("model") ?: "", p.s("sw_version"), keyed(p.s("id"), serial), ams, ext, extDev, extDevices.ifEmpty { listOfNotNull(extDev) })
     }
 }
 
@@ -652,15 +665,15 @@ fun AmsInfo.slotForTrayId(id: Int): Int? {
 
 fun isAmsTrayId(id: Int) = id in 0..103 || id in 128..135
 
-/** The currently loaded absolute tray IDs (plus 254 for the external spool). */
+/** The currently loaded absolute tray IDs (plus 254 and 255 for external spools). */
 fun Printer.loadedTrayIds(): Set<Int> = ams.flatMap { (a, spools) ->
     spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) } }
-}.toSet() + external.filter { it.known }.map { 254 }
+}.toSet() + external.mapIndexedNotNull { i, s -> if (s.known) (if (i == 0) 254 else 255) else null }
 
-/** The loaded spools with their absolute tray IDs (254 for the external spool), in AMS order. */
+/** The loaded spools with their absolute tray IDs (254 and 255 for external spools), in AMS order. */
 fun Printer.loadedSpools(): List<Pair<Int, Spool>> =
     ams.flatMap { (a, spools) -> spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) to it } } } +
-        external.filter { it.known }.map { 254 to it }
+        external.mapIndexedNotNull { i, s -> if (s.known) (if (i == 0) 254 else 255) to s else null }
 
 /** A colour as "#RRGGBB". */
 fun colorHex(c: Long) = "#" + (c and 0xFFFFFF).toString(16).padStart(6, '0').uppercase()
@@ -668,7 +681,7 @@ fun colorHex(c: Long) = "#" + (c and 0xFFFFFF).toString(16).padStart(6, '0').upp
 /** For each filament of a print, the loaded tray that matches best: same type and nearest colour; null if none fits. */
 fun autoMapping(p: Printer, filaments: List<Map<String, String>>): List<Int>? {
     val trays = p.ams.flatMap { (a, spools) -> spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) to it } } } +
-        p.external.filter { it.known }.map { 254 to it }
+        p.external.mapIndexedNotNull { i, s -> if (s.known) (if (i == 0) 254 else 255) to s else null }
     if (trays.isEmpty() || filaments.isEmpty()) return null
     val mapped = filaments.map { f ->
         val want = hexColor(f["color"])

@@ -362,10 +362,23 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
             add("sensor", "tray", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayId.toString() == trayNow, ti + 1), dev, "AMS_${amsIndex + 1}_tray_${ti + 1}", deviceModel, htId)
         }
     }
-    p.o("vt_tray")?.let { t ->
-        val type = t.str("tray_type").orEmpty()
-        val name = t.str("tray_sub_brands")?.takeIf { it.isNotBlank() } ?: type
-        add("sensor", "external_spool", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayNow == "254", 0), "ext", "ExternalSpool_external_spool")
+    val virSlots = (p["vir_slot"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+    if (virSlots.isNotEmpty()) {
+        virSlots.sortedBy { it.str("id")?.toIntOrNull() ?: it.int("id") ?: 0 }.forEach { t ->
+            val id = t.str("id")?.toIntOrNull() ?: t.int("id") ?: 254
+            val type = t.str("tray_type").orEmpty()
+            val name = t.str("tray_sub_brands")?.takeIf { it.isNotBlank() } ?: type
+            val isExt2 = id == 255
+            val dev = if (isExt2) "ext2" else "ext"
+            val uid = if (isExt2) "ExternalSpool2_external_spool" else "ExternalSpool_external_spool"
+            add("sensor", "external_spool", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayNow == id.toString(), 0), dev, uid)
+        }
+    } else {
+        p.o("vt_tray")?.let { t ->
+            val type = t.str("tray_type").orEmpty()
+            val name = t.str("tray_sub_brands")?.takeIf { it.isNotBlank() } ?: type
+            add("sensor", "external_spool", if (type.isEmpty()) "Empty" else name, trayAttrs(t, name, trayNow == "254", 0), "ext", "ExternalSpool_external_spool")
+        }
     }
     return out
 }
@@ -647,6 +660,7 @@ class DirectPrinter(
                 d(amsDevice, rows.firstOrNull { it.device == amsDevice && it.deviceModel.isNotBlank() }?.deviceModel ?: "AMS", "${config.serial}_$amsDevice", "printer")
             }
             if (rows.any { it.device == "ext" }) d("ext", "External Spool", "${config.serial}_ExternalSpool", "printer")
+            if (rows.any { it.device == "ext2" }) d("ext2", "External Spool", "${config.serial}_ExternalSpool2", "printer")
         }
         val registry = buildJsonArray {
             rows.forEach { r ->
@@ -809,7 +823,7 @@ class DirectPrinter(
             })
             "bambu_lab/load_filament" -> {
                 val (ams, slot) = trayAddress(target)
-                val global = if (ams == 254 || ams >= 128) ams else ams * 4 + slot
+                val global = if (ams == 254 || ams == 255 || ams >= 128) ams else ams * 4 + slot
                 publish(printCmd("ams_change_filament") {
                     JsonObject(this + mapOf("ams_id" to JsonPrimitive(ams), "slot_id" to JsonPrimitive(slot), "target" to JsonPrimitive(global),
                         "curr_temp" to JsonPrimitive(215), "tar_temp" to JsonPrimitive(215)))
@@ -818,8 +832,8 @@ class DirectPrinter(
             "bambu_lab/set_filament" -> {
                 val preset = FILAMENT_PRESETS.firstOrNull { it.id == d.s("filament_id") } ?: throw ApiException("Unknown filament")
                 val (ams, slot) = trayAddress(target)
-                val external = ams == 254
-                publish(amsFilamentSettingCommand(nextSeq(), if (external) 255 else ams, if (external) 0 else slot, if (external) 254 else slot, preset, d.s("color").orEmpty()))
+                val external = ams == 254 || ams == 255
+                publish(amsFilamentSettingCommand(nextSeq(), if (external) 255 else ams, if (external) 0 else slot, if (external) ams else slot, preset, d.s("color").orEmpty()))
             }
             "bambu_lab/print_project_file" -> {
                 val file = d.s("filepath") ?: throw ApiException("No file")
@@ -882,6 +896,7 @@ class DirectPrinter(
     private fun trayAddress(entityId: String?): Pair<Int, Int> {
         val r = rowOf(entityId) ?: throw ApiException("Unknown tray")
         if (r.device == "ext") return 254 to 0
+        if (r.device == "ext2") return 255 to 0
         val (_, t) = Regex("""AMS_(\d+)_tray_(\d+)""").find(r.uid)!!.destructured
         return r.trayAmsId!! to t.toInt() - 1
     }

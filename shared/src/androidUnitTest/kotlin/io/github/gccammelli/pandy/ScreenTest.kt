@@ -2731,6 +2731,69 @@ class ScreenTest {
         compose.onAllNodesWithText("R").onFirst().assertExists()
     }
 
+    private fun dualExternalSpoolPrinter(): Printer {
+        val ext1 = entity("Generic PLA", mapOf("name" to "Generic PLA", "type" to "PLA", "color" to "#F98C36FF", "empty" to "false", "active" to "true"))
+        val ext2 = entity("Generic PETG", mapOf("name" to "Generic PETG", "type" to "PETG", "color" to "#00AE42FF", "empty" to "false", "active" to "false"))
+        val info = printer.info.copy(
+            model = "X2D",
+            external = listOf("sensor.spool_1", "sensor.spool_2")
+        )
+        return variant(info = info, set = arrayOf(
+            "sensor.spool_1" to ext1,
+            "sensor.spool_2" to ext2
+        ))
+    }
+
+    @Test fun dualExternalSpoolsRenderCleanlyOnFilamentScreen() {
+        val p = dualExternalSpoolPrinter()
+        assertEquals(2, p.external.size)
+
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    FilamentScreen(p)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("External Spools").assertExists()
+        compose.onNodeWithText("External Spool 1 (Left / Main)").assertExists()
+        compose.onNodeWithText("External Spool 2 (Right / Aux)").assertExists()
+        compose.onNodeWithText("Ext 1").assertExists()
+        compose.onNodeWithText("Ext 2").assertExists()
+        compose.onNodeWithText("Generic PLA").assertExists()
+        compose.onNodeWithText("Generic PETG").assertExists()
+    }
+
+    @Test fun dualExternalSpoolsRenderCleanlyOnDevicesTab() {
+        val p = dualExternalSpoolPrinter()
+        assertEquals(2, p.external.size)
+
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    DevicesTab(st.copy(printers = listOf(p)), p)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onAllNodesWithText("External Spool 1 (Left / Main)").onFirst().assertExists()
+        compose.onAllNodesWithText("External Spool 2 (Right / Aux)").onFirst().assertExists()
+    }
+
+    @Test fun dualExternalSpoolsRenderCleanlyInModelFilamentPicker() {
+        val p = dualExternalSpoolPrinter()
+        Repo.state.value = st.copy(printers = listOf(p))
+        prepareModel(modelBytes())
+        compose.onNodeWithText("Next").performClick()
+        compose.mainClock.advanceTimeBy(500)
+        compose.onAllNodesWithText("PLA").onFirst().performScrollTo().performClick()
+        compose.onNodeWithText("Please select filament").assertExists()
+        compose.onNodeWithText("External spool 2").performClick()
+        compose.onNodeWithText("Confirm").performClick()
+        compose.onNodeWithText("Ext 2").assertExists()
+    }
+
     @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {
         show("Direct LAN connection") { AddDirectScreen() }
         compose.onNodeWithText("Connect",substring=false).assertIsNotEnabled()

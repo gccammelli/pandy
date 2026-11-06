@@ -60,13 +60,15 @@ class DirectPrinterTest {
     }
 
     @Test fun settingAFilamentAddressesTheTrayLikeBambuStudio() = runBlocking<Unit> {
-        val ams=""","ams":{"ams":[{"id":"0","tray":[{"id":"1","tray_type":"PLA"}]},{"id":"128","tray":[{"id":"0","tray_type":"PETG"}]}]},"vt_tray":{"tray_type":"PLA"},"chamber_target_temper":35"""
+        val ams=""","ams":{"ams":[{"id":"0","tray":[{"id":"1","tray_type":"PLA"}]},{"id":"128","tray":[{"id":"0","tray_type":"PETG"}]}]},"vt_tray":{"tray_type":"PLA"},"vir_slot":[{"id":254,"tray_type":"PLA"},{"id":255,"tray_type":"PETG"}],"chamber_target_temper":35"""
         val link=Link(report(ams));val printer=DirectPrinter(config,true,{link})
         try {
+            val devs = printer.ws(listOf(buildJsonObject { put("type", "config/device_registry/list") })).single()!!.jsonArray
+            assertTrue(devs.any { it.jsonObject.s("id") == "${config.serial}_ext2" })
             val trays=registry(printer).map { it.jsonObject }.filter { it.s("translation_key") in listOf("tray","external_spool") }
             val petg=FILAMENT_PRESETS.first { it.id=="GFG99" }
             // (tray row, AMS unit, slot, tray id) as the printer addresses them; the external spool is unit 255, slot 0, tray 254
-            for ((suffix,expected) in listOf("AMS_1_tray_2" to Triple(0,1,1),"AMS_2_tray_1" to Triple(128,0,0),"external_spool" to Triple(255,0,254))) {
+            for ((suffix,expected) in listOf("AMS_1_tray_2" to Triple(0,1,1),"AMS_2_tray_1" to Triple(128,0,0),"ExternalSpool_external_spool" to Triple(255,0,254),"ExternalSpool2_external_spool" to Triple(255,0,255))) {
                 val row=trays.first { it.s("unique_id")!!.endsWith(suffix) }
                 printer.command("bambu_lab/set_filament","entity_id" to row.s("entity_id")!!,"filament_id" to petg.id,"color" to "#c12e1f")
                 val sent=link.sent.last().o("print")!!
@@ -353,12 +355,12 @@ class DirectPrinterTest {
     }
 
     @Test fun physicalAmsSlotsUseAddressedProtocolCommands() = runBlocking<Unit> {
-        val ams=""","ams":{"ams":[{"id":"0","tray":[{"id":"1","tray_type":"PLA"}]},{"id":"128","tray":[{"id":"0","tray_type":"PETG"}]}]},"vt_tray":{"tray_type":"PLA"},"chamber_target_temper":35"""
+        val ams=""","ams":{"ams":[{"id":"0","tray":[{"id":"1","tray_type":"PLA"}]},{"id":"128","tray":[{"id":"0","tray_type":"PETG"}]}]},"vt_tray":{"tray_type":"PLA"},"vir_slot":[{"id":254,"tray_type":"PLA"},{"id":255,"tray_type":"PETG"}],"chamber_target_temper":35"""
         val link=Link(report(ams));val printer=DirectPrinter(config,true,{link})
         try {
             val entities=registry(printer)
             val trays=entities.map { it.jsonObject }.filter { it.s("translation_key") in listOf("tray","external_spool") }
-            for ((suffix,target) in listOf("AMS_1_tray_2" to 1,"AMS_2_tray_1" to 128,"external_spool" to 254)) {
+            for ((suffix,target) in listOf("AMS_1_tray_2" to 1,"AMS_2_tray_1" to 128,"ExternalSpool_external_spool" to 254,"ExternalSpool2_external_spool" to 255)) {
                 val row=trays.first { it.s("unique_id")!!.endsWith(suffix) }
                 printer.command("bambu_lab/load_filament","entity_id" to row.s("entity_id")!!)
                 assertEquals(target.toString(),link.sent.last().o("print")?.s("target"))
