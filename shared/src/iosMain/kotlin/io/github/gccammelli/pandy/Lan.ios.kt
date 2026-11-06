@@ -188,19 +188,20 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
             if (status != errSSLWouldBlock) break
             if (getTimeMillis() >= deadline) error("TLS handshake timed out")
         }
+        var afterTrust = false
         if (status == errSSLServerAuthCompleted) {
             verifyPeer(serial, anchors)
             verified = true
-            check(SSLSetSessionOption(ssl, kSSLSessionOptionBreakOnServerAuth, false) == errSecSuccess) {
-                "Couldn't continue TLS handshake"
-            }
+            afterTrust = true
+            // Resume as SecureTransport documents: just call SSLHandshake again. Clearing BreakOnServerAuth here
+            // made the resumed handshake fail with paramErr (-50) on iOS 27.
             while (true) {
                 status = SSLHandshake(ssl)
                 if (status != errSSLWouldBlock) break
                 if (getTimeMillis() >= deadline) error("TLS handshake timed out")
             }
         }
-        if (status != errSecSuccess) error("TLS handshake failed ($status)")
+        if (status != errSecSuccess) error("TLS handshake failed ($status${if (afterTrust) ", after the certificate check" else ""})")
         if (!verified) verifyPeer(serial, anchors)
     }
 
@@ -248,7 +249,7 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
                     status == errSecSuccess -> n.value.toInt().takeIf { it > 0 } ?: -1
                     status == errSSLClosedGraceful || status == errSSLClosedNoNotify -> -1
                     status == errSSLWouldBlock -> n.value.toInt()
-                    else -> throw ApiException("The printer connection failed ($status)")
+                    else -> throw ApiException("The printer connection failed (read $status)")
                 }
             }
         } finally {
@@ -299,11 +300,11 @@ internal class IosTlsSocket private constructor(private val fd: Int, private val
                         n.value = 0u
                         status = SSLWrite(ssl, null, 0u, n.ptr)
                         if (status == errSecSuccess) return@memScoped length
-                        if (status != errSSLWouldBlock) throw ApiException("The printer connection failed ($status)")
+                        if (status != errSSLWouldBlock) throw ApiException("The printer connection failed (write $status)")
                         if (getTimeMillis() >= deadline) throw ApiException("The printer write timed out")
                     }
                 }
-                if (status != errSecSuccess) throw ApiException("The printer connection failed ($status)")
+                if (status != errSecSuccess) throw ApiException("The printer connection failed (write $status)")
                 n.value.toInt()
             }
         } finally {
@@ -376,7 +377,7 @@ private fun tlsRead(connection: CPointer<out kotlinx.cinterop.CPointed>?, data: 
     val requested = length!!.pointed.value.toInt()
     val n = recv(socket.nativeFd(), data, requested.toULong(), 0)
     return when {
-        n > 0L -> { length.pointed.value = n.toULong(); errSecSuccess }
+        n > 0L -> { length.pointed.value = n.toULong(); if (n == requested.toLong()) errSecSuccess else errSSLWouldBlock }
         n == 0L -> { length.pointed.value = 0uL; errSSLClosedGraceful }
         platform.posix.posix_errno() == EAGAIN || platform.posix.posix_errno() == EWOULDBLOCK -> { length.pointed.value = 0u; errSSLWouldBlock }
         platform.posix.posix_errno() == EINTR -> { length.pointed.value = 0u; errSSLWouldBlock }
@@ -390,7 +391,7 @@ private fun tlsWrite(connection: CPointer<out kotlinx.cinterop.CPointed>?, data:
     val n = send(socket.nativeFd(), data, requested.toULong(), 0)
     return if (n >= 0) {
         length.pointed.value = n.toULong()
-        errSecSuccess
+        if (n == requested.toLong()) errSecSuccess else errSSLWouldBlock
     } else if (platform.posix.posix_errno() == EINTR || platform.posix.posix_errno() == EAGAIN || platform.posix.posix_errno() == EWOULDBLOCK) {
         length.pointed.value = 0u
         errSSLWouldBlock
