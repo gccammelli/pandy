@@ -343,7 +343,7 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val speed get() = state("select.printing_speed") ?: state("sensor.speed_profile")
     val nozzle get() = get("sensor.nozzle_temp")?.celsius
     val nozzleTarget get() = get("sensor.target_nozzle_temp")?.celsius
-    val isDualNozzle: Boolean get() = info.ids.containsKey("sensor.left_nozzle_temp") || info.ids.containsKey("sensor.right_nozzle_temp") || model.contains("2D")
+    val isDualNozzle: Boolean get() = info.ids.containsKey("sensor.left_nozzle_temp") || info.ids.containsKey("sensor.right_nozzle_temp") || model.contains("2D") || model.startsWith("H2C") || model.startsWith("H2D")
     val leftNozzle: Double? get() = get("sensor.left_nozzle_temp")?.celsius ?: if (isDualNozzle && activeNozzle == "left") nozzle else null
     val leftNozzleTarget: Double? get() = get("sensor.left_target_nozzle_temp")?.celsius ?: if (isDualNozzle && activeNozzle == "left") nozzleTarget else null
     val rightNozzle: Double? get() = get("sensor.right_nozzle_temp")?.celsius ?: if (isDualNozzle && activeNozzle != "left") nozzle else null

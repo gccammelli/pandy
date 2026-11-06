@@ -529,7 +529,7 @@ private fun density(value: String): String? {
  * profile made for another printer, as Bambu Studio's printer switch does.
  */
 fun printerPreset(model: String, nozzle: String?): String {
-    val base = when (model) { "X1C" -> "X1 Carbon"; else -> model }
+    val base = when (model) { "X1C" -> "X1 Carbon"; "H2DPRO" -> "H2D Pro"; else -> model }
     val n = nozzle?.toDoubleOrNull()?.let { if (it == it.toInt().toDouble()) "$it" else it.toString() } ?: "0.4"
     return "Bambu Lab $base $n nozzle"
 }
@@ -539,8 +539,11 @@ fun shortModel(projectModel: String?): String? = when (projectModel?.removePrefi
     null -> null
     "X1 Carbon" -> "X1C"; "X1" -> "X1"; "X1E" -> "X1E"; "P1S" -> "P1S"; "P1P" -> "P1P"; "P2S" -> "P2S"
     "A1" -> "A1"; "A1 mini" -> "A1 mini"; "H2D" -> "H2D"; "H2S" -> "H2S"; "X2D" -> "X2D"
+    "H2C" -> "H2C"; "H2D Pro" -> "H2D Pro"; "H2DPRO" -> "H2D Pro"; "A2L" -> "A2L"
     else -> projectModel.removePrefix("Bambu Lab ")
 }
+
+fun bambuModelFromName(name: String?): String? = shortModel(name)
 
 /**
  * The print command's ams_mapping: one entry per filament slot of the project (by id), the AMS tray for the ones the

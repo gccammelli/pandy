@@ -59,9 +59,16 @@ expect suspend fun discoverPrinters(millis: Long): List<FoundPrinter>
 
 /** Bambu's model codes (SSDP and serial prefixes) → the names Handy shows. */
 fun modelName(code: String?, serial: String = ""): String = when {
-    code == null || code.isBlank() -> when (serial.take(3)) {
-        "00M" -> "X1C"; "00W" -> "X1"; "03W" -> "X1E"; "01S" -> "P1P"; "01P" -> "P1S"; "22E" -> "P2S"
-        "039" -> "A1"; "030" -> "A1 mini"; "094" -> "H2D"; "239" -> "H2S"; "20P" -> "X2D"; else -> "Bambu printer"
+    code == null || code.isBlank() -> when {
+        serial.startsWith("H2DPRO", ignoreCase = true) || serial.startsWith("H2D Pro", ignoreCase = true) || serial.startsWith("MOCK-H2DPRO", ignoreCase = true) -> "H2D Pro"
+        serial.startsWith("MOCK-H2C", ignoreCase = true) -> "H2C"
+        serial.startsWith("MOCK-A2L", ignoreCase = true) -> "A2L"
+        else -> when (serial.take(3).uppercase()) {
+            "00M" -> "X1C"; "00W" -> "X1"; "03W" -> "X1E"; "01S" -> "P1P"; "01P" -> "P1S"; "22E" -> "P2S"
+            "039" -> "A1"; "030" -> "A1 mini"; "094" -> "H2D"; "239" -> "H2S"; "20P" -> "X2D"
+            "H2C" -> "H2C"; "A2L" -> "A2L"
+            else -> "Bambu printer"
+        }
     }
     code.contains("X1-Carbon", true) || code == "BL-P001" -> "X1C"
     code.contains("X1E", true) || code == "C13" -> "X1E"
@@ -74,6 +81,9 @@ fun modelName(code: String?, serial: String = ""): String = when {
     code == "O1D" -> "H2D"
     code == "O1S" -> "H2S"
     code.equals("N6", true) || code.equals("X2D", true) -> "X2D"
+    code.equals("H2C", true) || code.equals("Bambu Lab H2C", true) -> "H2C"
+    code.equals("H2DPRO", true) || code.equals("H2D Pro", true) || code.equals("Bambu Lab H2D Pro", true) || code.equals("Bambu Lab H2DPRO", true) -> "H2D Pro"
+    code.equals("A2L", true) || code.equals("Bambu Lab A2L", true) -> "A2L"
     else -> code
 }
 
@@ -241,7 +251,7 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
         blob?.let { add("switch", "nozzle_blob_detect", if (it) "on" else "off") }
     }
     p.hexBit("cfg", 19)?.let { add("switch", "print_cache", if (it) "on" else "off") }
-    if (c.model !in listOf("A1", "A1 mini", "P1P")) {
+    if (c.model !in listOf("A1", "A1 mini", "P1P", "A2L")) {
         (p.flag("door_open_check") ?: (p.str("cfg")?.toLongOrNull(16)?.let { ((it shr 20) and 3L) != 0L }) ?: p.bit("home_flag", 26))?.let { add("switch", "door_open_check", if (it) "on" else "off") }
         // Only home_flag bit 23 follows the door: on a real X1C `stat` bit 23 stays set whether the door is open or closed.
         p.bit("home_flag", 23)?.let { add("binary_sensor", "door_open", if (it) "on" else "off") }
