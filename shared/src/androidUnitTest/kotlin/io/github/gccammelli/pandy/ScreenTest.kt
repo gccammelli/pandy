@@ -969,6 +969,8 @@ class ScreenTest {
         compose.onNodeWithText("Next").performClick()
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithText("Prepare to Print").assertIsDisplayed()
+        // A model with its own filaments: each card opens the slot picker, so it carries the dropdown arrow.
+        compose.onAllNodesWithText("⌄").onFirst().assertExists()
         compose.onNodeWithText("3D Preview").performScrollTo().performClick()
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithText("Model colors").assertIsDisplayed()
@@ -1334,10 +1336,15 @@ class ScreenTest {
     @Test fun anStlHasA3dPreviewInThePickedSpoolsColour() {
         prepareModel(stlBytes())
         compose.onNodeWithText("Next").performClick()
+        // A plain model's spool cards select a spool, they do not open a picker: no dropdown arrow.
+        compose.onAllNodesWithText("⌄").assertCountEquals(0)
         compose.onNodeWithText("3D Preview").performScrollTo().performClick()
         compose.mainClock.advanceTimeBy(500)
         compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("3D preview unavailable").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithText("Show the plate").assertExists()
+        // Nothing to customise on a plain model: the reason is shown instead of a Customize colors row.
+        compose.onNodeWithText("Customize colors").assertDoesNotExist()
+        compose.onNodeWithText("It is shown in the color of the filament you pick.", substring = true).assertExists()
         compose.onNodeWithText("Confirm").performClick()
         compose.onNodeWithText("Prepare to Print").assertExists()
     }
@@ -1957,9 +1964,10 @@ class ScreenTest {
         prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to "{}".toByteArray())))
         compose.onNodeWithText("Next").performClick()
         compose.onNodeWithText("3D Preview").performScrollTo().performClick()
-        compose.onNodeWithText("Customize colors").performClick()
-        compose.onNodeWithText("This model has no filament color metadata.").assertExists()
-        compose.onNodeWithText("Done").performClick()
+        // Nothing to customise: no row that looks tappable, just the reason, shown in place.
+        compose.onNodeWithText("Customize colors").assertDoesNotExist()
+        compose.onNodeWithText("Color scheme").assertDoesNotExist()
+        compose.onNodeWithText("This model has no filament color metadata.", substring = true).assertExists()
         compose.onNodeWithText("Confirm").performClick()
         compose.onNodeWithText("Prepare to Print").assertExists()
         org.junit.Assert.assertTrue(commands.isEmpty())

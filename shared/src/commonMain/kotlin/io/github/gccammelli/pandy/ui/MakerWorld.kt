@@ -508,7 +508,7 @@ private fun PrepareView(
                     Gap(8.dp)
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         spools.forEach { (tray, spool) ->
-                            FilamentChip(spool.type, io.github.gccammelli.pandy.colorHex(spool.color), tray, p, editable, selected = tray == plainTray) { pickTray(tray) }
+                            FilamentChip(spool.type, io.github.gccammelli.pandy.colorHex(spool.color), tray, p, editable, selected = tray == plainTray, opensPicker = false) { pickTray(tray) }
                         }
                     }
                 }
@@ -627,7 +627,7 @@ private fun HelpQuestion(onClick: () -> Unit) = Box(Modifier.size(30.dp).clickab
 }
 
 @Composable
-private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, enabled: Boolean, selected: Boolean = false, onClick: () -> Unit) {
+private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, enabled: Boolean, selected: Boolean = false, opensPicker: Boolean = true, onClick: () -> Unit) {
     val loadedAms = if (slot >= 0) p.ams.asSequence().mapNotNull { (ams, spools) ->
         ams.slotForTrayId(slot)?.let { ams to spools.getOrNull(it) }
     }.firstOrNull() else null
@@ -653,7 +653,7 @@ private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, en
                 T(trayLabel, 12.sp, C.Text, FontWeight.Medium)
                 T(loaded?.type ?: type, 12.sp, C.Sub, maxLines = 1)
             }
-            T("⌄", 18.sp, C.Sub)
+            if (opensPicker) T("⌄", 18.sp, C.Sub) // a dropdown arrow only on cards that open the slot picker, not on the plain-model choice cards
         }
     }
 }
@@ -706,18 +706,24 @@ private fun PreviewView(p: Printer, project: Project, plate: Int, auto: List<Int
                 mesh?.let { PreviewMeshCanvas(it, displayColors, showPlate) } ?: if (showPlate && image != null) Image(image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
                 else T("3D preview unavailable", 24.sp, C.Faint, FontWeight.Bold)
             }
-            Gap(12.dp); T("Color scheme", 16.sp, weight = FontWeight.Medium)
-            Gap(8.dp)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PreviewChoice("Model colors", scheme == PreviewScheme.Model) { scheme = PreviewScheme.Model }
-                PreviewChoice("Printer colors", scheme == PreviewScheme.Printer) { scheme = PreviewScheme.Printer }
-            }
-            Gap(12.dp)
-            Row(Modifier.fillMaxWidth().clickable { colors = true }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                T("Customize colors", 15.sp, modifier = Modifier.weight(1f)); T("Reset", 13.sp, C.Blue, modifier = Modifier.clickable { custom = emptyMap(); scheme = PreviewScheme.Model }.padding(8.dp)); T("›", 24.sp, C.Sub)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 4.dp)) {
-                displayColors.ifEmpty { listOf(0xFF888888) }.forEach { colour -> Box(Modifier.size(28.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(colour))) }
+            if (project.filaments.isEmpty()) {
+                // A plain model has no colours of its own: it is shown in the spool picked for it, so there is nothing to customise.
+                Gap(12.dp)
+                T("This model has no filament color metadata. It is shown in the color of the filament you pick.", 14.sp, C.Sub, lh = 19.sp)
+            } else {
+                Gap(12.dp); T("Color scheme", 16.sp, weight = FontWeight.Medium)
+                Gap(8.dp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PreviewChoice("Model colors", scheme == PreviewScheme.Model) { scheme = PreviewScheme.Model }
+                    PreviewChoice("Printer colors", scheme == PreviewScheme.Printer) { scheme = PreviewScheme.Printer }
+                }
+                Gap(12.dp)
+                Row(Modifier.fillMaxWidth().clickable { colors = true }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    T("Customize colors", 15.sp, modifier = Modifier.weight(1f)); T("Reset", 13.sp, C.Blue, modifier = Modifier.clickable { custom = emptyMap(); scheme = PreviewScheme.Model }.padding(8.dp)); T("›", 24.sp, C.Sub)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 4.dp)) {
+                    displayColors.ifEmpty { listOf(0xFF888888) }.forEach { colour -> Box(Modifier.size(28.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(colour))) }
+                }
             }
         }
     }
