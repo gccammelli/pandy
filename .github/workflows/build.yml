@@ -128,6 +128,8 @@ jobs:
           zip -qry pandy.ipa Payload
 
       - name: Simulator screenshot of the first screen
+        # arm64 simulators only: on an Intel runner (PANDY_IOS_RUNNER=macos-15-intel) this step can't run, and the .ipa above is what ships.
+        continue-on-error: true
         run: |
           xcodebuild -project iosApp/iosApp.xcodeproj -target iosApp -configuration Debug -sdk iphonesimulator -arch arm64 \
             SYMROOT="$PWD/build/ios-sim" CODE_SIGNING_ALLOWED=NO build
