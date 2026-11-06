@@ -515,7 +515,7 @@ private fun PrepareView(
             } else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 project.filaments.forEachIndexed { i, (type, colour) ->
                 val slot = (if (presets) manualMapping[filamentKey(type, colour)]?.takeIf { it in p.loadedTrayIds() } else null) ?: auto?.getOrNull(i) ?: if (p.ams.isEmpty()) 254 else -1
-                    FilamentChip(type, colour, slot, p, editable) { filament(i) }
+                    FilamentChip(type, colour, slot, p, editable, selected = false, opensPicker = true) { filament(i) }
                 }
             }
             Gap(5.dp)
@@ -627,7 +627,7 @@ private fun HelpQuestion(onClick: () -> Unit) = Box(Modifier.size(30.dp).clickab
 }
 
 @Composable
-private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, enabled: Boolean, selected: Boolean = false, opensPicker: Boolean = true, onClick: () -> Unit) {
+private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, enabled: Boolean, selected: Boolean, opensPicker: Boolean, onClick: () -> Unit) {
     val loadedAms = if (slot >= 0) p.ams.asSequence().mapNotNull { (ams, spools) ->
         ams.slotForTrayId(slot)?.let { ams to spools.getOrNull(it) }
     }.firstOrNull() else null
