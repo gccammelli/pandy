@@ -96,6 +96,14 @@ class DemoControlsTest {
         assertEquals("220", ha.state("sensor", "target_nozzle_temp").s("state"))
         ha.command("bambu_lab/calibration")
         assertEquals("calibrating", ha.state("sensor", "stage").s("state"))
+        ha.command("bambu_lab/calibration", "option" to "16")
+        assertEquals("calibrate_nozzle_offset", ha.state("sensor", "stage").s("state"))
+        ha.command("bambu_lab/calibration", "nozzle_offset" to "true")
+        assertEquals("calibrate_nozzle_offset", ha.state("sensor", "stage").s("state"))
+        ha.command("bambu_lab/calibration", "nozzleOffset" to "true")
+        assertEquals("calibrate_nozzle_offset", ha.state("sensor", "stage").s("state"))
+        ha.command("bambu_lab/calibration", "option" to "23")
+        assertEquals("calibrating", ha.state("sensor", "stage").s("state"))
     }
 
     @Test fun optionsAndAmsSettingsAreSessionLocal() = runTest {

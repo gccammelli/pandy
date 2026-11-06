@@ -229,6 +229,11 @@ class DirectPrinterTest {
             val print = link.sent.last().o("print")!!
             assertEquals("Metadata/plate_2.gcode", print.s("param")); assertEquals("file:///sdcard/cache/test.3mf", print.s("url")); assertEquals("0", print.s("auto_bed_leveling")); assertEquals("1", print.s("extrude_cali_flag"))
             printer.command("bambu_lab/calibration", "option" to "1")
+            assertEquals("1", link.sent.last().o("print")?.s("option"))
+            printer.command("bambu_lab/calibration", "option" to "1", "nozzle_offset" to "true")
+            assertEquals("17", link.sent.last().o("print")?.s("option"))
+            printer.command("bambu_lab/calibration", "nozzleOffset" to "true")
+            assertEquals("16", link.sent.last().o("print")?.s("option"))
             printer.command("bambu_lab/xcam_control_set", "module_name" to "spaghetti_detector", "enable" to "true")
             printer.command("bambu_lab/print_option", "sound_enable" to "true")
             printer.command("bambu_lab/ams_user_setting", "ams_id" to "0", "startup_read_option" to "true")

@@ -76,7 +76,7 @@ class LanTest {
             54 to "waiting_for_heatbed_temperature",
             6 to "paused_filament_runout",11 to "identifying_build_plate_type",14 to "cleaning_nozzle_tip",
             20 to "paused_nozzle_temperature_malfunction",22 to "filament_unloading",26 to "paused_ams_lost",
-            49 to "heating_chamber",99 to "stage_99",
+            39 to "calibrate_nozzle_offset",49 to "heating_chamber",99 to "stage_99",
         )) {
             val source=json.parseToJsonElement("""{"print":{"stg_cur":$stage,"print_error":65537,"gcode_state":"PAUSE"}}""").jsonObject
             val p=printer(source)

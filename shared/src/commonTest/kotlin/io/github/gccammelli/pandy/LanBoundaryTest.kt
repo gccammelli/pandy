@@ -403,4 +403,15 @@ class LanBoundaryTest {
         val soundCmd = printOptionCommand("45", "sound_enable", false)["print"]!!.jsonObject
         assertEquals("false", soundCmd.s("sound_enable"))
     }
+
+    @Test fun calibrationDispatchesNozzleOffsetAndMapsStage39() {
+        val cmd = calibrationCommand("42", 16)["print"]!!.jsonObject
+        assertEquals("calibration", cmd.s("command"))
+        assertEquals("16", cmd.s("option"))
+
+        val combined = calibrationCommand("43", 2 or 4 or 16)["print"]!!.jsonObject
+        assertEquals("22", combined.s("option"))
+
+        assertEquals("calibrate_nozzle_offset", stageName(39))
+    }
 }

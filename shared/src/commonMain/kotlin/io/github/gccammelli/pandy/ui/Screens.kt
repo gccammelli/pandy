@@ -344,7 +344,7 @@ fun PrinterSettingsScreen(p: Printer) {
     )
 }
 
-/** Starts the printer's machine calibration with the four documented option bits. */
+/** Starts the printer's machine calibration with the documented option bits. */
 @Composable
 fun CalibrationScreen(p: Printer) {
     val err = errorToast()
@@ -353,8 +353,9 @@ fun CalibrationScreen(p: Printer) {
     var bed by remember { mutableStateOf(true) }
     var vibration by remember { mutableStateOf(true) }
     var motor by remember { mutableStateOf(false) }
+    var nozzleOffset by remember { mutableStateOf(false) }
     val canSend = (Repo.direct || Repo.demo) && p.online
-    val option = (if (lidar) 1 else 0) or (if (bed) 2 else 0) or (if (vibration) 4 else 0) or (if (motor) 8 else 0)
+    val option = (if (lidar) 1 else 0) or (if (bed) 2 else 0) or (if (vibration) 4 else 0) or (if (motor) 8 else 0) or (if (p.isDualNozzle && nozzleOffset) 16 else 0)
     Page("Calibration", { Nav.back() }) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
             T("Choose the checks to run on the printer. Calibration can move the toolhead and heat the bed.", 14.sp, C.Sub, lh = 19.sp, modifier = Modifier.padding(horizontal = 6.dp))
@@ -364,6 +365,7 @@ fun CalibrationScreen(p: Printer) {
                 ToggleRow("Bed leveling", bed, enabled = canSend && !p.printing) { bed = it }
                 ToggleRow("Vibration compensation", vibration, enabled = canSend && !p.printing) { vibration = it }
                 ToggleRow("Motor noise cancellation", motor, enabled = canSend && !p.printing) { motor = it }
+                if (p.isDualNozzle) ToggleRow("Nozzle Offset Calibration", nozzleOffset, enabled = canSend && !p.printing, subtitle = "Calibrates the offset between the two nozzles") { nozzleOffset = it }
             }
             Gap(16.dp)
             if (!Repo.direct && !Repo.demo) T("Home Assistant does not expose this printer command. Connect directly to use it.", 13.sp, C.Sub, lh = 18.sp, modifier = Modifier.padding(horizontal = 6.dp))
@@ -376,7 +378,7 @@ fun CalibrationScreen(p: Printer) {
         onDismissRequest = { confirm = false },
         title = { T("Start calibration?", weight = FontWeight.Medium) },
         text = { T("The printer may move the toolhead and heat the bed. Make sure it is clear before continuing.", 14.sp, C.Sub) },
-        confirmButton = { TextButton(onClick = { confirm = false; p.calibrate(option, err) }) { T("Start", color = C.Accent) } },
+        confirmButton = { TextButton(onClick = { confirm = false; p.calibrate(option, nozzleOffset = p.isDualNozzle && nozzleOffset, err = err) }) { T("Start", color = C.Accent) } },
         dismissButton = { TextButton(onClick = { confirm = false }) { T("Cancel", color = C.Text) } },
     )
 }

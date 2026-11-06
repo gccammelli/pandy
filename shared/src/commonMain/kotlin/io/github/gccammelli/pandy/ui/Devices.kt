@@ -389,6 +389,7 @@ fun stageText(s: String?): String? = when (s) {
     "cleaning_nozzle_tip" -> "Cleaning nozzle tip"
     "homing_toolhead" -> "Homing toolhead"
     "changing_filament" -> "Changing filament"
+    "calibrate_nozzle_offset" -> "Nozzle offset calibration"
     "paused", "paused_user" -> "Paused"
     else -> s.replace('_', ' ').replaceFirstChar { it.uppercase() }
 }

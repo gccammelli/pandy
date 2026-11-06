@@ -144,9 +144,15 @@ fun NavRow(label: String, value: String? = null, labelColor: Color = C.Text, che
     }
 
 @Composable
-fun ToggleRow(label: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) =
+fun ToggleRow(label: String, checked: Boolean, enabled: Boolean = true, subtitle: String? = null, onChange: (Boolean) -> Unit) =
     Row(Modifier.fillMaxWidth().background(C.Card).padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        T(label, 17.sp, if (enabled) C.Text else C.Sub, modifier = Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            T(label, 17.sp, if (enabled) C.Text else C.Sub)
+            if (subtitle != null) {
+                Spacer(Modifier.height(2.dp))
+                T(subtitle, 13.sp, C.Sub)
+            }
+        }
         Toggle(checked, enabled, onChange)
     }
 

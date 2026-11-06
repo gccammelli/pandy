@@ -333,6 +333,7 @@ class ScreenTest {
         })
         show("Calibration") { CalibrationScreen(p) }
         compose.onNodeWithText("Micro lidar calibration").assertDoesNotExist()
+        compose.onNodeWithText("Nozzle Offset Calibration").assertDoesNotExist()
         compose.onAllNodes(isToggleable()).onFirst().performClick()
         compose.onAllNodes(isToggleable())[1].performClick()
         compose.onNodeWithText("Start calibration").assertIsNotEnabled()
@@ -1614,6 +1615,7 @@ class ScreenTest {
     @Test fun idleCalibrationRequiresConfirmationAndSendsChosenChecks() {
         val idle=changed("sensor.print_status" to "idle")
         show("Calibration") { CalibrationScreen(idle) }
+        compose.onNodeWithText("Nozzle Offset Calibration").assertDoesNotExist()
         compose.onAllNodes(isToggleable()).onLast().performClick()
         compose.onNodeWithText("Start calibration").performClick()
         compose.onNodeWithText("Start calibration?").assertExists()
@@ -1624,6 +1626,44 @@ class ScreenTest {
         compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("calibration") } }
         val body=json.parseToJsonElement(commands.last().second).jsonObject
         assertEquals("15",body.s("option"))
+    }
+
+    @Test fun dualNozzleCalibrationShowsNozzleOffsetAndSendsOption() {
+        val dual = Printer(printer.info.copy(model = "X2D"), snapshot.toMutableMap().apply {
+            val id = printer.info.ids.getValue("sensor.print_status")
+            put(id, Entity(id, "idle", JsonObject(emptyMap())))
+        })
+        show("Calibration") { CalibrationScreen(dual) }
+        compose.onNodeWithText("Nozzle Offset Calibration").assertExists()
+        compose.onNodeWithText("Calibrates the offset between the two nozzles").assertExists()
+
+        // Lidar (1) + Bed (2) + Vibration (4) + Motor (0) + NozzleOffset (16) = 23
+        compose.onAllNodes(isToggleable())[4].performClick()
+        compose.onNodeWithText("Start calibration").performClick()
+        compose.onNodeWithText("Start calibration?").assertExists()
+        compose.onNodeWithText("Start").performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(100)
+        compose.runOnIdle { }
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.any { it.first.endsWith("calibration") } }
+        val body = json.parseToJsonElement(commands.last().second).jsonObject
+        assertEquals("23", body.s("option"))
+        assertEquals("true", body.s("nozzle_offset"))
+
+        // Also verify calibrate helper overloads
+        val cBefore = commands.size
+        dual.calibrate(16) { }
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.size > cBefore }
+        val body2 = json.parseToJsonElement(commands.last().second).jsonObject
+        assertEquals("16", body2.s("option"))
+        assertEquals("true", body2.s("nozzle_offset"))
+
+        val cBefore2 = commands.size
+        dual.calibrate(1, nozzleOffset = false) { }
+        compose.waitUntil(5000) { compose.waitForIdle(); commands.size > cBefore2 }
+        val body3 = json.parseToJsonElement(commands.last().second).jsonObject
+        assertEquals("1", body3.s("option"))
+        kotlin.test.assertNull(body3["nozzle_offset"])
     }
 
     @Test fun reportedPrintOptionsCanBeChanged() {

@@ -288,7 +288,11 @@ class FakeHomeAssistant : HaBackend, PrinterFiles {
                     "nozzle_temp_min" to JsonPrimitive(preset.min.toString()), "nozzle_temp_max" to JsonPrimitive(preset.max.toString())))
                 setById(target, preset.name, attrs)
             }
-            "bambu_lab/calibration" -> set("sensor", "stage", "calibrating")
+            "bambu_lab/calibration" -> {
+                val opt = d.s("option")?.toIntOrNull() ?: 0
+                val isNozzleOffset = (opt and 16) != 0 || d.s("nozzle_offset") == "true" || d.s("nozzleOffset") == "true"
+                set("sensor", "stage", if (isNozzleOffset && (opt == 16 || opt == 0)) "calibrate_nozzle_offset" else "calibrating")
+            }
             "bambu_lab/xcam_control_set" -> d.s("module_name")?.let { module ->
                 rows.firstOrNull { it.device == dev && it.key == module }?.let { setById(id(it), if (d.s("enable") == "true") "on" else "off") }
             }

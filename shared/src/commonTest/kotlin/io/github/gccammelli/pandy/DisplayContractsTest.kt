@@ -10,6 +10,7 @@ class DisplayContractsTest {
         assertEquals("Paused",stageText("paused_user"))
         assertEquals("Auto bed leveling",stageText("auto_bed_leveling"))
         assertEquals("Calibrating extrusion",stageText("calibrating_extrusion_flow"))
+        assertEquals("Nozzle offset calibration",stageText("calibrate_nozzle_offset"))
         assertEquals("Future firmware state",stageText("future_firmware_state"))
         assertEquals("--",minutes(null)); assertEquals("1h 5min",minutes(65.8))
         assertEquals("High flow hardened steel",nozzleType("high_flow_hardened_steel"))

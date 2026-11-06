@@ -450,8 +450,14 @@ suspend fun HaBackend.setNumber(id: String, value: Double) =
     call("number", "set_value", buildJsonObject { put("entity_id", id); put("value", value) })
 
 /** Starts the printer's machine calibration; this command is available in direct LAN mode only. */
-fun Printer.calibrate(option: Int, err: (String) -> Unit) = Repo.act(err) {
-    bambu("calibration", this@calibrate, buildJsonObject { put("option", option) })
+fun Printer.calibrate(option: Int, err: (String) -> Unit) = calibrate(option, nozzleOffset = (option and 16) != 0, err = err)
+
+fun Printer.calibrate(option: Int, nozzleOffset: Boolean, err: (String) -> Unit) = Repo.act(err) {
+    val finalOption = if (nozzleOffset) option or 16 else option
+    bambu("calibration", this@calibrate, buildJsonObject {
+        put("option", finalOption)
+        if (nozzleOffset || (finalOption and 16) != 0) put("nozzle_offset", true)
+    })
 }
 
 /** Enables one of the printer's XCam modules, when the printer reports it. */

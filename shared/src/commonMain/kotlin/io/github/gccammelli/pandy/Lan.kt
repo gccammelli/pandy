@@ -130,6 +130,7 @@ fun stageName(n: Int?): String = when (n) {
     19 -> "calibrating_extrusion_flow"; 20 -> "paused_nozzle_temperature_malfunction"; 21 -> "paused_heat_bed_temperature_malfunction"
     22 -> "filament_unloading"; 23 -> "paused_skipped_step"; 24 -> "filament_loading"; 25 -> "calibrating_motor_noise"
     26 -> "paused_ams_lost"; 29 -> "cooling_chamber"; 30 -> "paused_user_gcode"; 34 -> "paused_first_layer_error"; 35 -> "paused_nozzle_clog"
+    39 -> "calibrate_nozzle_offset"
     49 -> "heating_chamber"; 54 -> "waiting_for_heatbed_temperature"
     else -> "stage_$n"
 }
@@ -842,7 +843,11 @@ class DirectPrinter(
                     JsonObject(this + options)
                 })
             }
-            "bambu_lab/calibration" -> publish(calibrationCommand(nextSeq(), d.s("option")?.toIntOrNull() ?: 0))
+            "bambu_lab/calibration" -> {
+                var opt = d.s("option")?.toIntOrNull() ?: 0
+                if (d.s("nozzle_offset") == "true" || d.s("nozzleOffset") == "true") opt = opt or 16
+                publish(calibrationCommand(nextSeq(), opt))
+            }
             "bambu_lab/xcam_control_set" -> publish(xcamCommand(nextSeq(), d.s("module_name").orEmpty(), d.s("enable") == "true", d.s("print_halt") == "true"))
             "bambu_lab/print_option" -> {
                 val option = listOf("auto_recovery", "auto_switch_filament", "filament_tangle_detect", "nozzle_blob_detect", "air_print_detect", "sound_enable", "prompt_sound")
