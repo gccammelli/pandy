@@ -989,6 +989,8 @@ class ScreenTest {
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithText("Done").assertExists()
         compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("Reset").performClick() // back to the model's own colors
+        compose.onNodeWithText("Model colors").assertIsDisplayed()
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithText("Prepare to Print").assertExists()
         compose.onNodeWithText("Textured PEI Plate").performScrollTo().performClick()
