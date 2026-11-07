@@ -77,6 +77,7 @@ import io.github.gccammelli.pandy.buildPlateLabel
 import io.github.gccammelli.pandy.decodeImage
 import io.github.gccammelli.pandy.download
 import io.github.gccammelli.pandy.externalBadge
+import io.github.gccammelli.pandy.visibleExternalSpools
 import io.github.gccammelli.pandy.filamentKey
 import io.github.gccammelli.pandy.guide
 import io.github.gccammelli.pandy.hexColor
@@ -836,7 +837,7 @@ private fun FilamentPicker(p: Printer, project: Project, index: Int, auto: List<
                 Spacer(Modifier.width(10.dp)); T(if (ams.isSingleSlot()) "AMS HT" else "AMS ${ams.index} · slot ${slot % 4 + 1}", 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (slot == current) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
             }
         }
-        p.external.forEachIndexed { i, spool ->
+        p.visibleExternalSpools().forEach { (i, spool) ->
             val slotId = if (i == 0) 254 else 255
             val label = if (p.external.size > 1) "External spool ${i + 1}" else "External spool"
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { choose(slotId) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {

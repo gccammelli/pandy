@@ -62,6 +62,7 @@ import io.github.gccammelli.pandy.displayName
 import io.github.gccammelli.pandy.dryingDurationText
 import io.github.gccammelli.pandy.externalBadge
 import io.github.gccammelli.pandy.externalTitle
+import io.github.gccammelli.pandy.visibleExternalSpools
 import io.github.gccammelli.pandy.isHt
 import io.github.gccammelli.pandy.maxDryingTemp
 import io.github.gccammelli.pandy.modelBadge
@@ -215,11 +216,13 @@ fun FilamentScreen(p: Printer) {
                 }
                 Gap(12.dp)
             }
-            if (p.external.isNotEmpty()) Card {
-                T(if (p.external.size > 1) "External Spools" else "External Spool", 16.sp, weight = FontWeight.Bold)
+            val visibleExt = p.visibleExternalSpools()
+            if (visibleExt.isNotEmpty()) Card {
+                T(if (visibleExt.size > 1) "External Spools" else "External Spool", 16.sp, weight = FontWeight.Bold)
                 Gap(12.dp)
-                p.external.forEachIndexed { i, s ->
-                    if (i > 0) Gap(10.dp)
+                visibleExt.forEachIndexed { rowIdx, entry ->
+                    val (i, s) = entry
+                    if (rowIdx > 0) Gap(10.dp)
                     Row(Modifier.fillMaxWidth().clickable { open = s }, verticalAlignment = Alignment.CenterVertically) {
                         SlotTile(s, p.externalBadge(i), Modifier.width(64.dp))
                         Spacer(Modifier.width(14.dp))

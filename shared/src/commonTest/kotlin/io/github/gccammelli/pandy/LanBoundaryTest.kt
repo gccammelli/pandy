@@ -541,6 +541,62 @@ class LanBoundaryTest {
         assertEquals("255", ext2Cmd.s("tray_id"))
     }
 
+    @Test fun visibleExternalSpoolsMatchesHandyRulesWhenAmsIsConnected() {
+        // 1. Single nozzle with AMS and unset external spool: hides external spool
+        val amsDev = json.parseToJsonElement("""{"id":"ams1","via_device_id":"p1","model":"AMS","identifiers":[["bambu_lab","TEST_ams0"]]}""").jsonObject
+        val amsTrayEnt = json.parseToJsonElement("""{"entity_id":"sensor.ams_tray_1","device_id":"ams1","platform":"bambu_lab","translation_key":"tray","unique_id":"TEST_ams_tray_1"}""").jsonObject
+        val extEnt = json.parseToJsonElement("""{"entity_id":"sensor.ext_spool","device_id":"ext1","platform":"bambu_lab","translation_key":"external_spool","unique_id":"TEST_ext_spool"}""").jsonObject
+        val extDev = json.parseToJsonElement("""{"id":"ext1","via_device_id":"p1","model":"External Spool","identifiers":[["bambu_lab","TEST_ext"]]}""").jsonObject
+        val pDev = json.parseToJsonElement("""{"id":"p1","model":"X1C","identifiers":[["bambu_lab","TEST"]]}""").jsonObject
+
+        val pInfo = printersFrom(JsonArray(listOf(pDev, amsDev, extDev)), JsonArray(listOf(amsTrayEnt, extEnt))).single()
+        val emptyExtEntity = Entity("sensor.ext_spool", "Empty", buildJsonObject { put("type", ""); put("empty", "true"); put("active", "false") })
+        val knownExtEntity = Entity("sensor.ext_spool", "PLA", buildJsonObject { put("name", "Bambu PLA"); put("type", "PLA"); put("empty", "false"); put("active", "false") })
+        val activeExtEntity = Entity("sensor.ext_spool", "Empty", buildJsonObject { put("type", ""); put("empty", "true"); put("active", "true") })
+        val amsSpoolEntity = Entity("sensor.ams_tray_1", "PLA", buildJsonObject { put("name", "Bambu PLA"); put("type", "PLA"); put("empty", "false") })
+
+        val printerWithAmsAndEmptyExt = Printer(pInfo, mapOf("sensor.ams_tray_1" to amsSpoolEntity, "sensor.ext_spool" to emptyExtEntity))
+        assertTrue(printerWithAmsAndEmptyExt.visibleExternalSpools().isEmpty())
+
+        // 2. Single nozzle with AMS and known or active external spool: shows external spool
+        val printerWithAmsAndKnownExt = Printer(pInfo, mapOf("sensor.ams_tray_1" to amsSpoolEntity, "sensor.ext_spool" to knownExtEntity))
+        assertEquals(1, printerWithAmsAndKnownExt.visibleExternalSpools().size)
+
+        val printerWithAmsAndActiveExt = Printer(pInfo, mapOf("sensor.ams_tray_1" to amsSpoolEntity, "sensor.ext_spool" to activeExtEntity))
+        assertEquals(1, printerWithAmsAndActiveExt.visibleExternalSpools().size)
+
+        // 3. Single nozzle without AMS: shows external spool even if unset
+        val pNoAmsInfo = printersFrom(JsonArray(listOf(pDev, extDev)), JsonArray(listOf(extEnt))).single()
+        val printerNoAms = Printer(pNoAmsInfo, mapOf("sensor.ext_spool" to emptyExtEntity))
+        assertEquals(1, printerNoAms.visibleExternalSpools().size)
+
+        // 4. Dual nozzle (X2D): AMS connected to Left/Main (index 0)
+        val p2Dev = json.parseToJsonElement("""{"id":"p2","model":"X2D","identifiers":[["bambu_lab","TEST2"]]}""").jsonObject
+        val amsDev2 = json.parseToJsonElement("""{"id":"ams2","via_device_id":"p2","model":"AMS","identifiers":[["bambu_lab","TEST2_ams0"]]}""").jsonObject
+        val amsTrayEnt2 = json.parseToJsonElement("""{"entity_id":"sensor.ams2_tray_1","device_id":"ams2","platform":"bambu_lab","translation_key":"tray","unique_id":"TEST2_ams_tray_1"}""").jsonObject
+        val ext1Dev = json.parseToJsonElement("""{"id":"ext_left","via_device_id":"p2","model":"External Spool","identifiers":[["bambu_lab","TEST2_ExternalSpool"]]}""").jsonObject
+        val ext2Dev = json.parseToJsonElement("""{"id":"ext_right","via_device_id":"p2","model":"External Spool","identifiers":[["bambu_lab","TEST2_ExternalSpool2"]]}""").jsonObject
+        val ext1Ent = json.parseToJsonElement("""{"entity_id":"sensor.ext_1","device_id":"ext_left","platform":"bambu_lab","translation_key":"external_spool","unique_id":"TEST2_ExternalSpool_external_spool"}""").jsonObject
+        val ext2Ent = json.parseToJsonElement("""{"entity_id":"sensor.ext_2","device_id":"ext_right","platform":"bambu_lab","translation_key":"external_spool","unique_id":"TEST2_ExternalSpool2_external_spool"}""").jsonObject
+        val amsConnNozzleEnt = json.parseToJsonElement("""{"entity_id":"sensor.ams2_nozzle","device_id":"ams2","platform":"bambu_lab","translation_key":"connected_nozzle","unique_id":"TEST2_ams_connected_nozzle"}""").jsonObject
+
+        val p2Info = printersFrom(JsonArray(listOf(p2Dev, amsDev2, ext1Dev, ext2Dev)), JsonArray(listOf(amsTrayEnt2, ext1Ent, ext2Ent, amsConnNozzleEnt))).single()
+        val emptyExt1 = Entity("sensor.ext_1", "Empty", buildJsonObject { put("type", ""); put("empty", "true"); put("active", "false") })
+        val emptyExt2 = Entity("sensor.ext_2", "Empty", buildJsonObject { put("type", ""); put("empty", "true"); put("active", "false") })
+        val nozzleLeft = Entity("sensor.ams2_nozzle", "left", buildJsonObject {})
+
+        val dualPrinter = Printer(p2Info, mapOf(
+            "sensor.ams2_tray_1" to amsSpoolEntity,
+            "sensor.ams2_nozzle" to nozzleLeft,
+            "sensor.ext_1" to emptyExt1,
+            "sensor.ext_2" to emptyExt2
+        ))
+        // AMS is on Left, so External Spool 1 (Left/Main) is hidden; External Spool 2 (Right/Aux) is shown!
+        val dualVisible = dualPrinter.visibleExternalSpools()
+        assertEquals(1, dualVisible.size)
+        assertEquals(1, dualVisible.single().first) // index 1 = External Spool 2
+    }
+
     @Test fun jsonExtensionsAndHardwarePredicatesCoverAllCases() {
         val sample = obj("""{
             "items": [{"id": 1, "name": "a"}, "not_an_object", {"id": 2, "name": "b"}],

@@ -64,6 +64,7 @@ import io.github.gccammelli.pandy.displayName
 import io.github.gccammelli.pandy.dryingDurationText
 import io.github.gccammelli.pandy.externalBadge
 import io.github.gccammelli.pandy.externalTitle
+import io.github.gccammelli.pandy.visibleExternalSpools
 import io.github.gccammelli.pandy.modelBadge
 import io.github.gccammelli.pandy.slotLabel
 import io.github.gccammelli.pandy.light
@@ -496,17 +497,19 @@ fun AmsHeaderRow(p: Printer, a: AmsInfo, detail: Boolean = false) = Row(vertical
 
 @Composable
 private fun FilamentCard(p: Printer, onClick: () -> Unit) = Card(padding = androidx.compose.foundation.layout.PaddingValues(14.dp), onClick = onClick) {
-    if (p.ams.isEmpty() && p.external.isEmpty()) { T("No AMS or external spool in Home Assistant", 13.sp, C.Sub); return@Card }
+    val visibleExt = p.visibleExternalSpools()
+    if (p.ams.isEmpty() && visibleExt.isEmpty()) { T("No AMS or external spool in Home Assistant", 13.sp, C.Sub); return@Card }
     p.ams.forEach { (a, trays) ->
         AmsHeaderRow(p, a, detail = false)
         Gap(8.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             trays.forEachIndexed { i, s -> SlotTile(s, a.slotLabel(i), Modifier.weight(1f)) }
         }
-        Gap(12.dp)
+        if (visibleExt.isNotEmpty()) Gap(12.dp)
     }
-    p.external.forEachIndexed { i, s ->
-        if (i > 0) Gap(8.dp)
+    visibleExt.forEachIndexed { rowIdx, entry ->
+        val (i, s) = entry
+        if (rowIdx > 0) Gap(8.dp)
         Row(verticalAlignment = Alignment.CenterVertically) {
             SlotTile(s, p.externalBadge(i), Modifier.width(64.dp))
             Spacer(Modifier.width(12.dp))

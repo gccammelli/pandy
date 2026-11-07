@@ -2828,6 +2828,37 @@ class ScreenTest {
         compose.onAllNodesWithText("External Spool 2 (Right / Aux)").onFirst().assertExists()
     }
 
+    @Test fun unsetExternalSpoolHiddenWhenAmsIsConnectedToMain() {
+        val ext1 = entity("Empty", mapOf("type" to "", "empty" to "true", "active" to "false"))
+        val ext2 = entity("Generic PETG", mapOf("name" to "Generic PETG", "type" to "PETG", "color" to "#00AE42FF", "empty" to "false", "active" to "false"))
+        val info = printer.info.copy(
+            model = "X2D",
+            external = listOf("sensor.spool_1", "sensor.spool_2")
+        )
+        val p = variant(info = info, set = arrayOf(
+            "sensor.spool_1" to ext1,
+            "sensor.spool_2" to ext2
+        ))
+
+        val showFilament = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    if (showFilament.value) FilamentScreen(p)
+                    else DevicesTab(st.copy(printers = listOf(p)), p)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onAllNodesWithText("External Spool 1 (Left / Main)").assertCountEquals(0)
+        compose.onAllNodesWithText("External Spool 2 (Right / Aux)").onFirst().assertExists()
+
+        compose.runOnIdle { showFilament.value = true }
+        compose.waitForIdle()
+        compose.onAllNodesWithText("External Spool 1 (Left / Main)").assertCountEquals(0)
+        compose.onNodeWithText("External Spool 2 (Right / Aux)").assertExists()
+    }
+
     @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {
         show("Direct LAN connection") { AddDirectScreen() }
         compose.onNodeWithText("Connect",substring=false).assertIsNotEnabled()

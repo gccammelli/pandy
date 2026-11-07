@@ -337,6 +337,20 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
         a.int("humidity")?.let { add("sensor", "humidity_index", 6 - it, device = dev, uid = "AMS_${amsIndex + 1}_humidity_index", deviceModel = deviceModel) }
         a.int("humidity_raw")?.let { add("sensor", "humidity", it, device = dev, uid = "AMS_${amsIndex + 1}_humidity", deviceModel = deviceModel) }
         a.dbl("temp")?.let { add("sensor", "ams_temp", it, device = dev, uid = "AMS_${amsIndex + 1}_temperature", deviceModel = deviceModel) }
+        val isDual = (extruderInfo != null && extruderInfo.size > 1) || isDualNozzleModel(c.model)
+        if (isDual) {
+            val infoHex = a.str("info")?.removePrefix("0x")?.removePrefix("0X")?.toLongOrNull(16)
+            val nozzleNibble = infoHex?.let { ((it shr 8) and 0xFL).toInt() }
+            val connectedNozzle = when (nozzleNibble) {
+                0 -> "right"
+                1 -> "left"
+                0xE -> "track_switch"
+                else -> if (amsIndex == 0) "left" else if (amsIndex == 1) "right" else null
+            }
+            if (connectedNozzle != null) {
+                add("sensor", "connected_nozzle", connectedNozzle, device = dev, uid = "AMS_${amsIndex + 1}_connected_nozzle", deviceModel = deviceModel)
+            }
+        }
         if (deviceModel == "AMS 2 Pro" || deviceModel == "AMS HT") {
             val rawStatus = a.str("drying_status") ?: a.str("_dry_status")
             val infoCode = a.str("info")?.removePrefix("0x")?.removePrefix("0X")?.toLongOrNull(16)?.let { ((it shr 4) and 0xFL).toInt() }
