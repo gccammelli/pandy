@@ -283,7 +283,7 @@ fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
         val u = r.s("unique_id")
         val key = r.s("translation_key")
             ?: dryingKey(u, eid)
-            ?: (if (serial != null && u != null && u.startsWith("${serial}_")) u.removePrefix("${serial}_") else null)
+            ?: (if (serial != null && u != null && u.startsWith("${serial}_", ignoreCase = true)) u.substring(serial.length + 1) else null)
             ?: u?.substringAfterLast('_')
             ?: return@mapNotNull null
         "${eid.substringBefore('.')}.$key" to eid
@@ -375,6 +375,9 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val layers get() = num("sensor.total_layers")?.toInt()
     val task get() = state("sensor.subtask_name")
     val stage get() = state("sensor.stage")
+    val printWeight: Double? get() = (num("sensor.print_weight") ?: num("sensor.weight"))?.takeIf { it > 0 } ?: get("sensor.printable_objects")?.attrs?.s("weight_g")?.toDoubleOrNull()
+    val printLength: Double? get() = (num("sensor.print_length") ?: num("sensor.length"))?.takeIf { it > 0 } ?: get("sensor.printable_objects")?.attrs?.s("length_m")?.toDoubleOrNull()
+    val mesh: PreviewMesh? get() = (Repo.directPrinter ?: Repo.extras as? DirectPrinter ?: Repo.ha as? DirectPrinter)?.currentMesh
     val lightOn get() = get("light.chamber_light")?.on ?: false
     val speed get() = state("select.printing_speed") ?: state("sensor.speed_profile")
     val nozzle get() = get("sensor.nozzle_temp")?.celsius
@@ -403,8 +406,12 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val hasChamberHeater get() = info.ids.containsKey("number.target_chamber_temperature")
     val doorOpen get() = get("binary_sensor.door_open")?.on
     val camera get() = info.ids["camera.camera"]
-    val coverImage get() = get("image.cover_image")?.let { "/api/image_proxy/${it.id}?v=${it.state}" }
-    val pickImage get() = get("image.pick_image")?.let { "/api/image_proxy/${it.id}?v=${it.state}" }
+    val coverImage get() = (get("image.cover_image") ?: get("image.image"))?.takeIf { it.state != "unavailable" && it.state != "unknown" && it.state.isNotBlank() }?.let {
+        it.attrs.s("entity_picture") ?: "/api/image_proxy/${it.id}?v=${it.state}"
+    }
+    val pickImage get() = (get("image.pick_image") ?: get("image.image"))?.takeIf { it.state != "unavailable" && it.state != "unknown" && it.state.isNotBlank() }?.let {
+        it.attrs.s("entity_picture") ?: "/api/image_proxy/${it.id}?v=${it.state}"
+    }
     /** Objects on the plate: id → name (for Skip Parts). */
     val objects: Map<Int, String> get() = get("sensor.printable_objects")?.attrs?.o("objects")
         ?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { it to ((v as? JsonPrimitive)?.contentOrNull ?: "") } }?.toMap().orEmpty()
@@ -739,6 +746,19 @@ fun Printer.shouldShowExternalSpool(index: Int): Boolean {
 /** The external spools that should be visually rendered according to Handy's display rules. */
 fun Printer.visibleExternalSpools(): List<Pair<Int, Spool>> =
     external.mapIndexedNotNull { i, s -> if (shouldShowExternalSpool(i)) i to s else null }
+
+/** The spool currently feeding the toolhead (from AMS or external holder). */
+fun Printer.activeSpool(): Pair<String, Spool>? {
+    ams.forEach { (a, spools) ->
+        spools.forEachIndexed { i, s ->
+            if (s != null && s.active) return a.slotLabel(i) to s
+        }
+    }
+    external.forEachIndexed { i, s ->
+        if (s.active) return externalBadge(i) to s
+    }
+    return null
+}
 
 /** The loaded spools with their absolute tray IDs (254 and 255 for external spools), in AMS order. */
 fun Printer.loadedSpools(): List<Pair<Int, Spool>> =

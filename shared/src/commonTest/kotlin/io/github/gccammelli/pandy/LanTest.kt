@@ -375,7 +375,12 @@ class StorageTest {
     }
 
     @Test fun sliceInfo() {
-        val xml = """<config><plate><metadata key="index" value="1"/><object identify_id="270" name="clip.stl" skipped="false"/><object identify_id="281" name="clip.stl" skipped="false"/></plate></config>"""
+        val xml = """<config><plate><metadata key="index" value="1"/><metadata key="weight" value="45.6"/><metadata key="prediction" value="1200"/><object identify_id="270" name="clip.stl" skipped="false"/><object identify_id="281" name="clip.stl" skipped="false"/><filament id="1" type="PLA" color="#FFFFFF" used_g="45.6" used_m="15.2"/></plate></config>"""
+        val info = slicePlateInfo(xml, 1)
+        assertEquals(mapOf(270 to "clip.stl", 281 to "clip.stl"), info.objects)
+        assertEquals(45.6, info.weightGrams)
+        assertEquals(15.2, info.lengthMeters)
+        assertEquals(1200, info.predictionSeconds)
         assertEquals(mapOf(270 to "clip.stl", 281 to "clip.stl"), sliceObjects(xml, 1))
     }
 }

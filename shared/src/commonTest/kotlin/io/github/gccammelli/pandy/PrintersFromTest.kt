@@ -136,4 +136,17 @@ class PrintersFromTest {
         assertEquals(220.0, p.rightNozzleTarget)
         assertEquals("right", p.activeNozzle)
     }
+
+    @Test fun caseInsensitiveSerialPrefixInUniqueId() {
+        val devs = array("""[{"id":"p_sn","identifiers":[["bambu_lab","20P5BJ662702671"]]}]""")
+        val ents = array("[" + listOf(
+            entity("sensor.weight", "p_sn", null, "20p5bj662702671_print_weight"),
+            entity("sensor.length", "p_sn", null, "20p5bj662702671_print_length"),
+            entity("image.cover", "p_sn", null, "20p5bj662702671_cover_image")
+        ).joinToString(",") + "]")
+        val printer = printersFrom(devs, ents).single()
+        assertEquals("sensor.weight", printer.ids["sensor.print_weight"])
+        assertEquals("sensor.length", printer.ids["sensor.print_length"])
+        assertEquals("image.cover", printer.ids["image.cover_image"])
+    }
 }

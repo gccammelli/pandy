@@ -47,6 +47,7 @@ object Repo {
     val connected get() = ha != null
     private var token: String? = null
     private var directBackend: DirectPrinter? = null
+    val directPrinter: DirectPrinter? get() = directBackend
     /** Home Assistant's token as an HTTP header, for players and downloads that fetch from it directly. */
     fun authHeaders(): Map<String, String> = token?.let { mapOf("Authorization" to "Bearer $it") }.orEmpty()
     val haUrl get() = store.settings.getString("ha_url")

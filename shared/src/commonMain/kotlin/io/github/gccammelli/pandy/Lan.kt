@@ -309,7 +309,13 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     if (job != null) {
         add("image", "cover_image", job.key, uid = "cover_image")
         if (job.pick != null) add("image", "pick_image", job.key, uid = "pick_image")
-        add("sensor", "printable_objects", job.objects.size, buildJsonObject { putJsonObject("objects") { job.objects.forEach { (k, v) -> put("$k", v) } } })
+        add("sensor", "printable_objects", job.objects.size, buildJsonObject {
+            putJsonObject("objects") { job.objects.forEach { (k, v) -> put("$k", v) } }
+            job.weightGrams?.let { put("weight_g", it) }
+            job.lengthMeters?.let { put("length_m", it) }
+        })
+        job.weightGrams?.let { add("sensor", "print_weight", it) } ?: add("sensor", "print_weight", 0.0)
+        job.lengthMeters?.let { add("sensor", "print_length", it) } ?: add("sensor", "print_length", 0.0)
     }
     val skipped = (p["s_obj"] as? JsonArray).orEmpty()
     add("sensor", "skipped_objects", skipped.size, buildJsonObject { put("objects", JsonArray(skipped)) })
@@ -400,8 +406,16 @@ private fun trayAttrs(t: JsonObject, name: String, active: Boolean, slot: Int) =
     put("filament_id", t.str("tray_info_idx")); put("tag_uid", t.str("tag_uid"))
 }
 
-/** The current job's 3MF, read from the printer's storage: plate picture, pick map and parts. */
-class LanJob(val key: String, val cover: ByteArray?, val pick: ByteArray?, val objects: Map<Int, String>)
+/** The current job's 3MF, read from the printer's storage: plate picture, pick map, parts, and slice metrics. */
+class LanJob(
+    val key: String,
+    val cover: ByteArray?,
+    val pick: ByteArray?,
+    val objects: Map<Int, String>,
+    val weightGrams: Double? = null,
+    val lengthMeters: Double? = null,
+    val mesh: PreviewMesh? = null
+)
 
 data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String, val deviceModel: String = "", val trayAmsId: Int? = null)
 
@@ -505,12 +519,13 @@ class DirectPrinter(
 
     private val storage by lazy { storageFactory(config) }
     private var job: LanJob? = null
+    val currentMesh: PreviewMesh? get() = job?.mesh
     private var jobLoading: String? = null
     private var jobMissAt = 0L
 
     /** When the job changes, finds its 3MF on the printer (as the integration does) and reads its picture and parts. */
     private fun checkJob() {
-        val p = report.o("print")!! // checkJob runs on a print status report
+        val p = report.o("print") ?: return // checkJob runs on a print status report
         val task = p.str("subtask_name").orEmpty()
         val gcode = p.str("gcode_file").orEmpty()
         val key = "$task|$gcode"
@@ -523,9 +538,15 @@ class DirectPrinter(
             val plate = Regex("""plate_(\d+)\.gcode""").find(gcode)?.groupValues?.get(1)?.toIntOrNull() ?: 1
             job = if (found == null) LanJob(key, null, null, emptyMap()) else {
                 val (path, size) = found
-                suspend fun entry(vararg names: String) = runCatching { zipEntry(size, names.map { Regex(it) }) { o, l -> storage.read(path, o, l) }?.second }.getOrNull()
-                LanJob(key, entry("Metadata/plate_$plate\\.png", "Metadata/plate_\\d+\\.png"), entry("Metadata/pick_$plate\\.png"),
-                    entry("Metadata/slice_info\\.config")?.decodeToString()?.let { sliceObjects(it, plate) }.orEmpty())
+                suspend fun entry(vararg names: String) = runCatching {
+                    zipEntry(size, names.map { Regex(it, RegexOption.IGNORE_CASE) }) { o, l -> storage.read(path, o, l) }?.second
+                }.getOrNull()
+                val plateInfo = entry(".*Metadata/slice_info\\.config", "Metadata/slice_info\\.config")?.decodeToString()?.let { slicePlateInfo(it, plate) }
+                val meshXml = entry(".*/3dmodel\\.model", "3D/3dmodel\\.model")?.decodeToString()
+                val mesh = meshXml?.let { previewMesh(it) }
+                LanJob(key, entry(".*Metadata/plate_$plate\\.png", "Metadata/plate_$plate\\.png", ".*Metadata/plate_\\d+\\.png", "Metadata/.*\\.png"),
+                    entry(".*Metadata/pick_$plate\\.png", "Metadata/pick_$plate\\.png"),
+                    plateInfo?.objects.orEmpty(), plateInfo?.weightGrams, plateInfo?.lengthMeters, mesh)
             }
             if (job?.cover == null) jobMissAt = Clock.System.now().toEpochMilliseconds()
             jobLoading = null
@@ -534,15 +555,28 @@ class DirectPrinter(
     }
 
     private suspend fun findJobFile(task: String, gcode: String): Pair<String, Long>? {
-        val names = buildList {
-            if (task.isNotEmpty()) { if (task.endsWith(".3mf")) add(task) else { add("$task.3mf"); add("$task.gcode.3mf") } }
+        val names = buildSet {
+            val variants = listOf(task, task.replace(' ', '_'), task.replace('_', ' '))
+            for (t in variants) {
+                if (t.isNotBlank()) {
+                    if (t.endsWith(".3mf", ignoreCase = true)) add(t)
+                    else { add("$t.3mf"); add("$t.gcode.3mf") }
+                }
+            }
             val g = gcode.substringAfterLast('/')
-            if (g.isNotEmpty() && g != task && !g.startsWith("plate_")) { if (g.endsWith(".3mf")) add(g) else { add("$g.3mf"); add("$g.gcode.3mf") } }
+            if (g.isNotBlank() && g != task && !g.startsWith("plate_")) {
+                if (g.endsWith(".3mf", ignoreCase = true)) add(g)
+                else { add("$g.3mf"); add("$g.gcode.3mf") }
+            }
         }
         val dirs = listOf("/cache/" to listCached("/cache"), "/" to listCached("/"))
-        for (n in names) for ((d, files) in dirs) files.firstOrNull { it.name == n }?.let { return d + it.name to it.size }
-        if (task.isEmpty()) dirs.flatMap { (d, f) -> f.filter { it.name.endsWith(".3mf") }.map { d + it.name to it } }.maxByOrNull { it.second.modified }?.let { return it.first to it.second.size }
-        return null
+        for (n in names) for ((d, files) in dirs) files.firstOrNull { it.name.equals(n, ignoreCase = true) }?.let { return d + it.name to it.size }
+        val cleanTask = task.replace(' ', '_').removeSuffix(".3mf").removeSuffix(".gcode")
+        if (cleanTask.length >= 3) {
+            for ((d, files) in dirs) files.firstOrNull { it.name.contains(cleanTask, ignoreCase = true) && it.name.endsWith(".3mf", ignoreCase = true) }?.let { return d + it.name to it.size }
+        }
+        return dirs.flatMap { (d, f) -> f.filter { it.name.endsWith(".3mf", ignoreCase = true) }.map { d + it.name to it } }
+            .maxByOrNull { it.second.modified }?.let { it.first to it.second.size }
     }
 
     /** Print files on the printer, as the integration's print_history API lists cached prints (newest first). */
@@ -593,7 +627,7 @@ class DirectPrinter(
     private suspend fun listCached(dir: String): List<FileEntry> {
         val now = Clock.System.now().toEpochMilliseconds()
         listings[dir]?.takeIf { now - it.first < 30_000 }?.let { return it.second }
-        return storage.list(dir).also { listings[dir] = now to it }
+        return runCatching { storage.list(dir) }.getOrDefault(emptyList()).also { listings[dir] = now to it }
     }
 
     private suspend fun sizeOf(path: String) =
@@ -651,8 +685,17 @@ class DirectPrinter(
             if (rows.any { it.device == "ext" }) d("ext", "External Spool", "${config.serial}_ExternalSpool", "printer")
             if (rows.any { it.device == "ext2" }) d("ext2", "External Spool", "${config.serial}_ExternalSpool2", "printer")
         }
+        val staticRows = listOf(
+            LanRow("printer", "image", "cover_image", "cover_image", "image.pandy_${config.serial.lowercase()}_cover_image"),
+            LanRow("printer", "image", "pick_image", "pick_image", "image.pandy_${config.serial.lowercase()}_pick_image"),
+            LanRow("printer", "sensor", "printable_objects", "printable_objects", "sensor.pandy_${config.serial.lowercase()}_printable_objects"),
+            LanRow("printer", "sensor", "print_weight", "print_weight", "sensor.pandy_${config.serial.lowercase()}_print_weight"),
+            LanRow("printer", "sensor", "print_length", "print_length", "sensor.pandy_${config.serial.lowercase()}_print_length"),
+        )
+        val allRows = (rows + staticRows).distinctBy { it.id }
+        rows = allRows
         val registry = buildJsonArray {
-            rows.forEach { r ->
+            allRows.forEach { r ->
                 add(buildJsonObject {
                     put("entity_id", r.id); put("device_id", "${config.serial}_${r.device}"); put("platform", "bambu_lab")
                     put("translation_key", r.key); put("unique_id", "${config.serial}_${r.uid}"); put("disabled_by", JsonNull)
@@ -684,7 +727,10 @@ class DirectPrinter(
                         if (msg.o("print") == null && msg.o("info") == null && msg.o("get_version") == null) return@run
                         report = deepMerge(report, msg)
                         lastReport = Clock.System.now().toEpochMilliseconds()
-                        if (msg.o("print")?.str("command") == "push_status") { firstReport.complete(Unit); checkJob() }
+                        if (msg.o("print") != null) {
+                            if (!firstReport.isCompleted) firstReport.complete(Unit)
+                            checkJob()
+                        }
                         onReport?.invoke()
                     }
                 } catch (e: Exception) {
@@ -913,6 +959,18 @@ class DirectPrinter(
         }
         if (path.startsWith("/api/bambu_lab/file_cache/")) return cachedFile(path.removePrefix("/api/bambu_lab/file_cache/"))
         if (!path.startsWith("/api/camera_proxy/")) throw ApiException(NEEDS_HA)
+        if (rtspCamera(config.model)) {
+            val latestThumb = runCatching {
+                val inThumbDir = runCatching { storage.list("/timelapse/thumbnail") }.getOrDefault(emptyList())
+                val inTimelapseDir = runCatching { storage.list("/timelapse") }.getOrDefault(emptyList())
+                (inThumbDir.filter { !it.dir && it.name.endsWith(".jpg") }.map { "/timelapse/thumbnail/${it.name}" to it.modified } +
+                 inTimelapseDir.filter { !it.dir && it.name.endsWith(".jpg") }.map { "/timelapse/${it.name}" to it.modified })
+                    .maxByOrNull { it.second }
+                    ?.let { storage.read(it.first) }
+            }.getOrNull()
+            if (latestThumb != null) return latestThumb
+            throw ApiException("The camera uses RTSP video and has no snapshot")
+        }
         lastAsked = Clock.System.now().toEpochMilliseconds()
         if (camJob?.isActive != true) camJob = scope.launch {
             val job = coroutineContext[Job]!!

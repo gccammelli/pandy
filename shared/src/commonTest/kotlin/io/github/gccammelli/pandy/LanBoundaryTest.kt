@@ -120,10 +120,12 @@ class LanBoundaryTest {
     }
 
     @Test fun optionalJobMetadataDistinguishesAPlateImageFromAPickMap() {
-        val job = LanJob("job-key", null, null, mapOf(1 to "Part"))
+        val job = LanJob("job-key", null, null, mapOf(1 to "Part"), 52.3, 17.8)
         val withoutPick = entities("{}", job = job)
         assertEquals("job-key", withoutPick.getValue("cover_image").state); assertFalse(withoutPick.containsKey("pick_image"))
         assertEquals("Part", withoutPick.getValue("printable_objects").attrs.o("objects")!!.s("1"))
+        assertEquals(52.3, withoutPick.getValue("printable_objects").attrs.s("weight_g")?.toDoubleOrNull())
+        assertEquals(17.8, withoutPick.getValue("printable_objects").attrs.s("length_m")?.toDoubleOrNull())
         val withPick = entities("{}", job = LanJob("job-key", byteArrayOf(1), byteArrayOf(2), emptyMap()))
         assertEquals("job-key", withPick.getValue("pick_image").state)
     }
