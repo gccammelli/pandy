@@ -76,6 +76,7 @@ sealed interface Screen {
     data object AddHa : Screen
     data object AddDirect : Screen
     data object Slicer : Screen
+    data object JobDetails : Screen
 }
 
 object Nav {
@@ -126,6 +127,7 @@ fun Root() {
         Screen.AddHa -> AddHaScreen()
         Screen.AddDirect -> AddDirectScreen()
         Screen.Slicer -> SlicerScreen()
+        Screen.JobDetails -> JobDetailsScreen(p)
     }
 }
 

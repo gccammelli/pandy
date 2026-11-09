@@ -750,7 +750,7 @@ private fun PreviewColorsSheet(project: Project, p: Printer, current: List<Long>
 }
 
 @Composable
-private fun PreviewMeshCanvas(mesh: PreviewMesh, colors: List<Long>, showPlate: Boolean) {
+internal fun PreviewMeshCanvas(mesh: PreviewMesh, colors: List<Long>, showPlate: Boolean) {
     var yaw by remember(mesh) { mutableFloatStateOf(-0.55f) }
     var pitch by remember(mesh) { mutableFloatStateOf(0.65f) }
     var zoom by remember(mesh) { mutableFloatStateOf(1f) }

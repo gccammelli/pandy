@@ -321,7 +321,9 @@ private fun SectionHead(title: String, more: () -> Unit) = Row(Modifier.fillMaxW
 @Composable
 private fun PrintCard(p: Printer, err: (String) -> Unit) {
     var confirmStop by remember { mutableStateOf(false) }
-    Card(padding = androidx.compose.foundation.layout.PaddingValues(12.dp), onClick = if (p.printing) null else { { Nav.go(Screen.History) } }) {
+    Card(padding = androidx.compose.foundation.layout.PaddingValues(12.dp), onClick = {
+        if (p.printing) Nav.go(Screen.JobDetails) else Nav.go(Screen.History)
+    }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(C.Fill), contentAlignment = Alignment.Center) {
                 if (p.printing || p.status == "finish") HaImage(p.coverImage, Modifier.fillMaxSize().padding(4.dp))
@@ -349,7 +351,7 @@ private fun PrintCard(p: Printer, err: (String) -> Unit) {
                     else -> { T("Device Idle", 15.sp, weight = FontWeight.Medium); Gap(4.dp); T("Start printing Now!", 13.sp, C.Sub) }
                 }
             }
-            if (!p.printing) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = C.Faint)
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = C.Faint)
         }
         if (p.printing) {
             Gap(12.dp)
@@ -369,7 +371,7 @@ private fun PrintCard(p: Printer, err: (String) -> Unit) {
 }
 
 @Composable
-private fun RowScope.JobButton(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) =
+internal fun RowScope.JobButton(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) =
     Row(Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(8.dp)).background(C.Fill).clickable(onClick = onClick),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, Modifier.size(16.dp), tint = tint); Spacer(Modifier.width(4.dp)); T(label, 13.sp, C.Text)

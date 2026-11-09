@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import io.github.gccammelli.pandy.ui.*
+import androidx.compose.ui.graphics.asAndroidBitmap
 import org.junit.Rule
 import org.junit.Test
 import org.junit.Before
@@ -2857,6 +2858,56 @@ class ScreenTest {
         compose.waitForIdle()
         compose.onAllNodesWithText("External Spool 1 (Left / Main)").assertCountEquals(0)
         compose.onNodeWithText("External Spool 2 (Right / Aux)").assertExists()
+    }
+
+    @Test fun printCardOpensJobDetailsDuringPrintingAndShowsArrow() {
+        ThemeMode.mode = "light"
+        val showScreen = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    if (showScreen.value) JobDetailsScreen(printer)
+                    else DevicesTab(st, printer)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("About 1h 23min left").assertExists()
+
+        fun saveEv(name: String) {
+            val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
+            val root = generateSequence(java.io.File(System.getProperty("user.dir") ?: ".")) { it.parentFile }
+                .firstOrNull { java.io.File(it, "settings.gradle.kts").exists() }
+                ?: java.io.File(".")
+            val out = java.io.File(root, "docs/evidence/print-job-inspector/$name")
+            out.parentFile?.mkdirs()
+            java.io.FileOutputStream(out).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            val art = java.io.File("""C:\Users\dbarciela\.gemini\antigravity\brain\2d50a106-7240-43d6-801d-8c857c602e33/$name""")
+            if (art.parentFile?.exists() == true) {
+                java.io.FileOutputStream(art).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }
+        }
+
+        saveEv("devices-tab-print-card.png")
+
+        compose.onNodeWithText("Articulated Panda Keychain").performClick()
+        kotlin.test.assertEquals(Screen.JobDetails, Nav.stack.last())
+
+        compose.runOnIdle { showScreen.value = true }
+        compose.waitForIdle()
+        compose.onNodeWithText("Print Details").assertExists()
+        compose.onNodeWithText("Print Speed").assertExists()
+        compose.onNodeWithText("Material & Cost").assertExists()
+
+        saveEv("job-details-light.png")
+
+        compose.onNodeWithText("Contrast: Auto").assertExists().performClick()
+        compose.onNodeWithText("Contrast: Light").assertExists()
+
+        compose.runOnIdle { ThemeMode.mode = "dark" }
+        compose.waitForIdle()
+        saveEv("job-details-dark.png")
+        compose.runOnIdle { ThemeMode.mode = "system" }
     }
 
     @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {
