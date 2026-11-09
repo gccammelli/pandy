@@ -31,9 +31,12 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -119,6 +122,8 @@ private fun ShortcutContent(icon: ImageVector, label: String) =
  */
 @Composable
 fun HistoryScreen(p: Printer) {
+    val pl = LocalPlatform.current
+    val scope = rememberCoroutineScope()
     var reload by remember { mutableStateOf(0) }
     val files by produceState<Result<List<CachedFile>>?>(null, p.serial, reload) { value = runCatching { needHa().printHistory(p.serial) } }
     var open by remember { mutableStateOf<CachedFile?>(null) }
@@ -128,7 +133,16 @@ fun HistoryScreen(p: Printer) {
             else -> r.fold({ list ->
                 if (list.isEmpty()) Column { Empty("No prints yet"); SetupNote("Pandy lists the prints Home Assistant's Bambu Lab integration keeps. Turn on its file cache: Settings → Devices → Bambu Lab → Configure.", "docs/setup.md#file-cache", Modifier.padding(16.dp)) }
                 else androidx.compose.foundation.lazy.LazyColumn(contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(list.size, key = { list[it].path }) { i -> HistoryRow(list[i]) { open = list[i] } }
+                    items(list.size, key = { list[it].path }) { i ->
+                        val item = list[i]
+                        HistoryRow(item, onShare = {
+                            scope.launch {
+                                val bytes = item.thumbUrl?.let { runCatching { Repo.ha?.bytes(it) }.getOrNull() }
+                                val text = "Print from ${p.name.ifBlank { p.model }}:\n• ${item.title}\n• Date: ${item.modified.take(16).replace('T', ' ')}"
+                                pl.share(text, bytes, item.title)
+                            }
+                        }) { open = item }
+                    }
                 }
             }, { e -> if (Repo.extras == null) NeedsHa("Printing history") else Empty(e.message ?: "Couldn't load the history") })
         }
@@ -137,7 +151,7 @@ fun HistoryScreen(p: Printer) {
 }
 
 @Composable
-private fun HistoryRow(f: CachedFile, onClick: () -> Unit) = Card(padding = PaddingValues(10.dp), onClick = onClick) {
+private fun HistoryRow(f: CachedFile, onShare: () -> Unit, onClick: () -> Unit) = Card(padding = PaddingValues(10.dp), onClick = onClick) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(76.dp).clip(RoundedCornerShape(8.dp)).background(C.Fill), contentAlignment = Alignment.Center) {
             if (f.thumbUrl != null) HaImage(f.thumbUrl, Modifier.fillMaxSize().padding(4.dp))
@@ -149,6 +163,9 @@ private fun HistoryRow(f: CachedFile, onClick: () -> Unit) = Card(padding = Padd
             Gap(4.dp)
             T(f.modified.take(16).replace('T', ' '), 12.sp, C.Sub)
             T(sizeText(f.size), 12.sp, C.Sub)
+        }
+        Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onShare), contentAlignment = Alignment.Center) {
+            Icon(Icons.Outlined.Share, "Share", tint = C.Sub, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -185,7 +202,18 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(C.Fill)) { HaImage(f.thumbUrl, Modifier.fillMaxSize().padding(4.dp)) }
             Spacer(Modifier.width(12.dp))
-            Column { T(f.title, 15.sp, weight = FontWeight.Medium, maxLines = 2); T("Plate ${info?.plate ?: 1}", 12.sp, C.Sub) }
+            Column(Modifier.weight(1f)) { T(f.title, 15.sp, weight = FontWeight.Medium, maxLines = 2); T("Plate ${info?.plate ?: 1}", 12.sp, C.Sub) }
+            val pl = LocalPlatform.current
+            val scope = rememberCoroutineScope()
+            Box(Modifier.size(40.dp).clip(CircleShape).clickable {
+                scope.launch {
+                    val bytes = f.thumbUrl?.let { runCatching { Repo.ha?.bytes(it) }.getOrNull() }
+                    val text = "Print from ${p.name.ifBlank { p.model }}:\n• ${f.title}\n• Plate ${info?.plate ?: 1}\n• Date: ${f.modified.take(16).replace('T', ' ')}"
+                    pl.share(text, bytes, f.title)
+                }
+            }, contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Share, "Share", tint = C.Text, modifier = Modifier.size(20.dp))
+            }
         }
         if (!infoLoaded) T("Reading print settings…", 13.sp, C.Sub, modifier = Modifier.padding(top = 12.dp))
         else if (info == null) T("Print settings could not be read, so this print is disabled.", 13.sp, C.Orange, modifier = Modifier.padding(top = 12.dp))

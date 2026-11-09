@@ -110,6 +110,38 @@ class MainActivity : ComponentActivity(), PlatformUi {
         startActivity(packageManager.getLaunchIntentForPackage(androidPackage) ?: Intent(Intent.ACTION_VIEW, Uri.parse(storeUrl)))
     override fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
+    override fun share(text: String, imageBytes: ByteArray?, title: String?) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            putExtra(Intent.EXTRA_TEXT, text)
+            if (title != null) putExtra(Intent.EXTRA_SUBJECT, title)
+            if (imageBytes != null && imageBytes.isNotEmpty()) {
+                val isPng = imageBytes.size >= 4 && imageBytes[0] == 0x89.toByte() && imageBytes[1] == 0x50.toByte()
+                val mime = if (isPng) "image/png" else "image/jpeg"
+                val ext = if (isPng) "png" else "jpg"
+                type = mime
+                val uri = runCatching {
+                    if (android.os.Build.VERSION.SDK_INT >= 29) {
+                        val values = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "pandy_share_${System.currentTimeMillis()}.$ext")
+                            put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime)
+                            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Pandy")
+                        }
+                        val u = contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                        if (u != null) contentResolver.openOutputStream(u)?.use { it.write(imageBytes) }
+                        u
+                    } else null
+                }.getOrNull()
+                if (uri != null) {
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            } else {
+                type = "text/plain"
+            }
+        }
+        startActivity(Intent.createChooser(intent, title ?: "Share print"))
+    }
+
     override fun pickImage(done: (ByteArray?) -> Unit) {
         pendingPick = done
         pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
