@@ -88,6 +88,13 @@ private fun groupIcon(group: String): ImageVector = when (group) {
 internal fun AdvancedSlicerSettings(
     slicer: SlicerClient?, saved: Map<String, String>, back: () -> Unit,
     done: (Map<String, String>, List<SlicerSetting>) -> Unit,
+) = AdvancedSlicerSettingsForBackend(slicer, saved, back, null, done)
+
+@Composable
+internal fun AdvancedSlicerSettingsForBackend(
+    slicer: SlicerClient?, saved: Map<String, String>, back: () -> Unit,
+    phoneSettings: (suspend () -> List<SlicerSetting>)?,
+    done: (Map<String, String>, List<SlicerSetting>) -> Unit,
 ) {
     var settings by remember(slicer?.base, slicer?.viaHa, slicer != null) { mutableStateOf<List<SlicerSetting>?>(null) }
     var error by remember(slicer?.base, slicer?.viaHa, slicer != null) { mutableStateOf<String?>(null) }
@@ -97,10 +104,10 @@ internal fun AdvancedSlicerSettings(
     var onlyChanged by remember { mutableStateOf(false) }
     var opened by remember { mutableStateOf<Set<String>?>(null) }
     LaunchedEffect(slicer?.base, slicer?.viaHa, slicer != null) {
-        if (slicer == null) {
+        if (slicer == null && phoneSettings == null) {
             error = "Set up Pandy Slicer in Me › Settings to change these settings."
         } else try {
-            settings = slicer.settings()
+            settings = phoneSettings?.invoke() ?: slicer!!.settings()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

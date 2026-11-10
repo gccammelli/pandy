@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Category
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Print
+import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -80,13 +81,13 @@ sealed interface Screen {
 
 object Nav {
     val stack = mutableStateListOf<Screen>()
-    /** 0 Models, 1 Devices, 2 Me. Devices first, as Handy can be set to open on it. */
+    /** 0 Models, 1 Devices, 2 Me, 3 Studio (where the phone can slice). Devices first, as Handy can be set to open on it. */
     var tab by mutableStateOf(1)
     /** The model site the Models tab shows; long-pressing MakerWorld (the Models tab or Me's shortcut) switches it. */
     var site by mutableStateOf(io.github.gccammelli.pandy.ModelSite.MakerWorld)
     fun go(s: Screen) { stack += s }
     /** False when there's nothing to go back to (the system then closes the app). */
-    fun back(): Boolean = stack.removeLastOrNull() != null
+    fun back(): Boolean = stack.removeLastOrNull() != null || (tab == io.github.gccammelli.pandy.studio.ui.STUDIO_TAB && io.github.gccammelli.pandy.studio.ui.StudioSession.back())
 }
 
 /** The printer on Devices: the user's pick, else the first. */
@@ -137,16 +138,21 @@ fun Tabs(st: UiState, p: Printer) = Column(Modifier.fillMaxSize().background(C.B
         Triple("Models", Icons.Outlined.Category) @Composable { ModelsTab() },
         Triple("Devices", Icons.Outlined.Print) @Composable { DevicesTab(st, p) },
         Triple("Me", Icons.Outlined.Person) @Composable { MeTab(st) },
+    ) + if (LocalPlatform.current.studio == null) emptyList() else listOf(
+        Triple("Studio", Icons.Outlined.ViewInAr) @Composable { io.github.gccammelli.pandy.studio.ui.StudioTab(p) },
     )
+    val current = Nav.tab.coerceIn(0, tabs.lastIndex)
+    // The plate editor needs the whole screen: Back returns to Studio's first screen and the tab bar.
+    val bar = !(current == io.github.gccammelli.pandy.studio.ui.STUDIO_TAB && io.github.gccammelli.pandy.studio.ui.StudioSession.fullScreen)
     var tip by remember { mutableStateOf(!Repo.modelsTipSeen) }
     val closeTip = { tip = false; Repo.seeModelsTip() }
     Box(Modifier.weight(1f)) {
-        tabs[Nav.tab].third()
-        if (tip && Nav.tab == 0) ModelsTip(Modifier.align(Alignment.BottomStart), closeTip)
+        tabs[current].third()
+        if (tip && current == 0) ModelsTip(Modifier.align(Alignment.BottomStart), closeTip)
     }
-    Row(Modifier.fillMaxWidth().background(C.Nav).navigationBarsPadding().height(58.dp)) {
+    if (bar) Row(Modifier.fillMaxWidth().background(C.Nav).navigationBarsPadding().height(58.dp)) {
         tabs.forEachIndexed { i, (label, icon) ->
-            val sel = Nav.tab == i
+            val sel = current == i
             val tab = Modifier.weight(1f).fillMaxSize()
             val content: @Composable () -> Unit = {
                 Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {

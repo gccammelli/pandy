@@ -5,6 +5,9 @@
     <!-- Finding printers on the Wi-Fi (they announce themselves by multicast). -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Studio's slicer is a separate add-on (AGPL): Pandy may call it, and install it when the user asks for it. -->
+    <uses-permission android:name="${slicerPackage}.permission.SLICE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Print alerts, and the foreground service that keeps Pandy connected for them. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -14,6 +17,7 @@
     <!-- To open Bambu Handy when the printer only takes commands from Bambu's apps. -->
     <queries>
         <package android:name="bbl.intl.bambulab.com" />
+        <package android:name="${slicerPackage}" />
     </queries>
 
     <application
@@ -36,7 +40,37 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- "Open with Pandy" for STL and 3MF files, into the Studio tab. Many apps hand them over as plain binary files. -->
+            <intent-filter android:label="Pandy Studio">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="model/stl" />
+                <data android:mimeType="model/3mf" />
+                <data android:mimeType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />
+                <data android:mimeType="application/sla" />
+                <data android:mimeType="application/vnd.ms-pki.stl" />
+                <data android:mimeType="model/x.stl-binary" />
+                <data android:mimeType="model/x.stl-ascii" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter android:label="Pandy Studio">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="model/stl" />
+                <data android:mimeType="model/3mf" />
+                <data android:mimeType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />
+                <data android:mimeType="application/sla" />
+                <data android:mimeType="application/vnd.ms-pki.stl" />
+                <data android:mimeType="model/x.stl-binary" />
+                <data android:mimeType="model/x.stl-ascii" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
         </activity>
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.slicerfiles"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/slicer_paths" />
+        </provider>
         <service android:name=".WatchService" android:exported="false" android:foregroundServiceType="connectedDevice" />
         <receiver android:name=".NotificationActionReceiver" android:exported="false" />
     </application>

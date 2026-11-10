@@ -1,0 +1,46 @@
+{
+  "filament1.json": {
+    "compatible_printers": [
+      "M"
+    ],
+    "filament_density": [
+      "1.26"
+    ],
+    "filament_id": "PLA",
+    "filament_max_volumetric_speed": [
+      "21"
+    ],
+    "filament_settings_id": [
+      "case filament 1"
+    ],
+    "from": "User",
+    "inherits": "F",
+    "name": "case filament 1",
+    "type": "filament"
+  },
+  "machine.json": {
+    "from": "User",
+    "inherits": "M",
+    "machine_start_gcode": "G28\nG29",
+    "name": "case printer",
+    "printer_model": "X1",
+    "printer_settings_id": "case printer",
+    "type": "machine"
+  },
+  "process.json": {
+    "compatible_printers": [
+      "M"
+    ],
+    "from": "User",
+    "inherits": "P",
+    "layer_height": "0.2",
+    "name": "case process",
+    "outer_wall_speed": [
+      "200"
+    ],
+    "print_settings_id": "case process",
+    "sparse_infill_density": "15%",
+    "type": "process",
+    "wall_loops": "3"
+  }
+}

@@ -93,6 +93,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -120,7 +121,7 @@ fun MakerWorld(modifier: Modifier, site: io.github.gccammelli.pandy.ModelSite) {
     val platform = LocalPlatform.current
     val st by Repo.state.collectAsState()
     // Thingiverse and Printables turn their download buttons into Print only once Pandy Slicer is set up.
-    web.canPrint = (st.printer()?.let { it.online && !it.controlBlocked } ?: false) && (site == io.github.gccammelli.pandy.ModelSite.MakerWorld || Repo.slicer != null)
+    web.canPrint = (st.printer()?.let { it.online && !it.controlBlocked } ?: false) && (site == io.github.gccammelli.pandy.ModelSite.MakerWorld || Repo.slicer != null || (Repo.phoneSlicerPreferred && platform.phoneSlicerAvailable()))
     web.overlayBack = if (printDownload != null) (sheetBack ?: { printDownload = null }) else null
     Box(modifier) {
         WebPage(site.home, Modifier.fillMaxSize(), onDownload = { d ->
@@ -182,6 +183,9 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     val p = st.printer() ?: return close()
     val err = errorToast()
     val scope = rememberCoroutineScope()
+    val platform = LocalPlatform.current
+    val phone = Repo.phoneSlicerPreferred && platform.phoneSlicerSupported
+    val phoneAvailable = phone && platform.phoneSlicerAvailable()
     var step by remember { mutableStateOf(Step.Download) }
     var data by remember { mutableStateOf<ByteArray?>(null) }
     var stlSource by remember { mutableStateOf<ByteArray?>(null) } // an STL's own bytes: its 3D preview is built from them, not from the wrapped 3MF
@@ -305,27 +309,55 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         step = Step.Slicing; printFailure = null
         scope.launch {
             runCatching {
-                val (path, sliced) = withContext(Dispatchers.Default) { slicer!!.sliceAndUpload(bytes, selectedPlate, name, to, io.github.gccammelli.pandy.printerPreset(p.model, p.state("sensor.nozzle_diameter")), buildPlateCode(selectedBuildPlate),
+                val preset = io.github.gccammelli.pandy.printerPreset(p.model, p.state("sensor.nozzle_diameter"))
+                val (path, sliced) = if (phone) {
+                    val printer = preset
+                    val supported = io.github.gccammelli.pandy.phoneSettings(platform.phoneSlicer("CAPABILITIES_V1", "{\"version\":1}")).associateBy { it.key }
+                    if (selectedSettings.any { (key, value) -> supported[key]?.valid(value) != true }) throw ApiException("A selected slicer setting is no longer supported. Review the advanced settings.")
+                    val request = io.github.gccammelli.pandy.phoneSliceRequest(selectedPlate, name, printer, buildPlateCode(selectedBuildPlate), plainSpool?.second?.type, plainSpool?.second?.let { io.github.gccammelli.pandy.colorHex(it.color) }, selectedSettings)
+                    val response = platform.phoneSlicer("SLICE_V1", request, bytes)
+                    val (output, details) = withContext(Dispatchers.Default) { io.github.gccammelli.pandy.phoneSliceResult(response, selectedSettings, selectedPlate, printer, buildPlateCode(selectedBuildPlate)) }
+                    // Pandy may have stopped its live connection while Studio was in the foreground.
+                    // Require a new snapshot rather than trusting the state from before slicing.
+                    Repo.stop()
+                    Repo.state.value = Repo.state.value.copy(live = false)
+                    Repo.start()
+                    val current = try {
+                        withTimeout(15_000) { Repo.state.first { it.live } }.printer()
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        throw ApiException("Pandy could not refresh the printer after slicing. Review the print and try again.")
+                    }
+                    if (current == null || current.serial != p.serial || !current.online || current.printing || current.controlBlocked) throw ApiException("The selected printer is no longer ready. Review the print and try again.")
+                    val filename = "pandy-${kotlin.random.Random.nextLong().toULong()}.gcode.3mf"
+                    withContext(Dispatchers.Default) { io.github.gccammelli.pandy.printerStorage(to).write("/cache/$filename", output) }
+                    "cache/$filename" to details
+                } else withContext(Dispatchers.Default) { slicer!!.sliceAndUpload(bytes, selectedPlate, name, to, preset, buildPlateCode(selectedBuildPlate),
                     plainSpool?.second?.type, plainSpool?.second?.let { io.github.gccammelli.pandy.colorHex(it.color) }, selectedSettings) }
                 step = Step.Starting
+                val livePrinter = if (phone) Repo.state.value.printer()?.takeIf { it.serial == p.serial && it.online && !it.printing && !it.controlBlocked }
+                    ?: throw ApiException("The selected printer is no longer ready. Review the print and try again.") else p
+                if (phone && plainSpool != null && livePrinter.loadedSpools().none { (slot, spool) ->
+                    slot == plainSpool.first && spool.type == plainSpool.second.type && spool.color == plainSpool.second.color && spool.filamentId == plainSpool.second.filamentId
+                })
+                    throw ApiException("The selected filament has changed. Review the print and try again.")
                 val mapping = if (sliced == null) {
                     if (p.ams.isNotEmpty() && projectNow.filaments.isNotEmpty()) throw ApiException("The slicer returned no filament mapping; refusing to print")
                     null
                 } else {
                     if (sliced.filaments.isEmpty() && projectNow.filaments.isNotEmpty()) throw ApiException("The slicer returned no filament mapping; refusing to print")
-                    val auto = autoMapping(p, sliced.filaments)
+                    val auto = autoMapping(livePrinter, sliced.filaments)
                     val ids = sliced.filaments.mapIndexed { i, filament -> filament["id"]?.toIntOrNull() ?: i + 1 }
-                    val valid = p.loadedTrayIds()
+                    val valid = livePrinter.loadedTrayIds()
                     // A plain model prints in the spool the user picked; a project's filaments are matched to the loaded ones.
-                    val chosen = if (plainSpool != null) listOf(plainSpool.first) else sliced.filaments.mapIndexed { i, filament ->
-                        (if (selectedPresets) manualMapping[filamentKey(filament["type"].orEmpty(), filament["color"].orEmpty())]?.takeIf { slot -> slot in valid } else null) ?: auto?.getOrNull(i) ?: if (p.ams.isEmpty()) 254 else -1
+                    val chosen = if (plainSpool != null) listOf(plainSpool.first.takeIf { !phone || it in valid || livePrinter.ams.isEmpty() } ?: -1) else sliced.filaments.mapIndexed { i, filament ->
+                        (if (selectedPresets) manualMapping[filamentKey(filament["type"].orEmpty(), filament["color"].orEmpty())]?.takeIf { slot -> slot in valid } else null) ?: auto?.getOrNull(i) ?: if (livePrinter.ams.isEmpty()) 254 else -1
                     }
                     if (chosen.any { it < 0 }) throw ApiException("Load a matching filament before printing")
                     if (chosen.isEmpty()) null else List(ids.maxOrNull() ?: 0) { slot ->
                         ids.indexOf(slot + 1).let { i -> if (i < 0) -1 else chosen[i] }
                     }
                 }
-                withContext(Dispatchers.Default) { Repo.ha!!.startPrint(p, path, selectedPlate, mapping, selectedTimelapse, selectedLeveling, selectedFlow, buildPlateCode(selectedBuildPlate)) }
+                withContext(Dispatchers.Default) { Repo.ha!!.startPrint(livePrinter, path, if (phone) sliced!!.index else selectedPlate, mapping, selectedTimelapse, selectedLeveling, selectedFlow, buildPlateCode(selectedBuildPlate)) }
                 if (Repo.lan == null) Repo.saveLan(to)
             }.onSuccess { close(); Nav.stack.clear(); Nav.tab = 1 }
                 .onFailure { step = Step.Ready; printFailure = io.github.gccammelli.pandy.failureText(it); err(printFailure!!) }
@@ -354,11 +386,12 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     val manualReady = presets && pr.filaments.isNotEmpty() && pr.filaments.all { (type, colour) -> manualMapping[filamentKey(type, colour)] in validSlots }
     val mappingReady = pr.filaments.isEmpty() || auto != null || p.ams.isEmpty() || manualReady
     val setupNote = when {
-        slicer == null -> "Printing models needs Pandy Slicer. Add it in Me › Settings."
+        phone && !phoneAvailable -> "Install the Pandy slicer plugin to slice on this phone."
+        !phone && slicer == null -> "Printing models needs Pandy Slicer. Add it in Me › Settings."
         !mappingReady -> "Load matching filament types, or choose every model filament in Match my filament."
         else -> null
     }
-    val setupGuide = "docs/slicer.md".takeIf { slicer == null }
+    val setupGuide = "docs/slicer.md".takeIf { !phone && slicer == null }
     when (view) {
         PrepareView.Profile -> ProfileView(pr, name, close) { view = PrepareView.Prepare }
         PrepareView.Prepare -> PrepareView(
@@ -375,12 +408,12 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             slicerSettingsCount = slicerSettings.size, openSlicerSettings = { view = PrepareView.SlicerSettings },
             print = {
                 confirmPrint = true
-            }, step = step, needsAccessCode = !Repo.demo && savedLan == null, canPrint = Repo.demo || (step == Step.Ready && p.online && lan != null && slicer != null && mappingReady), code = code,
+            }, step = step, needsAccessCode = !Repo.demo && savedLan == null, canPrint = Repo.demo || (step == Step.Ready && p.online && lan != null && (if (phone) phoneAvailable else slicer != null) && mappingReady), code = code,
             setCode = { code = it }, modelNotice = shortModel(pr.printerModel)?.takeIf { it != p.model }?.let { "Prepared for ${p.model}; the designer's ${it} profile will be converted by Pandy Slicer." },
             setupNote = setupNote, setupGuide = setupGuide, help = { help = it }, printFailure = printFailure,
         )
         PrepareView.Preview -> PreviewView(p, pr, plate, auto, manualMapping, presets, plainColor = pickedSpool?.second?.color, back = { view = PrepareView.Prepare })
-        PrepareView.SlicerSettings -> AdvancedSlicerSettings(slicer, slicerSettings, back = { view = PrepareView.Prepare }) { values, info ->
+        PrepareView.SlicerSettings -> AdvancedSlicerSettingsForBackend(slicer.takeUnless { phone }, slicerSettings, back = { view = PrepareView.Prepare }, phoneSettings = if (phone) ({ io.github.gccammelli.pandy.phoneSettings(platform.phoneSlicer("CAPABILITIES_V1", "{\"version\":1}")) }) else null) { values, info ->
             slicerSettings = values; slicerSettingInfo = info; view = PrepareView.Prepare
         }
     }
@@ -417,7 +450,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
                 if (Repo.demo) {
                     Repo.act(err) { startPrint(p, "cache/$name.gcode.3mf", plate, null, timelapse, leveling, flow, buildPlateCode(buildPlate)) }
                     close(); Nav.stack.clear(); Nav.tab = 1
-                } else if (slicer == null) err("Set up Pandy Slicer in Me › Settings first") else beginPrint()
+                } else if (!phone && slicer == null) err("Set up Pandy Slicer in Me › Settings first") else beginPrint()
             }) { T("Start", color = C.Accent, weight = FontWeight.Medium) }
         },
         dismissButton = { TextButton(onClick = { confirmPrint = false }) { T("Cancel", color = C.Sub) } },
@@ -866,6 +899,7 @@ fun SlicerScreen() = Page("Slicer", { Nav.back() }) {
     var checkedAddOn by remember { mutableStateOf(false) } // which check [status] belongs to
     val scope = rememberCoroutineScope()
     val pl = LocalPlatform.current
+    var phonePreferred by remember { mutableStateOf(Repo.phoneSlicerPreferred) }
     val ha = Repo.haApi
     fun check(c: io.github.gccammelli.pandy.SlicerClient, saved: () -> Unit = {}) {
         busy = true; status = null; checkedAddOn = c.viaHa
@@ -877,6 +911,18 @@ fun SlicerScreen() = Page("Slicer", { Nav.back() }) {
         }
     }
     Column(Modifier.verticalScroll(rememberScrollState()).imePadding().padding(20.dp)) {
+        if (pl.phoneSlicerSupported) {
+            T("Preferred slicer", 16.sp, weight = FontWeight.Medium)
+            Gap(8.dp)
+            ToggleLine("Slicer plugin on this phone", phonePreferred, enabled = true) { selected ->
+                phonePreferred = selected; Repo.preferPhoneSlicer(selected)
+            }
+            T(if (phonePreferred) {
+                if (pl.phoneSlicerAvailable()) "The slicer plugin will slice models on this phone."
+                else "Install the Pandy slicer plugin to use it for slicing."
+            } else "Pandy uses the Home Assistant add-on or Docker slicer below.", 13.sp, C.Sub, lh = 18.sp)
+            Gap(24.dp)
+        }
         if (ha != null) {
             T("Pandy prints models from MakerWorld, Thingiverse and Printables by having Pandy Slicer (Bambu Studio's slicer in a container) slice them and put them on the printer. Install the Pandy Slicer add-on in Home Assistant: Pandy reaches it through Home Assistant, so there's nothing to enter here.", 14.sp, C.Sub, lh = 20.sp)
             Gap(16.dp)

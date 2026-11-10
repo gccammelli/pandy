@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="io.github.gccammelli.pandy.slicer.testbed.permission.SLICE" />
+    <queries><package android:name="io.github.gccammelli.pandy.slicer.testbed" /></queries>
+    <application>
+        <activity android:name=".PluginClientProbeActivity" android:exported="true" />
+        <activity android:name=".BenchyProbeActivity" android:exported="true" />
+        <activity android:name=".PhoneProbeActivity" android:exported="true" />
+    </application>
+</manifest>

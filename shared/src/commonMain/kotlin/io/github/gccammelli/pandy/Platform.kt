@@ -42,6 +42,18 @@ interface PlatformUi {
     fun saveFile(name: String, mime: String, bytes: ByteArray, done: (Throwable?) -> Unit)
     /** Opens another app (Bambu Handy), or its store page when it isn't installed. */
     fun openApp(androidPackage: String, storeUrl: String)
+    /** Versioned phone-slicer exchange. Unsupported platforms retain the server slicer. */
+    val phoneSlicerSupported: Boolean get() = false
+    fun phoneSlicerAvailable(): Boolean = false
+    suspend fun phoneSlicer(action: String, request: String, model: ByteArray? = null): PhoneSlicerResponse =
+        throw ApiException("The slicer plugin is not available on this device.")
+    /** What the Studio tab runs on (the slicer plugin's client); null where Pandy can't slice on the device, which hides the tab. */
+    val studio: io.github.gccammelli.pandy.studio.Platform? get() = null
+    /**
+     * Downloads the slicer plugin from its latest release, checks it is the published file and made by Pandy's
+     * developer, and hands it to the system installer. [progress]: 0–1 of the download.
+     */
+    suspend fun installSlicerPlugin(progress: (Float) -> Unit): Unit = throw ApiException("The slicer plugin is not available on this device.")
     /** Full-screen live view turns the phone sideways; false restores the normal orientation. */
     fun landscape(on: Boolean)
     /** Print alerts need Pandy to keep running in the background, which only Android allows; iOS hides the setting. */
@@ -51,6 +63,18 @@ interface PlatformUi {
     /** Starts or stops the background connection to match the setting. */
     fun watchInBackground(on: Boolean) {}
 }
+
+/** Serializes phone slicer requests; the caller may retry after completion or cancellation. */
+class PhoneExchangeGate {
+    private val mutex = kotlinx.coroutines.sync.Mutex()
+
+    suspend fun <T> run(block: suspend () -> T): T {
+        if (!mutex.tryLock()) throw ApiException("Another slicer request is already running.")
+        try { return block() } finally { mutex.unlock() }
+    }
+}
+
+data class PhoneSlicerResponse(val metadata: String, val file: ByteArray? = null)
 
 val LocalPlatform = staticCompositionLocalOf<PlatformUi> { error("No platform provided") }
 

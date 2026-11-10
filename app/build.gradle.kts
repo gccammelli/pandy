@@ -10,6 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "io.github.gccammelli.pandy" + if (providers.gradleProperty("pandy.testbed").isPresent) ".testbed" else ""
+        manifestPlaceholders["slicerPackage"] = "io.github.gccammelli.pandy.slicer" + if (providers.gradleProperty("pandy.testbed").isPresent) ".testbed" else ""
         minSdk = 26
         targetSdk = 36
         versionCode = 29
@@ -46,6 +47,7 @@ android {
     buildFeatures { compose = true; buildConfig = true }
 
     dependenciesInfo { includeInApk = false; includeInBundle = false }
+    testOptions.unitTests.isIncludeAndroidResources = true
 }
 
 kotlin {
@@ -65,4 +67,7 @@ dependencies {
     implementation(libs.compose.material3)
 
     implementation(libs.kotlinx.coroutines.android)
+
+    testImplementation(kotlin("test"))
+    testImplementation("org.robolectric:robolectric:4.17")
 }

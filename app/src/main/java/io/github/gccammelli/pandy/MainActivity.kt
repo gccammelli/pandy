@@ -19,12 +19,76 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import io.github.gccammelli.pandy.ui.AppTheme
 import io.github.gccammelli.pandy.ui.Nav
 import io.github.gccammelli.pandy.ui.Screen
 import io.github.gccammelli.pandy.ui.Root
+import io.github.gccammelli.pandy.studio.ui.sharedModelName
 
-class MainActivity : ComponentActivity(), PlatformUi {
+open class MainActivity : ComponentActivity(), PlatformUi {
+    private val phoneGate = PhoneExchangeGate()
+    private val studioPlugin by lazy { StudioPluginClient(applicationContext) }
+    override val phoneSlicerSupported get() = true
+    override fun phoneSlicerAvailable() = studioPlugin.available()
+    override suspend fun phoneSlicer(action: String, request: String, model: ByteArray?): PhoneSlicerResponse = withContext(Dispatchers.Main) {
+        phoneGate.run {
+            when (action) {
+                "CAPABILITIES_V1" -> PhoneSlicerResponse(studioPlugin.capabilities().toString(), null)
+                "SLICE_V1" -> studioPlugin.serverSlice(request, model ?: throw ApiException("Choose a model before slicing."))
+                else -> throw ApiException("This slicer action is not available yet.")
+            }
+        }
+    }
+    override val studio by lazy { StudioHost(this, studioPlugin) }
+    override suspend fun installSlicerPlugin(progress: (Float) -> Unit) = SlicerInstaller(applicationContext, studioPlugin.pkg).install(progress)
+    override fun onResume() {
+        super.onResume()
+        if (studioPlugin.available()) SlicerInstaller(applicationContext, studioPlugin.pkg).clear()
+    }
+    private var pendingModels: ((List<Uri>) -> Unit)? = null
+    private val modelPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        pendingModels?.let { pendingModels = null; it(uris) }
+    }
+
+    /** The system file picker, for the Studio tab: the chosen STL and 3MF files. */
+    suspend fun pickModels(): List<Pair<String, ByteArray>> {
+        val uris = kotlinx.coroutines.suspendCancellableCoroutine<List<Uri>> { c ->
+            pendingModels?.invoke(emptyList())
+            pendingModels = { c.resumeWith(Result.success(it)) }
+            modelPicker.launch(arrayOf("*/*"))
+        }
+        return withContext(Dispatchers.IO) { uris.map { readModel(it) } }
+    }
+
+    /** A model file's name and bytes. Apps often share them without a usable name: then the content says which it is. */
+    private fun readModel(uri: Uri): Pair<String, ByteArray> {
+        if (!sharedUriAllowed(uri, packageName)) throw ApiException("Pandy can't open that file.")
+        val listed = runCatching {
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "model"
+        val bytes = (contentResolver.openInputStream(uri) ?: throw ApiException("Couldn't read $listed.")).use { input ->
+            val out = java.io.ByteArrayOutputStream(); val buf = ByteArray(1 shl 16)
+            while (true) { val n = input.read(buf); if (n < 0) break; out.write(buf, 0, n); if (out.size() > 100_000_000) throw ApiException("$listed is larger than 100 MB.") }
+            out.toByteArray()
+        }
+        return sharedModelName(listed, bytes) to bytes
+    }
+
+    /** Opens an STL or 3MF another app sent ("Open with Pandy"): in Studio, or the print sheet for a 3MF project. */
+    private fun openShared(i: Intent?) {
+        val uri = sharedUri(i) ?: return
+        i?.action = null // handled: a rotation or relaunch must not open it again
+        CoroutineScope(Dispatchers.Main).launch {
+            val session = io.github.gccammelli.pandy.studio.ui.StudioSession
+            // Reading and unpacking happen off the main thread; OutOfMemoryError included: the file comes from another app.
+            runCatching { withContext(Dispatchers.IO) { readModel(uri).let { (name, bytes) -> Triple(name, bytes, session.isProject(name, bytes)) } } }
+                .onSuccess { (name, bytes, project) -> if (!session.open(name, bytes, project)) toast("Pandy opens STL and 3MF files.") }
+                .onFailure { toast((it as? ApiException)?.message ?: "Couldn't open the file.") }
+        }
+    }
+
     private var pendingPick: ((ByteArray?) -> Unit)? = null
     private var pendingFileBytes: ByteArray? = null
     private var pendingFileDone: ((Throwable?) -> Unit)? = null
@@ -58,6 +122,7 @@ class MainActivity : ComponentActivity(), PlatformUi {
             }
         })
         debugOpen(intent)
+        if (savedInstanceState == null) openShared(intent)
         setContent { CompositionLocalProvider(LocalPlatform provides this) { AppTheme { Root() } } }
     }
 
@@ -167,11 +232,14 @@ class MainActivity : ComponentActivity(), PlatformUi {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         debugOpen(intent)
+        openShared(intent)
     }
 
     /** Debug builds: `adb shell am start -n …/.MainActivity --es screen control` opens a screen directly (for testing). */
     private fun debugOpen(i: Intent?) {
         if (!BuildConfig.DEBUG) return
+        // `--es plugin_release http://127.0.0.1:8765/latest.json`: where "Get the slicer" looks for the plugin (with `adb reverse`).
+        i?.getStringExtra("plugin_release")?.let { SlicerInstaller.debugRelease = it }
         // `--es print_url http://…/model.3mf`: hands the MakerWorld print sheet a file, as a download from the web view would.
         i?.getStringExtra("print_url")?.let { u -> Nav.stack.clear(); Nav.tab = 0; io.github.gccammelli.pandy.ui.debugDownload.value = WebDownload(u, u.substringAfterLast('/'), null, printSheet = true); return }
         // `--es site thingiverse|printables|makerworld`: the Models tab shows that site.
@@ -185,7 +253,7 @@ class MainActivity : ComponentActivity(), PlatformUi {
             "assistant" to Screen.Assistant, "files" to Screen.Files, "storage" to Screen.PrinterFiles, "filament" to Screen.Filament,
             "history" to Screen.History, "settings" to Screen.Settings, "about" to Screen.About, "slicer" to Screen.Slicer)
         Nav.stack.clear()
-        when (name) { "models" -> Nav.tab = 0; "devices" -> Nav.tab = 1; "me" -> Nav.tab = 2; else -> screens[name]?.let { Nav.go(it) } }
+        when (name) { "models" -> Nav.tab = 0; "devices" -> Nav.tab = 1; "me" -> Nav.tab = 2; "studio" -> Nav.tab = 3; else -> screens[name]?.let { Nav.go(it) } }
     }
 
     override fun landscape(on: Boolean) {
@@ -197,3 +265,16 @@ class MainActivity : ComponentActivity(), PlatformUi {
         enableEdgeToEdge(style, style)
     }
 }
+
+/** The file a VIEW or SEND intent hands over; null for anything else. Any app can send these: nothing in them is trusted. */
+fun sharedUri(i: Intent?): Uri? = runCatching {
+    @Suppress("DEPRECATION")
+    when (i?.action) { Intent.ACTION_VIEW -> i.data; Intent.ACTION_SEND -> i.extras?.get(Intent.EXTRA_STREAM) as? Uri; else -> null }
+}.getOrNull()
+
+/**
+ * Whether Pandy may read a file another app asked it to open: only what that app shares through a content provider,
+ * never a path (Pandy could be pointed at its own files: printer access codes, tokens) or Pandy's own providers.
+ */
+fun sharedUriAllowed(uri: Uri, packageName: String): Boolean =
+    uri.scheme == "content" && uri.authority?.substringAfterLast('@')?.startsWith(packageName) != true
