@@ -31,7 +31,11 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /** The editor talks only to a same-signature plugin; the engine is never loaded into Pandy. */
-class StudioPluginClient(private val context: Context) : StudioEngine {
+class StudioPluginClient(private val context: Context, val engineId: String = "bambu") : StudioEngine {
+    init { require(engineId in setOf("bambu", "orca")) { "Unsupported slicing engine." } }
+    private var advertisedResourceVersion: String? = null
+    private var loadedResourceVersion: String? = null
+    fun forEngine(id: String) = StudioPluginClient(context, id)
     val pkg get() = "io.github.gccammelli.pandy.slicer" + if (BuildConfig.APPLICATION_ID.endsWith(".testbed")) ".testbed" else ""
     /**
      * Installed, and signed with Pandy's own key. The plugin's permission keeps other apps from calling it; this keeps
@@ -65,6 +69,7 @@ class StudioPluginClient(private val context: Context) : StudioEngine {
                     try {
                         remote = Messenger(binder)
                         params.putString("request_id", id)
+                        params.putString("engine_id", engineId)
                         remote!!.send(Message.obtain(null, code).apply { data = params; replyTo = listener })
                     } catch (e: Exception) { unbind(); if (continuation.isActive) continuation.resumeWithException(e) }
                 }
@@ -83,20 +88,33 @@ class StudioPluginClient(private val context: Context) : StudioEngine {
             }
         }
     }
-    suspend fun capabilities() = JSONObject(request(1))
+    // A cancelled slice may still be exiting in the plugin. Retry only read-only discovery requests.
+    private suspend fun discovery(code: Int, params: Bundle = Bundle()): String {
+        repeat(20) { attempt ->
+            try { return request(code, params) } catch (e: ApiException) {
+                if (e.message != "Another slice request is already running." || attempt == 19) throw e
+                kotlinx.coroutines.delay(250)
+            }
+        }
+        error("Slicer is busy.")
+    }
+    suspend fun capabilities() = JSONObject(discovery(1)).also { metadata ->
+        require(metadata.optString("engine_id", "bambu") == engineId) { "The plugin returned another engine." }
+        advertisedResourceVersion = metadata.optString("resource_version").takeIf { it.isNotEmpty() }
+    }
 
     suspend fun resources(): File {
-        val dir = File(context.cacheDir, "studio-profiles")
+        val dir = File(context.cacheDir, "studio-profiles/$engineId")
         val archive = File(context.cacheDir, "studio-resources-${UUID.randomUUID()}.zip")
         try {
             val pfd = ParcelFileDescriptor.open(archive, ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_TRUNCATE or ParcelFileDescriptor.MODE_READ_WRITE)
-            val reply = try { request(4, Bundle().apply { putParcelable("output", pfd) }) } finally { pfd.close() }
+            val reply = try { discovery(4, Bundle().apply { putParcelable("output", pfd) }) } finally { pfd.close() }
             return withContext(Dispatchers.IO) {
-                val metadata = JSONObject(reply); require(metadata.getInt("version") == 1)
+                val metadata = JSONObject(reply)
                 val digest = MessageDigest.getInstance("SHA-256")
                 archive.inputStream().use { stream -> val buf = ByteArray(65536); while (true) { val n = stream.read(buf); if (n < 0) break; digest.update(buf, 0, n) } }
                 val hash = digest.digest().joinToString("") { "%02x".format(it) }
-                require(hash == metadata.getString("sha256")) { "Slicer profiles failed their integrity check." }
+                val version = studioResourceVersion(engineId, metadata, hash, advertisedResourceVersion)
                 val target = File(dir, hash)
                 if (!File(target, ".complete").exists()) {
                     val partial = File(dir, "$hash.tmp"); partial.deleteRecursively(); partial.mkdirs()
@@ -119,6 +137,7 @@ class StudioPluginClient(private val context: Context) : StudioEngine {
                         target.deleteRecursively(); check(partial.renameTo(target)) { "Could not install slicer profiles." }
                     } finally { partial.deleteRecursively() }
                 }
+                loadedResourceVersion = version
                 target
             }
         } finally { archive.delete() }
@@ -127,13 +146,14 @@ class StudioPluginClient(private val context: Context) : StudioEngine {
     override suspend fun profiles(): ProfileSource {
         val root = resources().canonicalFile
         return ProfileSource { path ->
-            val file = File(root, if (path.startsWith("pandy/")) path else "resources/$path").canonicalFile
+            val file = File(root, if (path.startsWith("pandy/")) path else "${if (engineId == "orca") "pandy/editor" else "resources"}/$path").canonicalFile
             require(file.path.startsWith(root.path + File.separator)) { "Invalid profile path." }
             file.takeIf { it.isFile }?.readText()
         }
     }
 
     override suspend fun slice(job: SliceJob, onLog: (String) -> Unit): SliceRun {
+        require(engineId == "bambu" || loadedResourceVersion != null) { "Load this engine’s profiles before slicing." }
         val started = SystemClock.elapsedRealtime()
         val log = mutableListOf<String>()
         val (bytes, response) = sliceFile("editor", job.pluginRequest(), job.model3mf) { line ->
@@ -145,11 +165,13 @@ class StudioPluginClient(private val context: Context) : StudioEngine {
     }
 
     suspend fun serverSlice(json: String, model: ByteArray): PhoneSlicerResponse {
+        require(engineId == "bambu") { "OrcaSlicer does not support server mode." }
         val (bytes, metadata) = sliceFile("server", json, model) {}
         return PhoneSlicerResponse(metadata, bytes)
     }
 
     private suspend fun sliceFile(mode: String, json: String, model: ByteArray, onLog: (String) -> Unit): Pair<ByteArray, String> {
+        val resourceVersion = loadedResourceVersion
         require(model.size in 1..100_000_000)
         val dir = File(context.cacheDir, "studio-jobs").apply { mkdirs() }
         val id = UUID.randomUUID().toString(); val input = File(dir, "$id.input"); val output = File(dir, "$id.output")
@@ -158,8 +180,9 @@ class StudioPluginClient(private val context: Context) : StudioEngine {
             val inFd = ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY)
             val outFd = ParcelFileDescriptor.open(output, ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_TRUNCATE or ParcelFileDescriptor.MODE_READ_WRITE)
             val response = try {
-                request(2, Bundle().apply { putString("mode", mode); putString("request_json", json); putParcelable("input", inFd); putParcelable("output", outFd) }, onLog)
+                request(2, Bundle().apply { putString("resource_version", resourceVersion); putString("mode", mode); putString("request_json", json); putParcelable("input", inFd); putParcelable("output", outFd) }, onLog)
             } finally { inFd.close(); outFd.close() }
+            require(JSONObject(response).optString("engine_id", "bambu") == engineId) { "The plugin returned another engine’s slice." }
             return withContext(Dispatchers.IO) { require(output.length() in 1..100_000_000L) { "Invalid sliced file." }; output.readBytes() to response }
         } finally { input.delete(); output.delete() }
     }

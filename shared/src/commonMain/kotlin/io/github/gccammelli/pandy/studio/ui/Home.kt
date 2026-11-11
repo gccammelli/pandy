@@ -38,6 +38,7 @@ import kotlinx.coroutines.launch
 fun Home(studio: Studio, nav: StudioNav) {
     val platform = LocalPlatform.current
     val scope = rememberCoroutineScope()
+    var engineSheet by remember { mutableStateOf(false) }
     var printerSheet by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(C.Bg).verticalScroll(rememberScrollState()).statusBarsPadding().padding(horizontal = 16.dp)) {
         Gap(20.dp)
@@ -90,14 +91,39 @@ fun Home(studio: Studio, nav: StudioNav) {
             NavRow("Printer", p?.name?.removePrefix("Bambu Lab ") ?: if (studio.loadError != null) "Unavailable" else "Loading…",
                 leading = { Icon(Icons.Default.Print, null, tint = C.Accent, modifier = Modifier.size(22.dp)) }) { printerSheet = true }
             Box(Modifier.fillMaxWidth().height(1.dp).background(C.Line))
-            NavRow("Slicing engine", studio.engine?.let { "Bambu Studio ${it.version}".trim() } ?: "Slicer plugin",
-                leading = { Icon(Icons.Default.Verified, null, tint = C.Ok, modifier = Modifier.size(22.dp)) }) { nav.go(StudioScreen.About) }
+            NavRow("Slicing engine", studio.engine?.let { "${it.name} ${it.version}".trim() } ?: "Slicer plugin",
+                leading = { Icon(Icons.Default.Verified, null, tint = C.Ok, modifier = Modifier.size(22.dp)) }) { engineSheet = true }
         }
         studio.loadError?.let {
-            Gap(8.dp); T("Couldn't load Bambu's profiles: $it", 13.sp, C.Red)
+            Gap(8.dp); T("Couldn't load slicer profiles: $it", 13.sp, C.Red)
             Gap(8.dp); OutlineButton("Try again", C.Accent) { studio.load() }
         }
         Gap(28.dp)
+    }
+    if (engineSheet) Sheet({ engineSheet = false }, "Slicing engine", confirm = null) {
+        studio.engines.forEach { choice ->
+            Radio(studio.engine?.id == choice.id, "${choice.name} ${choice.version}", enabled = !studio.loading && studio.state !is io.github.gccammelli.pandy.studio.studio.SliceState.Running) {
+                runCatching { studio.chooseEngine(choice.id) }.onSuccess {
+                    if (it != null) StudioSession.print = null
+                    engineSheet = false
+                }.onFailure { StudioSession.notice = it.message }
+            }
+        }
+        if (studio.loading || studio.state is io.github.gccammelli.pandy.studio.studio.SliceState.Running) {
+            Gap(8.dp); T("Wait for the current operation to finish before changing engines.", 13.sp, C.Sub)
+        }
+        Gap(12.dp)
+        T("Changing engines keeps your models and resets print settings, filaments and model filament assignments to that engine’s defaults.", 13.sp, C.Sub)
+        Gap(12.dp)
+        if (!studio.loading && studio.state !is io.github.gccammelli.pandy.studio.studio.SliceState.Running) studio.engine?.let { current ->
+            OutlineButton("Reload profiles", C.Accent) {
+                runCatching { studio.chooseEngine(current.id, reload = true) }.onSuccess {
+                    StudioSession.print = null; engineSheet = false
+                }.onFailure { StudioSession.notice = it.message }
+            }
+            Gap(8.dp)
+        }
+        OutlineButton("About this engine", C.Accent) { engineSheet = false; nav.go(StudioScreen.About) }
     }
     if (printerSheet) PrinterSheet(studio) { printerSheet = false }
 }

@@ -77,4 +77,17 @@ G1 X2 E0.2
         assertEquals(2,model.layers.single().features.size)
         assertEquals(2f,model.layers.single().segments[9])
     }
+
+    @Test fun readsOrcaSlicerFilamentTotalsSummedAcrossFilaments() {
+        val text="""; model printing time: 9m 55s; total estimated time: 17m 11s
+; total layer number: 40
+G1 X1 Y0 Z0.2 E0.5
+; filament used [mm] = 2740.80, 100.20
+; filament used [cm3] = 6.59, 0.24
+; filament used [g] = 8.31, 0.30
+"""
+        val stats=GcodeParser.parse(text).stats
+        assertEquals(1031,stats.estimatedSeconds);assertEquals(2841f,stats.filamentLengthMm);assertEquals(8.61f,stats.filamentGrams!!,0.001f);assertEquals(40,stats.layerCount)
+        assertEquals(null,GcodeParser.parse("; filament used [mm] = n/a\nG1 X1 E1\n").stats.filamentLengthMm)
+    }
 }

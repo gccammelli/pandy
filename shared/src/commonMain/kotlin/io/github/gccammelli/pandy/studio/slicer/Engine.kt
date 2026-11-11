@@ -3,7 +3,9 @@
 package io.github.gccammelli.pandy.studio.slicer
 
 /** The engine build the app carries, as the equivalence report identifies it. */
-data class EngineInfo(val version: String, val engineSha256: String, val resourcesSha256: String)
+data class EngineInfo(val version: String, val engineSha256: String, val resourcesSha256: String, val id: String = "bambu", val name: String = "Bambu Studio")
+
+data class EngineChoice(val id: String, val name: String, val version: String)
 
 /** Boundary implemented by the Android plugin and, later, an iOS engine. */
 interface StudioEngine {

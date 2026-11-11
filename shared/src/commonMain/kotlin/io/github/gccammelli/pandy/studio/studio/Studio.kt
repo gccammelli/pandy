@@ -37,7 +37,7 @@ sealed class SliceState {
 }
 
 /** The app's state: presets, the plate, the user's setting changes and the last slice. */
-class Studio(private val platform: Platform, private val scope: CoroutineScope) {
+class Studio(private var platform: Platform, private val scope: CoroutineScope) {
     val scene = Scene()
     var library by mutableStateOf<PresetLibrary?>(null); private set
     var schema by mutableStateOf<io.github.gccammelli.pandy.studio.slicer.Schema?>(null); private set
@@ -53,24 +53,77 @@ class Studio(private val platform: Platform, private val scope: CoroutineScope) 
     var state by mutableStateOf<SliceState>(SliceState.Idle)
     var loadError by mutableStateOf<String?>(null)
     var engine by mutableStateOf<io.github.gccammelli.pandy.studio.slicer.EngineInfo?>(null); private set
+    var engines by mutableStateOf<List<io.github.gccammelli.pandy.studio.slicer.EngineChoice>>(emptyList()); private set
+    var loading by mutableStateOf(false); private set
     private var sliceJob: Job? = null
+    /** The host the tab started with keeps the engine choice, whichever engine's settings are in use. */
+    private val root = platform
+    private var restored = false
+
+    /** Keep the model geometry, discard settings and preview from the previous engine. */
+    fun chooseEngine(id: String, reload: Boolean = false): Job? {
+        require(!loading && state !is SliceState.Running) { "Wait for the current operation to finish." }
+        require(engines.any { it.id == id }) { "This engine is not installed." }
+        if (engine?.id == id && !reload) return null
+        val next = platform.forEngine(id)
+        val preferred = printer?.name
+        invalidate()
+        platform = next
+        library = null; schema = null; engine = null; printer = null; process = null
+        printers = emptyList(); processes = emptyList(); filamentChoices = emptyList()
+        overrides.clear(); filaments.clear(); syncColors()
+        scene.objects.forEach { it.filament = 0 }
+        return load(preferred, preferRequested = true)
+    }
 
     /** [preferredPrinter]: the preset to start with when the user hasn't chosen one (the connected printer's). */
-    fun load(preferredPrinter: String? = null) = scope.launch {
+    fun load(preferredPrinter: String? = null, preferRequested: Boolean = false) = scope.launch {
         loadError = null
+        loading = true
         runCatching {
-            engine = platform.engineInfo()
-            val source = platform.profiles()
-            val lib = withContext(Dispatchers.Default) { PresetLibrary(source).also { it.printers() } }
-            schema = withContext(Dispatchers.Default) { io.github.gccammelli.pandy.studio.slicer.Schema.load(source) }
+            sliceJob?.join()
+            var info = platform.engineInfo()
+            engines = platform.engines()
+            var remembered = false
+            if (!restored) {
+                restored = true
+                val saved = root.loadSetting("engine")
+                if (saved != null && saved != info.id && engines.any { it.id == saved }) {
+                    platform = platform.forEngine(saved)
+                    remembered = true
+                }
+            }
+            // A remembered engine that no longer loads must not lock the tab: open with the plugin's own
+            // default instead. The choice stays saved, so the engine is back once it works again.
+            val (lib, loadedSchema) = try {
+                if (remembered) info = platform.engineInfo()
+                open()
+            } catch (e: Exception) {
+                if (!remembered || e is kotlinx.coroutines.CancellationException) throw e
+                platform = root
+                info = platform.engineInfo()
+                open()
+            }
+            schema = loadedSchema
             library = lib
             printers = lib.printers()
             val saved = platform.loadSetting("printer")
-            val p = printers.flatMap { it.nozzles }.firstOrNull { it.name == saved }
+            val requested = printers.flatMap { it.nozzles }.firstOrNull { it.name == preferredPrinter }
+            val p = (if (preferRequested) requested else null)
+                ?: printers.flatMap { it.nozzles }.firstOrNull { it.name == saved }
                 ?: printers.flatMap { it.nozzles }.firstOrNull { it.name == preferredPrinter }
                 ?: printers.flatMap { it.nozzles }.firstOrNull { it.name == "Bambu Lab X1 Carbon 0.4 nozzle" } ?: printers.first().nozzles.first()
             choosePrinter(p)
+            engine = info
+            if (!remembered || platform !== root) root.saveSetting("engine", info.id)
         }.onFailure { loadError = it.message ?: it.toString() }
+        loading = false
+    }
+
+    private suspend fun open(): Pair<PresetLibrary, io.github.gccammelli.pandy.studio.slicer.Schema> {
+        val source = platform.profiles()
+        val lib = withContext(Dispatchers.Default) { PresetLibrary(source).also { it.printers() } }
+        return lib to withContext(Dispatchers.Default) { io.github.gccammelli.pandy.studio.slicer.Schema.load(source) }
     }
 
     fun choosePrinter(p: Preset) {

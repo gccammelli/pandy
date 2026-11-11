@@ -2,19 +2,20 @@
 
 Pandy's **Studio** tab is a small plate editor: open STL and 3MF files, arrange them on the plate, pick a printer,
 filament and process preset, slice, look at the layers and send the print to the selected printer. Slicing runs on the
-phone itself, with Bambu Studio's own slicing engine, so it needs no computer, container or cloud. Android only for
+phone itself, using the selected Bambu Studio or OrcaSlicer engine, so it needs no computer, container or cloud. Android only for
 now; the tab is hidden on iOS.
 
 ```
 Pandy (MIT)                                         Slicer plugin (AGPL, separate app)
-  Studio tab: plate, presets, preview    ──job──▶     Bambu Studio's engine, unchanged
+  Studio tab: plate, presets, preview    ──job──▶     Bambu Studio or OrcaSlicer engine
   print: FTPS + MQTT to the printer      ◀─3MF───     io.github.gccammelli.pandy.slicer
 ```
 
 ## The slicer plugin
 
-The engine is Bambu Studio's command-line slicer built for Android. It is AGPL, so it is not part of Pandy: it is a
-separate app without a launcher icon, about 90 MB, that Pandy installs on request.
+The plugin contains command-line slicers built for Android. Both Bambu Studio and OrcaSlicer are AGPL-3.0;
+adding Orca does not change that license. The plugin is distributed as a separate app without a launcher icon,
+which Pandy installs on request.
 
 1. Open **Studio**. Without the plugin the tab shows **Get the slicer**.
 2. Tap it. Pandy downloads the plugin from the latest
@@ -37,7 +38,11 @@ slicer** again.
 
 * **Open models**: **Open a model** in the tab (**Add** on the plate), or **Open with › Pandy Studio** (or Share) on an STL or 3MF file in
   any other app. Files up to 100 MB (400 MB unpacked).
-* **Presets**: Bambu Studio's printer, filament and process presets, read from the plugin. A new plate starts on the
+* **Slicing engine**: choose an installed engine on Studio's home screen. Switching keeps model geometry and
+  placement, reloads profiles, and resets print settings, filaments, assignments and the preview. **Reload profiles**
+  refreshes the current engine after a plugin update and performs the same reset. The choice is remembered; if that engine is no longer
+  installed, Studio opens on the plugin's default engine.
+* **Presets**: the selected engine's printer, filament and process presets, read from the plugin. A new plate starts on the
   printer selected in Pandy.
 * **Slice**, then **Preview** shows the layers, time and filament.
 * **Print** opens Pandy's print sheet: the printer, which loaded spool each filament uses, and the usual options.
@@ -48,15 +53,17 @@ slicer** again.
 
 Models from the **Models** tab are sliced by [Pandy Slicer](slicer.md) on your Home Assistant or a computer by
 default. With the plugin installed, **Me › Settings › Slicer for model prints › Slicer plugin on this phone** slices
-them on the phone instead, with the same engine and the same arguments the server uses.
+them on the phone instead with the Bambu server adapter. Choosing Orca in Studio does not change this separate
+original-project workflow; Orca currently supports only Studio’s plain-model editor.
 
-## Is it the same as Bambu Studio?
+## Comparison with desktop slicers
 
-The engine is Bambu Studio's source, unmodified, at the version the Studio tab shows under **Slicing engine**. The phone's output is
-compared with the official x86-64 build over 440 model and setting combinations: most are byte-identical, the rest
-differ by hundredths of a millimetre on a few lines, and none differ significantly. The method, the full table and the
-known differences are in the
+Each engine is built from its pinned upstream source and compared with its matching official desktop release.
+The Bambu matrix covers 440 model and setting combinations and distinguishes exact matches, observed run-to-run
+variation, support-only changes, acceptable toolpath differences and expected refusals. See the
 [equivalence report](https://github.com/gccammelli/pandy-studio/blob/main/docs/equivalence/README.md).
+Orca has its own build and test evidence; Bambu's results do not establish Orca equivalence. The engine and profile
+hashes are available under **Slicing engine › About this engine**.
 
 Slicing is slower than on a computer: seconds for a small part, minutes for a full plate on an older phone.
 

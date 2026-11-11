@@ -101,14 +101,12 @@ fun AboutScreen(studio: Studio, nav: StudioNav) {
     Page("About the engine", { nav.back() }) {
         Column(Modifier.padding(16.dp)) {
             Card {
-                T("Bambu Studio ${e.version}", 18.sp, weight = FontWeight.Medium)
+                T("${e.name} ${e.version}", 18.sp, weight = FontWeight.Medium)
                 Gap(6.dp)
-                T("Studio slices with Bambu Studio's own slicer: its command-line program, built from Bambu Lab's published source " +
-                    "for this release, with the same compiler and libraries as Bambu's Linux build. The desktop interface is left out; " +
-                    "any part of it the slicer tried to use would stop the slice rather than change it.", 14.sp, C.Sub, lh = 19.sp)
+                T("Studio uses ${e.name}'s command-line slicer, built from its published source with a separate set of profiles and settings. " +
+                    "The engine plugin is licensed under AGPL-3.0.", 14.sp, C.Sub, lh = 19.sp)
                 Gap(10.dp)
-                T("Every release is tested against the official Bambu Studio on every Bambu printer and every print setting: " +
-                    "the G-code must match byte for byte.", 14.sp, C.Sub, lh = 19.sp)
+                T("Output is compared with the matching official desktop release. Test coverage and any remaining differences are documented with the engine build.", 14.sp, C.Sub, lh = 19.sp)
             }
             Gap(12.dp)
             Card {
@@ -117,7 +115,7 @@ fun AboutScreen(studio: Studio, nav: StudioNav) {
                 T("Profiles SHA-256", 13.sp, C.Sub); T(e.resourcesSha256, 12.sp)
             }
             Gap(12.dp)
-            SetupNote("How Pandy slices on the phone, and how the slicer is tested against Bambu Studio.", "docs/studio.md")
+            SetupNote("How Pandy slices on the phone and tests its slicing engines.", "docs/studio.md")
         }
     }
 }

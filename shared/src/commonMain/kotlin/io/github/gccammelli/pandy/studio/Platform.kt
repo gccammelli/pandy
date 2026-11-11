@@ -12,6 +12,11 @@ interface Platform : StudioEngine {
     suspend fun pickModels(): List<Pair<String, ByteArray>>
     /** The engine build the installed plugin carries. */
     suspend fun engineInfo(): EngineInfo
+    suspend fun engines(): List<io.github.gccammelli.pandy.studio.slicer.EngineChoice> = engineInfo().let {
+        listOf(io.github.gccammelli.pandy.studio.slicer.EngineChoice(it.id, it.name, it.version))
+    }
+    /** Returns a host bound to one engine; existing jobs keep their original host. */
+    fun forEngine(id: String): Platform = error("Engine selection is unavailable.")
     fun loadSetting(key: String): String?
     fun saveSetting(key: String, value: String)
 }

@@ -60,6 +60,9 @@ object GcodeParser {
                     low.startsWith("total filament length [mm]")->filamentLength=valueAfterColon(raw)
                     low.startsWith("total filament weight [g]")->filamentGrams=valueAfterColon(raw)
                     low.startsWith("total layer number:")->layerCount=valueAfterColon(raw)?.toInt()
+                    // OrcaSlicer writes "; filament used [mm] = 2740.80, 0.00" at the end, one value per filament.
+                    low.startsWith("filament used [mm]")->filamentLength=sumAfterEquals(raw)
+                    low.startsWith("filament used [g]")->filamentGrams=sumAfterEquals(raw)
                 }
             }
             val stop=comment;var i=lineStart;var command='\u0000';var code=Float.NaN
@@ -155,6 +158,10 @@ object GcodeParser {
     }
 
     private fun valueAfterColon(s:String):Float? { val i=s.indexOf(':');return if(i<0)null else s.substring(i+1).trim().substringBefore(' ').toFloatOrNull() }
+    private fun sumAfterEquals(s:String):Float? {
+        val values=s.substringAfter('=',"").split(',').map { it.trim().toFloatOrNull()?:return null }
+        return values.sum()
+    }
     private fun parseDuration(s:String):Int? {
         var total=0.0;var seen=false;var i=0
         while(i<s.length) {
