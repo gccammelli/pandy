@@ -23,6 +23,26 @@ enum class ModelSite(val label: String, val home: String, private val hosts: Lis
     val others: List<ModelSite> get() = entries.filter { it != this }
 }
 
+/**
+ * Whether a model page gets Pandy's own Print button. With a printer selected the demo always shows it, so people see what to
+ * expect; otherwise a free, online printer is needed, and Thingiverse and Printables (plain STL files) also need a slicer: the add-on or Docker
+ * one, or the plugin on this phone when preferred and installed.
+ */
+/**
+ * Whether a model page shows Pandy's Print. MakerWorld's own flow needs a printer that takes commands now. Thingiverse and
+ * Printables always show it once there is a printer: the print sheet says what is still missing (a slicer, an offline printer).
+ */
+internal fun canPrintFromPage(site: ModelSite, printer: PrinterAvailability) =
+    if (site == ModelSite.MakerWorld) printer == PrinterAvailability.Ready else printer != PrinterAvailability.None
+
+/**
+ * Whether a print is sliced by the plugin on this phone: when it is installed, and also when there is no other slicer
+ * (the print sheet then offers to get it). Turning it off in Me › Settings › Slicer leaves the add-on or Docker slicer.
+ */
+fun usesPhoneSlicer(preferred: Boolean, supported: Boolean, installed: Boolean, hasServer: Boolean) = supported && preferred && (installed || !hasServer)
+
+internal enum class PrinterAvailability { None, Unavailable, Ready }
+
 /** Hosts a model site's page may load in Pandy: the sites, Bambu's sign-in, and the sign-in providers. */
 internal val SITE_HOSTS = listOf("makerworld.com", "bambulab.com", "bblmw.com", "thingiverse.com", "printables.com", "prusa3d.com",
     "appleid.apple.com", "accounts.google.com", "facebook.com")

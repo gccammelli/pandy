@@ -171,8 +171,9 @@ object Repo {
     /** The real Home Assistant connection, whether it's the printer's source or only the extras. */
     val haApi get() = (extras ?: ha) as? HaHttp
     val slicerUrl get() = store.settings.getString("slicer_url")
-    val phoneSlicerPreferred get() = store.settings.getString("slicer_backend") == "phone"
-    fun preferPhoneSlicer(phone: Boolean) = store.settings.putString("slicer_backend", if (phone) "phone" else null)
+    /** The slicer plugin on the phone is used unless it was turned off (see [usesPhoneSlicer]). */
+    val phoneSlicerPreferred get() = store.settings.getString("slicer_backend") != "server"
+    fun preferPhoneSlicer(phone: Boolean) = store.settings.putString("slicer_backend", if (phone) null else "server")
 
     fun setSlicer(url: String?, token: String?) {
         store.settings.putString("slicer_url", url?.trim()?.ifEmpty { null })

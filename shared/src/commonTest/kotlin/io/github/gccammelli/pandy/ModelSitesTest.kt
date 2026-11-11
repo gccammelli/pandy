@@ -68,4 +68,26 @@ class ModelSitesTest {
         assertEquals("evil.stl", downloadName("..%2F..%2Fevil.stl")) // no folder parts, even encoded
         assertEquals("model", downloadName(""))
     }
+
+    @Test fun thingiverseAndPrintablesAlwaysOfferPrintWithAPrinterAndMakerWorldNeedsItReady() {
+        val none = PrinterAvailability.None; val busy = PrinterAvailability.Unavailable; val ready = PrinterAvailability.Ready
+        for (site in listOf(ModelSite.Thingiverse, ModelSite.Printables)) {
+            assertTrue(canPrintFromPage(site, ready), site.label)
+            assertTrue(canPrintFromPage(site, busy), site.label) // the print sheet says the printer is offline
+            assertFalse(canPrintFromPage(site, none), site.label)
+        }
+        assertTrue(canPrintFromPage(ModelSite.MakerWorld, ready))
+        assertFalse(canPrintFromPage(ModelSite.MakerWorld, busy))
+        assertFalse(canPrintFromPage(ModelSite.MakerWorld, none))
+    }
+
+    @Test fun thePhonePluginSlicesWhenInstalledOrWhenThereIsNoOtherSlicer() {
+        assertTrue(usesPhoneSlicer(preferred = true, supported = true, installed = true, hasServer = true))
+        assertTrue(usesPhoneSlicer(preferred = true, supported = true, installed = true, hasServer = false))
+        assertTrue(usesPhoneSlicer(preferred = true, supported = true, installed = false, hasServer = false)) // the sheet offers to get it
+        assertFalse(usesPhoneSlicer(preferred = true, supported = true, installed = false, hasServer = true)) // the add-on slices meanwhile
+        assertFalse(usesPhoneSlicer(preferred = false, supported = true, installed = true, hasServer = true))
+        assertFalse(usesPhoneSlicer(preferred = false, supported = true, installed = true, hasServer = false))
+        assertFalse(usesPhoneSlicer(preferred = true, supported = false, installed = false, hasServer = false)) // iOS
+    }
 }

@@ -32,10 +32,11 @@ class RepositorySettingsTest {
         assertEquals("http://localhost:8737", Repo.slicerUrl)
         assertEquals("secret", secrets["slicer_token"])
         assertNotNull(Repo.slicer)
-        assertFalse(Repo.phoneSlicerPreferred)
-        Repo.preferPhoneSlicer(true); assertTrue(Repo.phoneSlicerPreferred)
-        assertEquals("http://localhost:8737", Repo.slicerUrl); assertEquals("secret", secrets["slicer_token"])
+        assertTrue(Repo.phoneSlicerPreferred) // the phone's slicer plugin is on unless turned off
         Repo.preferPhoneSlicer(false); assertFalse(Repo.phoneSlicerPreferred)
+        assertEquals("http://localhost:8737", Repo.slicerUrl); assertEquals("secret", secrets["slicer_token"])
+        Repo.preferPhoneSlicer(true); assertTrue(Repo.phoneSlicerPreferred)
+        Repo.setSetting("slicer_backend", "phone"); assertTrue(Repo.phoneSlicerPreferred) // what earlier versions stored
         Repo.saveLan(LanConfig("192.0.2.1", "serial", "access", "X1C"))
         assertEquals("192.0.2.1", Repo.lan?.ip)
         assertEquals("access", Repo.lan?.code)

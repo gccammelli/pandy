@@ -120,8 +120,8 @@ fun MakerWorld(modifier: Modifier, site: io.github.gccammelli.pandy.ModelSite) {
     var sheetBack by remember { mutableStateOf<(() -> Unit)?>(null) }
     val platform = LocalPlatform.current
     val st by Repo.state.collectAsState()
-    // Thingiverse and Printables turn their download buttons into Print only once Pandy Slicer is set up.
-    web.canPrint = (st.printer()?.let { it.online && !it.controlBlocked } ?: false) && (site == io.github.gccammelli.pandy.ModelSite.MakerWorld || Repo.slicer != null || (Repo.phoneSlicerPreferred && platform.phoneSlicerAvailable()))
+    // Thingiverse and Printables always get Pandy's Print beside their downloads; the print sheet says what is still missing.
+    web.canPrint = io.github.gccammelli.pandy.canPrintFromPage(site, st.printer()?.let { if (it.online && !it.controlBlocked) io.github.gccammelli.pandy.PrinterAvailability.Ready else io.github.gccammelli.pandy.PrinterAvailability.Unavailable } ?: io.github.gccammelli.pandy.PrinterAvailability.None)
     web.overlayBack = if (printDownload != null) (sheetBack ?: { printDownload = null }) else null
     Box(modifier) {
         WebPage(site.home, Modifier.fillMaxSize(), onDownload = { d ->
@@ -184,8 +184,9 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     val err = errorToast()
     val scope = rememberCoroutineScope()
     val platform = LocalPlatform.current
-    val phone = Repo.phoneSlicerPreferred && platform.phoneSlicerSupported
+    val phone = io.github.gccammelli.pandy.usesPhoneSlicer(Repo.phoneSlicerPreferred, platform.phoneSlicerSupported, platform.phoneSlicerAvailable(), slicerClient != null)
     val phoneAvailable = phone && platform.phoneSlicerAvailable()
+    var studioModel by remember { mutableStateOf<ByteArray?>(null) } // a plain model Studio's plate can take: an STL, or a 3MF that is no project
     var step by remember { mutableStateOf(Step.Download) }
     var data by remember { mutableStateOf<ByteArray?>(null) }
     var stlSource by remember { mutableStateOf<ByteArray?>(null) } // an STL's own bytes: its 3D preview is built from them, not from the wrapped 3MF
@@ -241,6 +242,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
         previewLoaded = false
         data = null
         stlSource = null
+        studioModel = null
         project = null
         step = Step.Download
         view = PrepareView.Profile
@@ -256,6 +258,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             val bytes = if (isStl) withContext(Dispatchers.Default) { io.github.gccammelli.pandy.stlTo3mf(downloaded) } else downloaded
             stlSource = downloaded.takeIf { isStl }
             data = bytes
+            if (platform.studio != null) studioModel = if (isStl) downloaded else bytes.takeIf { withContext(Dispatchers.Default) { runCatching { io.github.gccammelli.pandy.studio.studio.requirePlainEditorModel(it) }.isSuccess } }
             reading = true
             val loaded = try {
                 // shortcut: timeout checks happen between zip entries; revisit if a scanner proves slow
@@ -386,7 +389,9 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     val manualReady = presets && pr.filaments.isNotEmpty() && pr.filaments.all { (type, colour) -> manualMapping[filamentKey(type, colour)] in validSlots }
     val mappingReady = pr.filaments.isEmpty() || auto != null || p.ams.isEmpty() || manualReady
     val setupNote = when {
-        phone && !phoneAvailable -> "Install the Pandy slicer plugin to slice on this phone."
+        !p.online -> "${p.name} is offline."
+        p.controlBlocked -> io.github.gccammelli.pandy.CONTROL_BLOCKED
+        phone && !phoneAvailable -> "Printing models needs the Pandy slicer plugin on this phone."
         !phone && slicer == null -> "Printing models needs Pandy Slicer. Add it in Me › Settings."
         !mappingReady -> "Load matching filament types, or choose every model filament in Match my filament."
         else -> null
@@ -408,9 +413,12 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             slicerSettingsCount = slicerSettings.size, openSlicerSettings = { view = PrepareView.SlicerSettings },
             print = {
                 confirmPrint = true
-            }, step = step, needsAccessCode = !Repo.demo && savedLan == null, canPrint = Repo.demo || (step == Step.Ready && p.online && lan != null && (if (phone) phoneAvailable else slicer != null) && mappingReady), code = code,
+            }, step = step, needsAccessCode = !Repo.demo && savedLan == null, canPrint = Repo.demo || (step == Step.Ready && p.online && !p.controlBlocked && lan != null && (if (phone) phoneAvailable else slicer != null) && mappingReady), code = code,
             setCode = { code = it }, modelNotice = shortModel(pr.printerModel)?.takeIf { it != p.model }?.let { "Prepared for ${p.model}; the designer's ${it} profile will be converted by Pandy Slicer." },
             setupNote = setupNote, setupGuide = setupGuide, help = { help = it }, printFailure = printFailure,
+            // Studio's tab offers the plugin while it is missing.
+            getSlicer = if (phone && !phoneAvailable && platform.studio != null) ({ close(); Nav.stack.clear(); Nav.tab = io.github.gccammelli.pandy.studio.ui.STUDIO_TAB }) else null,
+            openInStudio = studioModel?.let { model -> { close(); io.github.gccammelli.pandy.studio.ui.StudioSession.open(name + if (stlSource != null) ".stl" else ".3mf", model, project = false); Unit } },
         )
         PrepareView.Preview -> PreviewView(p, pr, plate, auto, manualMapping, presets, plainColor = pickedSpool?.second?.color, back = { view = PrepareView.Prepare })
         PrepareView.SlicerSettings -> AdvancedSlicerSettingsForBackend(slicer.takeUnless { phone }, slicerSettings, back = { view = PrepareView.Prepare }, phoneSettings = if (phone) ({ io.github.gccammelli.pandy.phoneSettings(platform.phoneSlicer("CAPABILITIES_V1", "{\"version\":1}")) }) else null) { values, info ->
@@ -504,6 +512,7 @@ private fun PrepareView(
     slicerSettingsCount: Int, openSlicerSettings: () -> Unit,
     canPrint: Boolean, needsAccessCode: Boolean, code: String, setCode: (String) -> Unit, modelNotice: String?,
     setupNote: String?, setupGuide: String?, help: (String) -> Unit, printFailure: String?,
+    getSlicer: (() -> Unit)? = null, openInStudio: (() -> Unit)? = null,
 ) = Column(Modifier.fillMaxSize().background(C.Bg)) {
     val editable = step == Step.Ready
     PrepareHeader("Prepare to Print", back.takeIf { editable })
@@ -602,11 +611,16 @@ private fun PrepareView(
         else if (!canPrint && !Repo.demo) setupNote?.let { note ->
             if (setupGuide != null) SetupNote(note, setupGuide, Modifier.padding(14.dp))
             else T(note, 13.sp, C.Sub, lh = 18.sp, modifier = Modifier.padding(22.dp, 8.dp))
+            if (getSlicer != null) AccentButton("Get the slicer", Modifier.padding(horizontal = 14.dp), onClick = getSlicer)
         }
         Gap(8.dp)
     }
-    Row(Modifier.fillMaxWidth().background(C.Card).padding(14.dp).navigationBarsPadding()) {
+    Column(Modifier.fillMaxWidth().background(C.Card).padding(14.dp).navigationBarsPadding()) {
         AccentButton(if (Repo.demo) "Print (demo)" else "Print current plate", Modifier.fillMaxWidth(), enabled = canPrint && !p.printing, onClick = print)
+        // A plain model can also go to Studio's plate, to be placed, scaled and sliced there.
+        if (openInStudio != null) Box(Modifier.padding(top = 6.dp).fillMaxWidth().height(44.dp).clip(RoundedCornerShape(22.dp)).clickable(enabled = editable, onClick = openInStudio), contentAlignment = Alignment.Center) {
+            T("Open in Pandy Studio", 15.sp, C.Accent, FontWeight.Medium)
+        }
     }
 }
 
@@ -919,7 +933,8 @@ fun SlicerScreen() = Page("Slicer", { Nav.back() }) {
             }
             T(if (phonePreferred) {
                 if (pl.phoneSlicerAvailable()) "The slicer plugin will slice models on this phone."
-                else "Install the Pandy slicer plugin to use it for slicing."
+                else if (Repo.slicer != null) "The slicer plugin is not installed: Pandy uses the Home Assistant add-on or Docker slicer below until it is."
+                else "Install the Pandy slicer plugin (in the Studio tab) to use it for slicing."
             } else "Pandy uses the Home Assistant add-on or Docker slicer below.", 13.sp, C.Sub, lh = 18.sp)
             Gap(24.dp)
         }

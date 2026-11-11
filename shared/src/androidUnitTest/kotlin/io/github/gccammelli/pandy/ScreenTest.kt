@@ -880,27 +880,28 @@ class ScreenTest {
                 if (zip) shadow.downloadListener.onDownloadStart("https://files.printables.com/media/pack.zip","","attachment; filename=\"pack.zip\"","application/zip",3)
                 else if (opaque) shadow.downloadListener.onDownloadStart("https://files.printables.com/media/demo.bin?token=demo","","","application/octet-stream",3)
                 else shadow.downloadListener.onDownloadStart("https://files.printables.com/media/a.stl","","attachment; filename=\"a.stl\"","model/stl",3)
-                // With a printer and a slicer the page is asked whether Pandy's Print button pressed the site's Download.
-                if (slicer && !zip) shadow.lastEvaluatedJavascriptCallback.onReceiveValue(if (pressed) "\"1\"" else "\"0\"")
+                // With a printer the page is asked whether Pandy's Print button pressed the site's Download, slicer or not.
+                if (!zip) shadow.lastEvaluatedJavascriptCallback.onReceiveValue(if (pressed) "\"1\"" else "\"0\"")
             }
-            if (slicer && pressed && !zip) {
-                // With a printer and a slicer the download is a print: the wrapped STL reads as a one-plate project.
+            if (pressed && !zip) {
+                // A Print press opens the print sheet (which says so if a slicer is still missing): the wrapped STL reads as a one-plate project.
                 compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithText("1 plate",substring=true).assertExists()
                 if (opaque) assertTrue(savedFiles.isEmpty()) // it went to the print sheet, not to a plain save
             } else {
-                // A printer but no slicer: a plain save.
+                // The site's own Download button, or a file Pandy can't print: a plain save.
                 compose.waitUntil(5000) { compose.waitForIdle(); savedFiles.isNotEmpty() }
                 assertEquals(if (zip) "pack.zip" else if (opaque) "demo.bin" else "a.stl",savedFiles.last().first)
             }
         } finally { downloadModel=realDownload; Repo.setSlicer(null,null); compose.runOnIdle { Nav.site=ModelSite.MakerWorld } }
     }
     @Test fun anStlOnPrintablesOpensThePrintSheetWhenASlicerIsSetUp() = printablesStl(true)
-    @Test fun anStlOnPrintablesIsJustSavedWithoutASlicer() = printablesStl(false)
+    @Test fun anStlOnPrintablesOpensThePrintSheetEvenWithoutASlicer() = printablesStl(false)
+    @Test fun anStlOnPrintablesFromTheSitesOwnDownloadButtonIsJustSavedWithoutASlicer() = printablesStl(false, pressed = false)
     @Test fun anStlOnPrintablesFromTheSitesOwnDownloadButtonIsJustSaved() = printablesStl(true, pressed = false)
     @Test fun anExtensionlessPrintablesDownloadFromPandysPrintButtonOpensThePrintSheet() = printablesStl(true, opaque = true)
     @Test fun anExtensionlessPrintablesDownloadFromTheSitesOwnButtonIsJustSaved() = printablesStl(true, pressed = false, opaque = true)
-    @Test fun anExtensionlessPrintablesDownloadWithoutASlicerIsJustSaved() = printablesStl(false, opaque = true)
+    @Test fun anExtensionlessPrintablesDownloadOpensThePrintSheetEvenWithoutASlicer() = printablesStl(false, opaque = true)
     @Test fun aZipOnPrintablesIsJustSavedEvenWithASlicerSetUp() = printablesStl(true, zip = true) // only STL/3MF, or an extensionless .bin, ever ask about Print intent
 
     @Test fun makerWorldPrintWaitsForConfirmationThenSlicesUploadsAndStarts() {
@@ -1007,9 +1008,72 @@ class ScreenTest {
         compose.onNodeWithText("Print (demo)").assertIsNotEnabled()
     }
 
-    private fun prepareModel(bytes: ByteArray,client: SlicerClient?=null) {
-        val download = WebDownload(null,"Test model.3mf",null,bytes,true)
-        compose.setContent { CompositionLocalProvider(LocalPlatform provides platform) { AppTheme {
+    /** A phone that can run the slicer plugin and has Studio; the plugin itself is installed or not. */
+    private fun phoneWithStudio(pluginInstalled: Boolean): PlatformUi = object : PlatformUi by platform {
+        override val phoneSlicerSupported = true
+        override fun phoneSlicerAvailable() = pluginInstalled
+        override val studio = io.github.gccammelli.pandy.studio.ui.StudioTestHost()
+    }
+
+    @Test fun withoutAnySlicerThePrintSheetOffersToGetThePlugin() {
+        homeAssistantMode()
+        Repo.state.value=st.copy(printers=listOf(changed("sensor.print_status" to "idle")))
+        prepareModel(stlBytes(),name="a.stl",ui=phoneWithStudio(pluginInstalled=false))
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Printing models needs the Pandy slicer plugin on this phone.").performScrollTo().assertExists()
+        compose.onNodeWithText("Print current plate").assertIsNotEnabled()
+        compose.onNodeWithText("Get the slicer").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(io.github.gccammelli.pandy.studio.ui.STUDIO_TAB,Nav.tab); Nav.tab=0 }
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    private fun sheetExplains(p: Printer,note: String) {
+        homeAssistantMode()
+        Repo.state.value=st.copy(printers=listOf(p))
+        prepareModel(stlBytes(),client=SlicerClient("http://slicer.example:8737",null),name="a.stl")
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText(note).performScrollTo().assertExists()
+        compose.onNodeWithText("Print current plate").assertIsNotEnabled()
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+    @Test fun thePrintSheetSaysWhenThePrinterIsOffline() =
+        sheetExplains(variant(set=arrayOf("binary_sensor.online" to entity("off"))),"${printer.name} is offline.")
+    @Test fun thePrintSheetSaysWhenThePrinterOnlyTakesBambusCommands() =
+        sheetExplains(variant(set=arrayOf("sensor.print_status" to entity("idle"),"binary_sensor.online" to entity("on"),"binary_sensor.developer_lan_mode" to entity("off"))),CONTROL_BLOCKED)
+
+    @Test fun aPlainModelCanBeOpenedInPandyStudioFromThePrintSheet() {
+        val stl=stlBytes()
+        prepareModel(stl,name="a.stl",ui=phoneWithStudio(pluginInstalled=true))
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Open in Pandy Studio").performClick()
+        compose.runOnIdle {
+            try {
+                assertEquals(io.github.gccammelli.pandy.studio.ui.STUDIO_TAB,Nav.tab)
+                val (name,bytes)=io.github.gccammelli.pandy.studio.ui.StudioSession.pending.single()
+                assertEquals("a.stl",name); assertTrue(stl.contentEquals(bytes)) // the STL itself, not its 3MF wrapping
+            } finally { io.github.gccammelli.pandy.studio.ui.StudioSession.reset(); Nav.tab=0 }
+        }
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun aProjectOrAPhoneWithoutStudioDoesNotOfferPandyStudio() {
+        // Studio's plate can't keep a project's plates and profiles.
+        prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to """{"profile_name":"Fine detail"}""".toByteArray())),ui=phoneWithStudio(pluginInstalled=true))
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Print (demo)").assertExists()
+        compose.onNodeWithText("Open in Pandy Studio").assertDoesNotExist()
+    }
+
+    @Test fun anStlOnAPhoneWithoutStudioDoesNotOfferPandyStudio() {
+        prepareModel(stlBytes(),name="a.stl")
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Print (demo)").assertExists()
+        compose.onNodeWithText("Open in Pandy Studio").assertDoesNotExist()
+    }
+
+    private fun prepareModel(bytes: ByteArray,client: SlicerClient?=null,name: String="Test model.3mf",ui: PlatformUi=platform) {
+        val download = WebDownload(null,name,null,bytes,true)
+        compose.setContent { CompositionLocalProvider(LocalPlatform provides ui) { AppTheme {
             PrintModelSheet(download,{},slicerClient=client)
         } } }
         compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("Select a Print Profile").fetchSemanticsNodes().isNotEmpty() }
