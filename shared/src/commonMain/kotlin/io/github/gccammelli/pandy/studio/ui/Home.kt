@@ -91,7 +91,7 @@ fun Home(studio: Studio, nav: StudioNav) {
             NavRow("Printer", p?.name?.removePrefix("Bambu Lab ") ?: if (studio.loadError != null) "Unavailable" else "Loading…",
                 leading = { Icon(Icons.Default.Print, null, tint = C.Accent, modifier = Modifier.size(22.dp)) }) { printerSheet = true }
             Box(Modifier.fillMaxWidth().height(1.dp).background(C.Line))
-            NavRow("Slicing engine", studio.engine?.let { "${it.name} ${it.version}".trim() } ?: "Slicer plugin",
+            NavRow("Slicing engine", studio.engine?.let { "${it.name} ${it.version}".trim() } ?: if (studio.loadError != null) "Unavailable" else "Loading…",
                 leading = { Icon(Icons.Default.Verified, null, tint = C.Ok, modifier = Modifier.size(22.dp)) }) { engineSheet = true }
         }
         studio.loadError?.let {

@@ -258,6 +258,7 @@ class StudioScreensTest {
     @Test fun anEngineThatFailedToLoadShowsWhyAndCanRetry() {
         val broken = runBlocking { Studio(StudioTestHost(emptyMap()), this).also { it.load().join() } }
         show { Home(broken, StudioNav()) }
-        text("Unavailable").assertExists(); assertEquals(1, count("Couldn't load slicer profiles")); text("Try again").assertExists()
+        assertEquals(2, count("Unavailable")) // the printer row and the engine row
+        assertEquals(1, count("Couldn't load slicer profiles")); text("Try again").assertExists()
     }
 }
