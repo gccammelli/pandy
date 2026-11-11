@@ -28,7 +28,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
 /** Where the slicer plugin is published. */
-const val PLUGIN_RELEASE = "https://api.github.com/repos/gccammelli/pandy-studio/releases/latest"
+const val PLUGIN_RELEASE = "https://api.github.com/repos/gccammelli/pandy-slicer-plugin/releases/latest"
 const val PLUGIN_ASSET = "pandy-slicer-plugin.apk"
 /** Larger than any plugin build; a download past this is not the plugin. */
 const val PLUGIN_MAX_BYTES = 400_000_000L
@@ -49,7 +49,7 @@ fun pluginDownload(releaseJson: String, anyHost: Boolean = false): PluginDownloa
     val size = asset["size"]?.jsonPrimitive?.longOrNull ?: 0L
     if (!Regex("[0-9a-f]{64}").matches(sha)) throw ApiException("The slicer's release has no checksum; not installing it.")
     if (size !in 1..PLUGIN_MAX_BYTES) throw ApiException("The slicer's release has an unexpected size; not installing it.")
-    if (!anyHost && !url.startsWith("https://github.com/gccammelli/pandy-studio/releases/download/")) throw ApiException("The slicer's release points outside GitHub; not installing it.")
+    if (!anyHost && !url.startsWith("https://github.com/gccammelli/pandy-slicer-plugin/releases/download/")) throw ApiException("The slicer's release points outside GitHub; not installing it.")
     return PluginDownload(url, sha, size, release["tag_name"]?.jsonPrimitive?.contentOrNull.orEmpty())
 }
 

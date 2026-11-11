@@ -19,7 +19,7 @@ which Pandy installs on request.
 
 1. Open **Studio**. Without the plugin the tab shows **Get the slicer**.
 2. Tap it. Pandy downloads the plugin from the latest
-   [Pandy Studio release](https://github.com/gccammelli/pandy-studio/releases), checks it and hands it to Android's
+   [Pandy Slicer plugin release](https://github.com/gccammelli/pandy-slicer-plugin/releases), checks it and hands it to Android's
    installer. Android asks once whether Pandy may install apps, then asks to confirm the install.
 3. Back in Pandy the tab becomes the editor.
 
@@ -61,7 +61,7 @@ original-project workflow; Orca currently supports only Studio’s plain-model e
 Each engine is built from its pinned upstream source and compared with its matching official desktop release.
 The Bambu matrix covers 440 model and setting combinations and distinguishes exact matches, observed run-to-run
 variation, support-only changes, acceptable toolpath differences and expected refusals. See the
-[equivalence report](https://github.com/gccammelli/pandy-studio/blob/main/docs/equivalence/README.md).
+[equivalence report](https://github.com/gccammelli/pandy-slicer-plugin/blob/main/docs/equivalence/README.md).
 Orca has its own build and test evidence; Bambu's results do not establish Orca equivalence. The engine and profile
 hashes are available under **Slicing engine › About this engine**.
 

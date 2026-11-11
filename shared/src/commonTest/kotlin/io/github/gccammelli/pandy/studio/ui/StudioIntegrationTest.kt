@@ -33,14 +33,14 @@ import kotlin.test.assertTrue
 class StudioIntegrationTest {
     private val sha = "ab".repeat(32)
     private fun release(name: String = PLUGIN_ASSET, digest: String? = "sha256:$sha", size: Long = 92_000_000,
-                        url: String = "https://github.com/gccammelli/pandy-studio/releases/download/v1.0.0/$PLUGIN_ASSET") =
+                        url: String = "https://github.com/gccammelli/pandy-slicer-plugin/releases/download/v1.0.0/$PLUGIN_ASSET") =
         """{"tag_name":"v1.0.0","assets":[{"name":"notes.txt","browser_download_url":"https://example.invalid/notes.txt","size":3},
             {"name":"$name","browser_download_url":"$url","size":$size${digest?.let { ""","digest":"$it"""" } ?: ""}}]}"""
 
     // ---------- Get the slicer ----------
 
     @Test fun thePluginComesFromTheReleaseWithItsChecksumAndSize() =
-        assertEquals(PluginDownload("https://github.com/gccammelli/pandy-studio/releases/download/v1.0.0/$PLUGIN_ASSET", sha, 92_000_000, "v1.0.0"), pluginDownload(release()))
+        assertEquals(PluginDownload("https://github.com/gccammelli/pandy-slicer-plugin/releases/download/v1.0.0/$PLUGIN_ASSET", sha, 92_000_000, "v1.0.0"), pluginDownload(release()))
 
     @Test fun aReleaseWithoutThePluginOrThatCannotBeReadIsNotInstalled() {
         assertEquals("The slicer isn't published yet.", assertFailsWith<ApiException> { pluginDownload(release(name = "other.apk")) }.message)
@@ -61,8 +61,8 @@ class StudioIntegrationTest {
     }
 
     @Test fun aPluginFromOutsideTheProjectsReleasesIsOnlyTakenByDebugBuilds() {
-        for (url in listOf("http://github.com/gccammelli/pandy-studio/releases/download/v1/$PLUGIN_ASSET", "https://github.com/someone/pandy-studio/releases/download/v1/$PLUGIN_ASSET",
-            "https://github.com.example.invalid/gccammelli/pandy-studio/releases/download/v1/$PLUGIN_ASSET", "http://127.0.0.1:8765/$PLUGIN_ASSET", "")) {
+        for (url in listOf("http://github.com/gccammelli/pandy-slicer-plugin/releases/download/v1/$PLUGIN_ASSET", "https://github.com/someone/pandy-slicer-plugin/releases/download/v1/$PLUGIN_ASSET",
+            "https://github.com.example.invalid/gccammelli/pandy-slicer-plugin/releases/download/v1/$PLUGIN_ASSET", "http://127.0.0.1:8765/$PLUGIN_ASSET", "")) {
             assertTrue("outside GitHub" in assertFailsWith<ApiException>(url) { pluginDownload(release(url = url)) }.message!!)
         }
         assertEquals("http://127.0.0.1:8765/$PLUGIN_ASSET", pluginDownload(release(url = "http://127.0.0.1:8765/$PLUGIN_ASSET"), anyHost = true).url)
