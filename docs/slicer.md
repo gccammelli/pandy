@@ -1,19 +1,36 @@
 # Printing models from MakerWorld, Thingiverse and Printables
 
-Handy prints a MakerWorld model by having Bambu's cloud slice it. With the printer in LAN-only mode Pandy does that
-part locally, with **[Pandy Slicer](https://github.com/gccammelli/pandy-slicer)**: Bambu Studio's own slicer in a
-container, on your Home Assistant or any x86-64 computer.
+Pandy slices models from MakerWorld, Thingiverse and Printables before printing them. On Android, the preferred slicer
+is the phone plugin: when installed, Pandy uses it for model prints. It supports 64-bit ARM phones with Android 8 or
+newer. If the plugin is not installed and a server is set up, Pandy uses **[Pandy Slicer](https://github.com/gccammelli/pandy-slicer)**:
+Bambu Studio's slicer in a container, as a Home Assistant add-on or on an x86-64 computer. Use the server on iOS, on
+phones the plugin does not support, or to slice on a server. The plugin is a large download; a server can be faster
+than an older phone.
 
 ```
-MakerWorld, Thingiverse or Printables (Pandy's Models tab) ──3MF / STL──▶ Pandy ──3MF──▶ Pandy Slicer ──sliced file (FTPS)──▶ printer
-                                           └──────────── start the print (MQTT or Home Assistant) ─────▶
+MakerWorld, Thingiverse or Printables ──3MF / STL──▶ Pandy ◀──slices──▶ slicer plugin on the phone (Android)
+                                                       └──sliced file (FTPS), start the print──▶ printer
+
+MakerWorld, Thingiverse or Printables ──3MF / STL──▶ Pandy ──3MF──▶ Pandy Slicer ──sliced file (FTPS)──▶ printer
+                                                       └──── start the print (MQTT or Home Assistant) ────▶
 ```
 
-It works in every connection mode: Pandy only (Docker), Home Assistant only or Pandy + Home Assistant (the add-on, or Docker). The printer itself must be in LAN Only and Developer Mode (see below).
+The setting **Me › Settings › Slicer for model prints › Slicer plugin on this phone** is on by default. Turn it off to
+use the server. If the plugin is not installed and no server is set up, the print sheet offers **Get the slicer**.
 
-Everything else in Pandy (status, camera, controls, history, reprints, timelapses) works without it.
+With either slicer the printer itself must be in LAN Only and Developer Mode (see below). Everything else in Pandy
+(status, camera, controls, history, reprints, timelapses) works without a slicer.
 
-## Set it up
+## Phone plugin (Android)
+
+Install it from the **Studio** tab with **Get the slicer**. See [Studio](studio.md) for setup details. Model prints on
+the phone always use the plugin's Bambu Studio engine (the Bambu server adapter), regardless of the engine selected
+for Studio's plate editor.
+
+## Set up Pandy Slicer (server option)
+
+The server works in every connection mode: Pandy only (Docker), Home Assistant only or Pandy + Home Assistant (the
+add-on, or Docker).
 
 **With Home Assistant** (Pandy reaches the slicer through it, so it works wherever Pandy reaches Home Assistant):
 
@@ -47,7 +64,8 @@ On **Prepare to Print**, open **Advanced slicer settings** to change quality, wa
 speed for this print. Each setting starts at **Profile default**: only the settings you change replace the profile's
 values. Review them in the print confirmation, or reset individual settings or all of them to the profile.
 
-This needs Pandy Slicer 1.5.0 or later; update the add-on or Docker image if prompted. Pandy
+These settings work with both slicers. With the server option, they need Pandy Slicer 1.5.0 or later; update the
+add-on or Docker image if prompted. Pandy
 Slicer checks the sliced file before printing and refuses a setting that conflicts with an object or layer-specific
 setting anywhere in the model, including on another plate. Some projects from other slicers have object settings Pandy
 cannot check and require the advanced settings to be reset or the model edited in Bambu Studio. Speeds can still be
@@ -56,6 +74,7 @@ editor are not available here.
 
 ## When Print doesn't show
 
-The printer must take commands from Pandy: **LAN Only mode** and **Developer Mode** on (printer: Settings › Network,
-or WLAN on P1/A1). Otherwise Pandy shows "Watching only", leaves MakerWorld as it is, and its "Open in Bambu Handy"
-opens Handy.
+On Thingiverse and Printables, **Print** appears when a printer is set up in Pandy. On MakerWorld, the printer must
+take commands from Pandy: **LAN Only mode** and **Developer Mode** on (printer: Settings › Network, or WLAN on P1/A1).
+Otherwise Pandy shows "Watching only", leaves MakerWorld as it is, and its "Open in Bambu Handy" opens Handy. If the
+phone plugin is not installed and no server is set up, **Print** still opens a sheet with **Get the slicer**.

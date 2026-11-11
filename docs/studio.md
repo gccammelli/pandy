@@ -51,10 +51,16 @@ slicer** again.
 
 ## MakerWorld, Thingiverse and Printables
 
-Models from the **Models** tab are sliced by [Pandy Slicer](slicer.md) on your Home Assistant or a computer by
-default. With the plugin installed, **Me › Settings › Slicer for model prints › Slicer plugin on this phone** slices
-them on the phone instead with the Bambu server adapter. Choosing Orca in Studio does not change this separate
-original-project workflow; Orca currently supports only Studio’s plain-model editor.
+Models from the **Models** tab use the phone plugin by default on supported Android phones when it is installed.
+**Me › Settings › Slicer for model prints › Slicer plugin on this phone** is on by default; turn it off to use
+[Pandy Slicer](https://github.com/gccammelli/pandy-slicer) on a server. If the plugin is not installed and a server is
+set up, Pandy uses the server. Pandy Slicer is the option for iOS, phones the plugin does not support, or slicing on a
+server. If the plugin is not installed and no server is set up, the print sheet offers **Get the slicer**. Model prints
+on the phone always use the plugin's Bambu Studio engine (the Bambu server adapter). Choosing Orca in Studio only
+affects Studio's plate editor.
+
+Advanced slicer settings work with both slicers; the **Pandy Slicer 1.5.0 or later** requirement applies only to the
+server option. See [model printing](slicer.md) for details.
 
 ## Comparison with desktop slicers
 
@@ -70,7 +76,8 @@ Slicing is slower than on a computer: seconds for a small part, minutes for a fu
 ## Limits
 
 * One plate, whole objects: no painting, modifiers, cutting or per-object settings.
-* The editor takes plain models. A 3MF project (several plates, its own print settings) opened with Pandy goes to
-  the print sheet the Models tab uses instead, which slices the original project with [Pandy Slicer](slicer.md) or
-  the plugin.
+* The editor takes plain STL and 3MF files, not projects. On Android, the print sheet has **Open in Pandy Studio** for
+  plain files, but not projects. A 3MF project (several plates, its own print settings) opened with Pandy goes to the
+  print sheet the Models tab uses instead, which slices the original project with the slicer selected for model prints
+  ([details](slicer.md)).
 * Phones with a 64-bit ARM processor, Android 8 or newer.

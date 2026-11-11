@@ -42,7 +42,7 @@ The Studio tab slices your own models on the phone:
 - Pause, stop and skip controls, plus AMS and filament controls
 - Print files, thumbnails, history, reprints and timelapses
 - Android: alerts when a print finishes, fails or needs attention, even with the screen off (Pandy stays connected in the background; turn it off in Settings). iOS can't watch in the background, so it has no alerts
-- MakerWorld browsing, and slicing and printing its models straight from the app with [Pandy Slicer](https://github.com/gccammelli/pandy-slicer), with or without Home Assistant (a Home Assistant add-on that Pandy reaches through Home Assistant, or a Docker container; [how](docs/slicer.md))
+- Browse MakerWorld, Thingiverse and Printables models, then slice and print them in the app with the phone plugin on Android ([how](docs/studio.md)) or [Pandy Slicer](https://github.com/gccammelli/pandy-slicer) as a Home Assistant add-on or Docker container ([how](docs/slicer.md))
 - Android: a Studio tab that opens STL and 3MF files, slices them on the phone with Bambu Studio's or OrcaSlicer's engine (an optional plugin) and prints them ([how](docs/studio.md))
 - Light and dark themes, with a built-in demo printer
 
