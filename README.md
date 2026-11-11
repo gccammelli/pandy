@@ -28,6 +28,14 @@ These are dark-mode screens from the built-in demo printer, which lets you explo
   <img src="docs/images/pandy-dark-print-options.png" width="190" alt="Filament mapping and print options">
 </p>
 
+The Studio tab slices your own models on the phone:
+
+<p align="center">
+  <img src="docs/images/pandy-studio-home.png" width="190" alt="Studio: open a model or try a sample, pick the printer and the slicing engine">
+  <img src="docs/images/pandy-studio-plate.png" width="190" alt="Studio: a gear on the plate, with scale and rotate tools">
+  <img src="docs/images/pandy-studio-preview.png" width="190" alt="Studio: the sliced gear with print time, filament use and the Print button">
+</p>
+
 ## Features
 
 - Printer status, progress, temperatures, fans, light, speed, motion controls and HMS messages
@@ -35,7 +43,7 @@ These are dark-mode screens from the built-in demo printer, which lets you explo
 - Print files, thumbnails, history, reprints and timelapses
 - Android: alerts when a print finishes, fails or needs attention, even with the screen off (Pandy stays connected in the background; turn it off in Settings). iOS can't watch in the background, so it has no alerts
 - MakerWorld browsing, and slicing and printing its models straight from the app with [Pandy Slicer](https://github.com/gccammelli/pandy-slicer), with or without Home Assistant (a Home Assistant add-on that Pandy reaches through Home Assistant, or a Docker container; [how](docs/slicer.md))
-- Android: a Studio tab that opens STL and 3MF files, slices them on the phone with Bambu Studio's engine (an optional plugin) and prints them ([how](docs/studio.md))
+- Android: a Studio tab that opens STL and 3MF files, slices them on the phone with Bambu Studio's or OrcaSlicer's engine (an optional plugin) and prints them ([how](docs/studio.md))
 - Light and dark themes, with a built-in demo printer
 
 ## Direct mode
