@@ -70,6 +70,7 @@ class Studio(private var platform: Platform, private val scope: CoroutineScope) 
         invalidate()
         platform = next
         library = null; schema = null; engine = null; printer = null; process = null
+        scene.bed = Bed() // the previous printer's bed must not stay if the new engine fails to load
         printers = emptyList(); processes = emptyList(); filamentChoices = emptyList()
         overrides.clear(); filaments.clear(); syncColors()
         scene.objects.forEach { it.filament = 0 }
