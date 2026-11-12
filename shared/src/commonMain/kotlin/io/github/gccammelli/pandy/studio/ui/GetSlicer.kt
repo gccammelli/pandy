@@ -53,6 +53,11 @@ fun pluginDownload(releaseJson: String, anyHost: Boolean = false): PluginDownloa
     return PluginDownload(url, sha, size, release["tag_name"]?.jsonPrimitive?.contentOrNull.orEmpty())
 }
 
+/** Shown before anything is downloaded: the add-on comes from GitHub, outside any app store's checks. */
+const val SLICER_CONSENT = "The add-on is downloaded from GitHub, not from your app store, so the store's own checks " +
+    "do not apply to it. Pandy checks its checksum and that it is signed with Pandy's key before it is installed. " +
+    "Nothing is downloaded unless you tap Download and install; Pandy works without it."
+
 /** Shown on the Studio tab until the slicer plugin is installed. */
 @Composable
 fun GetSlicer() {
@@ -79,8 +84,10 @@ fun GetSlicer() {
             T("Studio opens your STL and 3MF files, lets you arrange them and choose the print settings, then slices and " +
                 "prints them on your printer, without a computer.", 14.sp, C.Sub, lh = 20.sp)
             Gap(10.dp)
-            T("Slicing is done by Bambu Studio's own engine, which Pandy installs as a separate add-on (about 90 MB). " +
+            T("Slicing is done by Bambu Studio's or OrcaSlicer's own engine, which Pandy installs as a separate add-on (about 180 MB). " +
                 "It is free software under the AGPL licence, published with its source; Pandy itself stays MIT.", 14.sp, C.Sub, lh = 20.sp)
+            Gap(10.dp)
+            T(SLICER_CONSENT, 14.sp, C.Sub, lh = 20.sp)
             Gap(16.dp)
             if (busy) {
                 val p = progress
