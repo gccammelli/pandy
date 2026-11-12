@@ -112,6 +112,8 @@ class StudioTabTest {
         compose.runOnIdle { assertEquals(STUDIO_TAB, Nav.tab) }
         compose.onNodeWithText("Get the slicer").assertExists()
         compose.onNodeWithText("New plate").assertDoesNotExist()
+        compose.onNodeWithText(io.github.gccammelli.pandy.studio.ui.SLICER_CONSENT).assertExists()
+        compose.onNodeWithText("Download and install").assertExists() // nothing is fetched until it is tapped
 
         installError = ApiException("The slicer isn't published yet.")
         compose.onNodeWithText("Download and install").performClick()
