@@ -81,6 +81,14 @@ class EngineSelectionTest {
         assertEquals(1, studio.scene.objects.size)
     }
 
+    @Test fun failedEngineSwitchDoesNotKeepThePreviousPrintersBed() = runBlocking {
+        val studio = Studio(host(fail = true), this); studio.load().join()
+        studio.scene.bed = Bed(width = 180f, depth = 180f, height = 180f)
+        studio.chooseEngine("orca")!!.join()
+        assertNotNull(studio.loadError); assertNull(studio.printer)
+        assertEquals(Bed(), studio.scene.bed)
+    }
+
     @Test fun theChosenEngineIsRememberedAcrossSessionsUnlessItIsNoLongerInstalledOrFailedToLoad() = runBlocking {
         val saved = mutableMapOf<String, String>()
         val first = Studio(host(saved = saved), this); first.load().join()
