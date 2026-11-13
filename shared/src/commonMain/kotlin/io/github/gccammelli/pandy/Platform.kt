@@ -56,6 +56,8 @@ interface PlatformUi {
     suspend fun installSlicerPlugin(progress: (Float) -> Unit): Unit = throw ApiException("The slicer plugin is not available on this device.")
     /** Full-screen live view turns the phone sideways; false restores the normal orientation. */
     fun landscape(on: Boolean)
+    /** Shares text and optional image bytes via the system sharesheet. */
+    fun share(text: String, imageBytes: ByteArray? = null, title: String? = null) {}
     /** Print alerts need Pandy to keep running in the background, which only Android allows; iOS hides the setting. */
     val canNotify: Boolean get() = false
     /** Asks for the notification permission (Android 13 and later), if it isn't granted yet. */

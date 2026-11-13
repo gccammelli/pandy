@@ -74,7 +74,7 @@ class NotifyTest {
     fun eventTypesAndActionButtonsAreProvidedForPrintStates() {
         val finish = printEvent(printer("running"), printer("finish"))!!
         assertEquals(PrintEventType.FINISH, finish.type)
-        assertEquals(emptyList(), finish.actions)
+        assertEquals(listOf(PrintAction.SHARE), finish.actions)
         assertEquals("SN", finish.serial)
 
         val failed = printEvent(printer("running"), printer("failed", error = true))!!
@@ -115,5 +115,32 @@ class NotifyTest {
         }
     }
 
+    @Test
+    fun finishAndFailurePreferCameraSnapshotWithCoverFallback() {
+        val withCamIds = ids + ("camera.camera" to "cam") + ("image.cover_image" to "cov")
+        val withCamStates = mapOf(
+            "s" to Entity("s", "finish", JsonObject(emptyMap())),
+            "t" to Entity("t", "Benchy", JsonObject(emptyMap())),
+            "cam" to Entity("cam", "streaming", JsonObject(emptyMap())),
+            "cov" to Entity("cov", "v1", JsonObject(emptyMap()))
+        )
+        val runningWithCam = Printer(PrinterInfo("p", "SN", "X1C", "X1C", null, withCamIds, emptyList(), emptyList()),
+            withCamStates + ("s" to Entity("s", "running", JsonObject(emptyMap()))))
+        val finishedWithCam = Printer(PrinterInfo("p", "SN", "X1C", "X1C", null, withCamIds, emptyList(), emptyList()), withCamStates)
 
+        val ev = printEvent(runningWithCam, finishedWithCam)!!
+        assertEquals("/api/camera_proxy/cam", ev.imagePath)
+        assertEquals("/api/image_proxy/cov?v=v1", ev.fallbackImagePath)
+
+        // Without camera, falls back directly to coverImage as primary and null fallback
+        val noCamIds = ids + ("image.cover_image" to "cov")
+        val runningNoCam = Printer(PrinterInfo("p", "SN", "X1C", "X1C", null, noCamIds, emptyList(), emptyList()),
+            withCamStates + ("s" to Entity("s", "running", JsonObject(emptyMap()))) - "cam")
+        val finishedNoCam = Printer(PrinterInfo("p", "SN", "X1C", "X1C", null, noCamIds, emptyList(), emptyList()),
+            withCamStates - "cam")
+
+        val evNoCam = printEvent(runningNoCam, finishedNoCam)!!
+        assertEquals("/api/image_proxy/cov?v=v1", evNoCam.imagePath)
+        assertNull(evNoCam.fallbackImagePath)
+    }
 }

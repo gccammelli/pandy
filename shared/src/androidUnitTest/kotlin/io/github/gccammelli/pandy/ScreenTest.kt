@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import io.github.gccammelli.pandy.ui.*
+import androidx.compose.ui.graphics.asAndroidBitmap
 import org.junit.Rule
 import org.junit.Test
 import org.junit.Before
@@ -1936,6 +1937,29 @@ class ScreenTest {
         assertEquals(listOf(65,0),set)
     }
 
+    @Test fun temperatureEntrySteppersIncrementAndDecrementInFiveDegreeSteps() {
+        val set=mutableListOf<Int>(); var closed=0
+        show("Temperature") { TempSheet("Temperature","Test heater",listOf(0,40),215.0,0..300,{closed++}) { set+=it } }
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.onNodeWithContentDescription("Decrease temperature").performClick()
+        compose.onNodeWithContentDescription("Decrease temperature").performClick()
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(listOf(210),set)
+        assertEquals(1,closed)
+    }
+
+    @Test fun temperatureEntrySteppersClampToRangeLimits() {
+        val set=mutableListOf<Int>()
+        show("Temperature") { TempSheet("Temperature","Test heater",listOf(0,40),0.0,0..50,{}) { set+=it } }
+        compose.onNodeWithContentDescription("Decrease temperature").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.onNode(hasSetTextAction()).performTextReplacement("48")
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.onNodeWithContentDescription("Increase temperature").assertIsNotEnabled()
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(listOf(50),set)
+    }
+
     @Test fun heatedChamberUsesItsOwnTarget() {
         val id="number.chamber_target"
         val info=printer.info.copy(ids=printer.info.ids+("number.target_chamber_temperature" to id))
@@ -2867,6 +2891,87 @@ class ScreenTest {
         compose.waitForIdle()
         compose.onAllNodesWithText("External Spool 1 (Left / Main)").onFirst().assertExists()
         compose.onAllNodesWithText("External Spool 2 (Right / Aux)").onFirst().assertExists()
+    }
+
+    @Test fun unsetExternalSpoolHiddenWhenAmsIsConnectedToMain() {
+        val ext1 = entity("Empty", mapOf("type" to "", "empty" to "true", "active" to "false"))
+        val ext2 = entity("Generic PETG", mapOf("name" to "Generic PETG", "type" to "PETG", "color" to "#00AE42FF", "empty" to "false", "active" to "false"))
+        val info = printer.info.copy(
+            model = "X2D",
+            external = listOf("sensor.spool_1", "sensor.spool_2")
+        )
+        val p = variant(info = info, set = arrayOf(
+            "sensor.spool_1" to ext1,
+            "sensor.spool_2" to ext2
+        ))
+
+        val showFilament = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    if (showFilament.value) FilamentScreen(p)
+                    else DevicesTab(st.copy(printers = listOf(p)), p)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onAllNodesWithText("External Spool 1 (Left / Main)").assertCountEquals(0)
+        compose.onAllNodesWithText("External Spool 2 (Right / Aux)").onFirst().assertExists()
+
+        compose.runOnIdle { showFilament.value = true }
+        compose.waitForIdle()
+        compose.onAllNodesWithText("External Spool 1 (Left / Main)").assertCountEquals(0)
+        compose.onNodeWithText("External Spool 2 (Right / Aux)").assertExists()
+    }
+
+    @Test fun printCardOpensJobDetailsDuringPrintingAndShowsArrow() {
+        ThemeMode.mode = "light"
+        val showScreen = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    if (showScreen.value) JobDetailsScreen(printer)
+                    else DevicesTab(st, printer)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("About 1h 23min left").assertExists()
+
+        fun saveEv(name: String) {
+            val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
+            val root = generateSequence(java.io.File(System.getProperty("user.dir") ?: ".")) { it.parentFile }
+                .firstOrNull { java.io.File(it, "settings.gradle.kts").exists() }
+                ?: java.io.File(".")
+            val out = java.io.File(root, "docs/evidence/print-job-inspector/$name")
+            out.parentFile?.mkdirs()
+            java.io.FileOutputStream(out).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            val art = java.io.File("""C:\Users\dbarciela\.gemini\antigravity\brain\2d50a106-7240-43d6-801d-8c857c602e33/$name""")
+            if (art.parentFile?.exists() == true) {
+                java.io.FileOutputStream(art).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }
+        }
+
+        saveEv("devices-tab-print-card.png")
+
+        compose.onNodeWithText("Articulated Panda Keychain").performClick()
+        kotlin.test.assertEquals(Screen.JobDetails, Nav.stack.last())
+
+        compose.runOnIdle { showScreen.value = true }
+        compose.waitForIdle()
+        compose.onNodeWithText("Print Details").assertExists()
+        compose.onNodeWithText("Print Speed").assertExists()
+        compose.onNodeWithText("Material & Cost").assertExists()
+
+        saveEv("job-details-light.png")
+
+        compose.onNodeWithText("Contrast: Auto").assertExists().performClick()
+        compose.onNodeWithText("Contrast: Light").assertExists()
+
+        compose.runOnIdle { ThemeMode.mode = "dark" }
+        compose.waitForIdle()
+        saveEv("job-details-dark.png")
+        compose.runOnIdle { ThemeMode.mode = "system" }
     }
 
     @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {

@@ -37,7 +37,7 @@ class PlatformStorageTest {
         try {
             val url=cacheFile("folder/sample.mp4",byteArrayOf(1,2,3))
             val file=java.io.File(android.net.Uri.parse(url).path!!)
-            assertTrue(file.canonicalPath.startsWith(context.cacheDir.canonicalPath+"/"))
+            assertTrue(file.canonicalPath.startsWith(context.cacheDir.canonicalPath + java.io.File.separator) || file.canonicalPath.startsWith(context.cacheDir.canonicalPath + "/"))
             assertArrayEquals(byteArrayOf(1,2,3),file.readBytes())
             file.delete()
         } finally { appContext=null }

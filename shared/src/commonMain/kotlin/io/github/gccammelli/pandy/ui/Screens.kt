@@ -9,7 +9,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -29,14 +28,12 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Inbox
-import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
@@ -62,10 +59,14 @@ import io.github.gccammelli.pandy.Printer
 import io.github.gccammelli.pandy.Repo
 import io.github.gccammelli.pandy.amsId
 import io.github.gccammelli.pandy.displayName
-import io.github.gccammelli.pandy.isSingleSlot
+import io.github.gccammelli.pandy.dryingDurationText
+import io.github.gccammelli.pandy.externalBadge
+import io.github.gccammelli.pandy.externalTitle
+import io.github.gccammelli.pandy.visibleExternalSpools
 import io.github.gccammelli.pandy.isHt
 import io.github.gccammelli.pandy.maxDryingTemp
 import io.github.gccammelli.pandy.modelBadge
+import io.github.gccammelli.pandy.slotLabel
 import io.github.gccammelli.pandy.startAmsDrying
 import io.github.gccammelli.pandy.stopAmsDrying
 import io.github.gccammelli.pandy.supportsDrying
@@ -78,7 +79,6 @@ import io.github.gccammelli.pandy.setPrintCache
 import io.github.gccammelli.pandy.setPrintOption
 import io.github.gccammelli.pandy.setXcam
 import io.github.gccammelli.pandy.skip
-import io.github.gccammelli.pandy.toggleCamera
 import io.github.gccammelli.pandy.unload
 
 // ---------- Skip parts ----------
@@ -188,32 +188,11 @@ fun FilamentScreen(p: Printer) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
             p.ams.forEach { (a, trays) ->
                 Card {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        T(a.displayName(), 16.sp, weight = FontWeight.Bold)
-                        a.modelBadge()?.let { badge ->
-                            Spacer(Modifier.width(8.dp))
-                            Box(Modifier.clip(RoundedCornerShape(4.dp)).background(C.Track).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                T(badge, 11.sp, C.Sub, weight = FontWeight.Medium)
-                            }
-                        }
-                        if (p.amsIsDrying(a)) {
-                            Spacer(Modifier.width(8.dp))
-                            Box(Modifier.clip(RoundedCornerShape(4.dp)).background(C.AccentBg).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                T("Drying", 11.sp, C.Orange, FontWeight.Bold)
-                            }
-                        }
-                        Spacer(Modifier.weight(1f))
-                        p.amsNum(a, "sensor.humidity_index")?.let { h ->
-                            Icon(Icons.Outlined.WaterDrop, null, Modifier.size(16.dp), tint = humidityColor(h.toInt()))
-                            T(" ${h.toInt()}", 13.sp, C.Sub)
-                        }
-                        p.amsNum(a, "sensor.humidity")?.let { T("  ${it.toInt()}%", 13.sp, C.Sub) }
-                        p.amsTemp(a)?.let { T("  ${it.toInt()}°C", 13.sp, C.Sub) }
-                    }
+                    AmsHeaderRow(p, a, detail = true)
                     Gap(12.dp)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         trays.forEachIndexed { i, s ->
-                            Box(Modifier.weight(1f).clickable(enabled = s != null) { open = s }) { SlotTile(s, "${'A' + a.index - 1}${i + 1}", Modifier.fillMaxWidth()) }
+                            Box(Modifier.weight(1f).clickable(enabled = s != null) { open = s }) { SlotTile(s, a.slotLabel(i), Modifier.fillMaxWidth()) }
                         }
                     }
                     Gap(10.dp)
@@ -222,27 +201,14 @@ fun FilamentScreen(p: Printer) {
                         Gap(12.dp)
                         val isDrying = p.amsIsDrying(a)
                         val remaining = p.amsDryingRemaining(a)
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isDrying) C.Orange.copy(alpha = 0.12f) else C.Fill)
-                                .clickable { dryingAms = a }
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (isDrying) C.Orange.copy(alpha = 0.12f) else C.Fill)
+                            .clickable { dryingAms = a }.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             DryingGlyph(Modifier.size(18.dp), color = if (isDrying) C.Orange else C.Sub)
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
                                 T(if (isDrying) "Filament drying active" else "Filament drying", 13.sp, weight = FontWeight.Medium)
-                                if (isDrying && remaining != null && remaining > 0.0) {
-                                    val totalMins = kotlin.math.round(remaining * 60).toInt()
-                                    val hours = totalMins / 60
-                                    val mins = totalMins % 60
-                                    T("Remaining: ${hours}h ${mins}m", 11.sp, C.Sub)
-                                } else if (!isDrying) {
-                                    T("Preheat & dry filament spools", 11.sp, C.Sub)
-                                }
+                                if (isDrying && remaining != null && remaining > 0.0) T("Remaining: ${dryingDurationText(remaining)}", 11.sp, C.Sub)
+                                else if (!isDrying) T("Preheat & dry filament spools", 11.sp, C.Sub)
                             }
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(16.dp), tint = C.Faint)
                         }
@@ -250,20 +216,18 @@ fun FilamentScreen(p: Printer) {
                 }
                 Gap(12.dp)
             }
-            if (p.external.isNotEmpty()) Card {
-                T(if (p.external.size > 1) "External Spools" else "External Spool", 16.sp, weight = FontWeight.Bold)
+            val visibleExt = p.visibleExternalSpools()
+            if (visibleExt.isNotEmpty()) Card {
+                T(if (visibleExt.size > 1) "External Spools" else "External Spool", 16.sp, weight = FontWeight.Bold)
                 Gap(12.dp)
-                p.external.forEachIndexed { i, s ->
-                    if (i > 0) Gap(10.dp)
+                visibleExt.forEachIndexed { rowIdx, entry ->
+                    val (i, s) = entry
+                    if (rowIdx > 0) Gap(10.dp)
                     Row(Modifier.fillMaxWidth().clickable { open = s }, verticalAlignment = Alignment.CenterVertically) {
-                        val badge = if (p.external.size > 1) "Ext ${i + 1}" else "Ext"
-                        SlotTile(s, badge, Modifier.width(64.dp))
+                        SlotTile(s, p.externalBadge(i), Modifier.width(64.dp))
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
-                            if (p.external.size > 1) {
-                                val side = if (i == 0) "Left / Main" else "Right / Aux"
-                                T("External Spool ${i + 1} ($side)", 12.sp, C.Sub)
-                            }
+                            if (p.external.size > 1) T(p.externalTitle(i), 12.sp, C.Sub)
                             T(if (s.known) s.name else "Not set", 15.sp)
                             T(if (s.active) "In use" else s.type, 12.sp, if (s.active) C.Accent else C.Sub)
                         }
@@ -317,13 +281,14 @@ fun PrinterSettingsScreen(p: Printer) {
     Page("Settings", { Nav.back() }) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
             Group {
+                @Composable fun directNav(label: String, s: Screen) {
+                    if (Repo.direct || Repo.demo) NavRow(label) { Nav.go(s) }
+                    else if (Repo.showUnavailable) NavRow(label, value = "Not available", labelColor = C.Sub, chevron = false)
+                }
                 NavRow("Machine Assistant", value = p.hms.size.takeIf { it > 0 }?.let { "$it" }) { Nav.go(Screen.Assistant) }
-                if (Repo.direct || Repo.demo) NavRow("Calibration") { Nav.go(Screen.Calibration) }
-                else if (Repo.showUnavailable) NavRow("Calibration", value = "Not available", labelColor = C.Sub, chevron = false)
-                if (Repo.direct || Repo.demo) NavRow("Print Options") { Nav.go(Screen.PrintOptions) }
-                else if (Repo.showUnavailable) NavRow("Print Options", value = "Not available", labelColor = C.Sub, chevron = false)
-                if (p.ams.isNotEmpty() && (Repo.direct || Repo.demo)) NavRow("AMS Settings") { Nav.go(Screen.AmsSettings) }
-                else if (p.ams.isNotEmpty() && Repo.showUnavailable) NavRow("AMS Settings", value = "Not available", labelColor = C.Sub, chevron = false)
+                directNav("Calibration", Screen.Calibration)
+                directNav("Print Options", Screen.PrintOptions)
+                if (p.ams.isNotEmpty()) directNav("AMS Settings", Screen.AmsSettings)
                 NavRow("Liveview Settings") { Nav.go(Screen.LiveviewSettings) }
             }
             Gap(12.dp)
@@ -357,7 +322,7 @@ fun PrinterSettingsScreen(p: Printer) {
 fun CalibrationScreen(p: Printer) {
     val err = errorToast()
     var confirm by remember { mutableStateOf(false) }
-    var lidar by remember { mutableStateOf(p.model.startsWith("X1") || p.model.startsWith("H2") || p.model.startsWith("X2")) }
+    var lidar by remember { mutableStateOf(p.hasLidar) }
     var bed by remember { mutableStateOf(true) }
     var vibration by remember { mutableStateOf(true) }
     var motor by remember { mutableStateOf(false) }
@@ -369,7 +334,7 @@ fun CalibrationScreen(p: Printer) {
             T("Choose the checks to run on the printer. Calibration can move the toolhead and heat the bed.", 14.sp, C.Sub, lh = 19.sp, modifier = Modifier.padding(horizontal = 6.dp))
             Gap(12.dp)
             Group {
-                if (p.model.startsWith("X1") || p.model.startsWith("H2") || p.model.startsWith("X2")) ToggleRow("Micro lidar calibration", lidar, enabled = canSend && !p.printing) { lidar = it }
+                if (p.hasLidar) ToggleRow("Micro lidar calibration", lidar, enabled = canSend && !p.printing) { lidar = it }
                 ToggleRow("Bed leveling", bed, enabled = canSend && !p.printing) { bed = it }
                 ToggleRow("Vibration compensation", vibration, enabled = canSend && !p.printing) { vibration = it }
                 ToggleRow("Motor noise cancellation", motor, enabled = canSend && !p.printing) { motor = it }
@@ -406,16 +371,20 @@ fun PrintOptionsScreen(p: Printer) {
                 "nozzle_blob_detect", "prompt_sound"
             ).any { p.flag(it) != null }
             if (Repo.showUnavailable || canSend && hasReportedOptions) Group {
-                PrinterFlagToggle(p, "AI Print Monitoring", "printing_monitor", canSend) { next, revert -> p.setXcam("printing_monitor", next, p.flagAttribute("printing_monitor", "print_halt") ?: false) { message -> revert(); err(message) } }
-                PrinterFlagToggle(p, "Build Plate Detection", "buildplate_marker_detector", canSend) { next, revert -> p.setXcam("buildplate_marker_detector", next, p.flagAttribute("buildplate_marker_detector", "print_halt") ?: false) { message -> revert(); err(message) } }
-                PrinterFlagToggle(p, "First Layer Inspection", "first_layer_inspector", canSend) { next, revert -> p.setXcam("first_layer_inspector", next, p.flagAttribute("first_layer_inspector", "print_halt") ?: false) { message -> revert(); err(message) } }
-                PrinterFlagToggle(p, "Auto-Recover from Step Loss", "auto_recovery", canSend) { next, revert -> p.setPrintOption("auto_recovery", next) { message -> revert(); err(message) } }
-                PrinterFlagToggle(p, "Build Plate Alignment", "plate_offset_switch", canSend) { next, revert -> p.setXcam("plate_offset_switch", next) { message -> revert(); err(message) } }
-                PrinterFlagToggle(p, "Foreign Object Detection", "fod_check", canSend) { next, revert -> p.setXcam("fod_check", next) { message -> revert(); err(message) } }
-                PrinterFlagToggle(p, "Model Movement Detection", "model_movement_check", canSend) { next, revert -> p.setXcam("model_movement_check", next) { message -> revert(); err(message) } }
-                PrinterFlagToggle(p, "Filament Tangle Detection", "filament_tangle_detect", canSend) { next, revert -> p.setPrintOption("filament_tangle_detect", next) { message -> revert(); err(message) } }
-                PrinterFlagToggle(p, "Nozzle Clumping Detection", "nozzle_blob_detect", canSend) { next, revert -> p.setPrintOption("nozzle_blob_detect", next) { message -> revert(); err(message) } }
-                PrinterFlagToggle(p, "Prompt Tones", "prompt_sound", canSend) { next, revert -> p.setPrintOption("prompt_sound", next) { message -> revert(); err(message) } }
+                @Composable fun xcamRow(label: String, key: String) =
+                    PrinterFlagToggle(p, label, key, canSend) { next, revert -> p.setXcam(key, next, p.flagAttribute(key, "print_halt") ?: false) { revert(); err(it) } }
+                @Composable fun optRow(label: String, key: String) =
+                    PrinterFlagToggle(p, label, key, canSend) { next, revert -> p.setPrintOption(key, next) { revert(); err(it) } }
+                xcamRow("AI Print Monitoring", "printing_monitor")
+                xcamRow("Build Plate Detection", "buildplate_marker_detector")
+                xcamRow("First Layer Inspection", "first_layer_inspector")
+                optRow("Auto-Recover from Step Loss", "auto_recovery")
+                xcamRow("Build Plate Alignment", "plate_offset_switch")
+                xcamRow("Foreign Object Detection", "fod_check")
+                xcamRow("Model Movement Detection", "model_movement_check")
+                optRow("Filament Tangle Detection", "filament_tangle_detect")
+                optRow("Nozzle Clumping Detection", "nozzle_blob_detect")
+                optRow("Prompt Tones", "prompt_sound")
             }
             val hasSystemOptions = listOf("door_open_check", "print_cache").any { p.flag(it) != null }
             if (Repo.showUnavailable || (canSend && hasSystemOptions)) {
@@ -457,9 +426,7 @@ fun AmsSettingsScreen(p: Printer) {
                 val canSend = (Repo.direct || Repo.demo) && p.online
                 val autoRefill = p.flag("auto_switch_filament")
                 if (Repo.showUnavailable || canSend && autoRefill != null) Group {
-                    if (autoRefill == null) {
-                        NavRow("AMS Auto-Refill", value = "Not available", labelColor = C.Sub, chevron = false)
-                    } else PrinterFlagToggle(p, "AMS Auto-Refill", "auto_switch_filament", canSend) { next, revert -> p.setPrintOption("auto_switch_filament", next) { message -> revert(); err(message) } }
+                    PrinterFlagToggle(p, "AMS Auto-Refill", "auto_switch_filament", canSend) { next, revert -> p.setPrintOption("auto_switch_filament", next) { message -> revert(); err(message) } }
                 }
                 Gap(12.dp)
                 T(if (!Repo.direct && !Repo.demo) "Home Assistant shows AMS state but does not expose these printer settings."
@@ -488,16 +455,13 @@ private fun AmsSettingsCard(p: Printer, ams: io.github.gccammelli.pandy.AmsInfo,
     T(amsLabel, 14.sp, C.Sub, modifier = Modifier.padding(horizontal = 6.dp))
     Gap(8.dp)
     if (Repo.showUnavailable || canSend) Group {
-            if (insertionRemote == null) {
-                NavRow("Read Filament on Insertion", value = "Not available", labelColor = C.Sub, chevron = false)
-            } else ToggleRow("Read Filament on Insertion", insertion, enabled = canSend) { next -> val old = insertion; insertion = next; update(insert = next) { insertion = old } }
-            if (startupRemote == null) {
-                NavRow("Read Filament on Startup", value = "Not available", labelColor = C.Sub, chevron = false)
-            } else ToggleRow("Read Filament on Startup", startup, enabled = canSend) { next -> val old = startup; startup = next; update(start = next) { startup = old } }
-            if (remainingRemote == null) {
-                NavRow("Remaining Filament Estimation", value = "Not available", labelColor = C.Sub, chevron = false)
-            } else ToggleRow("Remaining Filament Estimation", remaining, enabled = canSend) { next -> val old = remaining; remaining = next; update(remain = next) { remaining = old } }
-        }
+        @Composable fun amsRow(label: String, remote: Boolean?, cur: Boolean, set: (Boolean) -> Unit, send: (Boolean, () -> Unit) -> Unit) =
+            if (remote == null) NavRow(label, value = "Not available", labelColor = C.Sub, chevron = false)
+            else ToggleRow(label, cur, enabled = canSend) { next -> val old = cur; set(next); send(next) { set(old) } }
+        amsRow("Read Filament on Insertion", insertionRemote, insertion, { insertion = it }) { next, rev -> update(insert = next, revert = rev) }
+        amsRow("Read Filament on Startup", startupRemote, startup, { startup = it }) { next, rev -> update(start = next, revert = rev) }
+        amsRow("Remaining Filament Estimation", remainingRemote, remaining, { remaining = it }) { next, rev -> update(remain = next, revert = rev) }
+    }
 }
 
 /** Handy's two live-view autoplay choices. This preference is local to Pandy, not a printer command. */
@@ -601,176 +565,77 @@ fun DryingGlyph(modifier: Modifier = Modifier, color: Color = C.Sub) {
 }
 
 @Composable
-private fun StepButton(icon: ImageVector, enabled: Boolean, desc: String? = null, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            .background(if (enabled) C.Card else C.Fill)
-            .clickable(enabled = enabled, onClickLabel = desc, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(icon, desc, Modifier.size(18.dp), tint = if (enabled) C.Text else C.Faint)
-    }
-}
-
-@Composable
-fun AmsDryingSheet(
-    p: Printer,
-    ams: io.github.gccammelli.pandy.AmsInfo,
-    onDismiss: () -> Unit,
-    err: (String) -> Unit
-) {
+fun AmsDryingSheet(p: Printer, ams: io.github.gccammelli.pandy.AmsInfo, onDismiss: () -> Unit, err: (String) -> Unit) {
     val isDrying = p.amsIsDrying(ams)
     val dryingKnown = p.amsDryingState(ams) != null // never offer Start while the printer may already be drying
     val remainingHours = p.amsDryingRemaining(ams)
     val targetTemp = p.amsDryingTargetTemp(ams)
     val currentTemp = p.amsTemp(ams)
-
     val presets = if (ams.isHt) HT_DRYING_PRESETS else DRYING_PRESETS
-    val initialPreset = if (isDrying) {
-        presets.firstOrNull { it.temp == targetTemp?.toInt() }
-    } else {
-        presets.first()
-    }
+    val initialPreset = if (isDrying) presets.firstOrNull { it.temp == targetTemp?.toInt() } else presets.first()
     var temp by remember(ams.amsId(), isDrying) { mutableStateOf(if (isDrying) (targetTemp?.toInt()?.coerceIn(45, ams.maxDryingTemp) ?: 50) else (initialPreset?.temp ?: 50)) }
     var duration by remember(ams.amsId(), isDrying) { mutableStateOf(if (isDrying && remainingHours != null && remainingHours > 0.0) remainingHours.toInt().coerceIn(1, 24) else (initialPreset?.duration ?: 4)) }
     var rotateTray by remember(ams.amsId(), isDrying) { mutableStateOf(true) }
     var selectedPreset by remember(ams.amsId(), isDrying) { mutableStateOf<String?>(initialPreset?.name) }
-
-    val amsTitle = "Filament Drying - " + ams.displayName()
-
-    Sheet(
-        onDismiss = onDismiss,
-        title = amsTitle,
-        centeredTitle = true,
-        confirm = if (!isDrying && dryingKnown) "Start drying" else null,
-        onConfirm = {
-            p.startAmsDrying(ams, temp, duration, rotateTray, err)
-            onDismiss()
-        }
-    ) {
+    Sheet(onDismiss, "Filament Drying - ${ams.displayName()}", centeredTitle = true, confirm = if (!isDrying && dryingKnown) "Start drying" else null,
+        onConfirm = { p.startAmsDrying(ams, temp, duration, rotateTray, err); onDismiss() }) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-            if (!dryingKnown) {
-                T("Drying status is unavailable, so drying can't be started or stopped right now.", 13.sp, C.Sub)
-                Gap(12.dp)
-            }
+            if (!dryingKnown) { T("Drying status is unavailable, so drying can't be started or stopped right now.", 13.sp, C.Sub); Gap(12.dp) }
             if (isDrying) {
-                Column(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.Fill).padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    DryingGlyph(Modifier.size(40.dp), color = C.Orange)
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.Fill).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    DryingGlyph(Modifier.size(40.dp), color = C.Orange); Gap(12.dp)
+                    T("Drying in progress", 18.sp, weight = FontWeight.Bold); Gap(4.dp)
+                    if (remainingHours != null && remainingHours > 0.0) T("Remaining: ${dryingDurationText(remainingHours)}", 15.sp, C.Orange, FontWeight.Medium)
                     Gap(12.dp)
-                    T("Drying in progress", 18.sp, weight = FontWeight.Bold)
-                    Gap(4.dp)
-                    if (remainingHours != null && remainingHours > 0.0) {
-                        val totalMins = kotlin.math.round(remainingHours * 60).toInt()
-                        val hours = totalMins / 60
-                        val mins = totalMins % 60
-                        T("Remaining: ${hours}h ${mins}m", 15.sp, C.Orange, FontWeight.Medium)
-                    }
-                    Gap(12.dp)
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            T("Target temperature", 12.sp, C.Sub)
-                            T("${targetTemp?.toInt() ?: temp}°C", 16.sp, weight = FontWeight.Bold)
+                            T("Target temperature", 12.sp, C.Sub); T("${targetTemp?.toInt() ?: temp}°C", 16.sp, weight = FontWeight.Bold)
                         }
-                        if (currentTemp != null) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                T("Chamber temperature", 12.sp, C.Sub)
-                                T("${currentTemp.toInt()}°C", 16.sp, weight = FontWeight.Bold)
-                            }
+                        if (currentTemp != null) Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            T("Chamber temperature", 12.sp, C.Sub); T("${currentTemp.toInt()}°C", 16.sp, weight = FontWeight.Bold)
                         }
                     }
                 }
                 Gap(16.dp)
-                OutlineButton("Stop drying", C.Red, Modifier.fillMaxWidth()) {
-                    p.stopAmsDrying(ams, err)
-                    onDismiss()
-                }
+                OutlineButton("Stop drying", C.Red, Modifier.fillMaxWidth()) { p.stopAmsDrying(ams, err); onDismiss() }
                 Gap(16.dp)
             } else {
-                T("Presets", 13.sp, C.Sub)
-                Gap(8.dp)
+                T("Presets", 13.sp, C.Sub); Gap(8.dp)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     presets.forEach { preset ->
                         val sel = selectedPreset == preset.name
-                        Box(
-                            Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (sel) C.Accent else C.Fill)
-                                .clickable {
-                                    selectedPreset = preset.name
-                                    temp = preset.temp
-                                    duration = preset.duration
-                                }
-                                .padding(vertical = 10.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
+                        Box(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(if (sel) C.Accent else C.Fill)
+                            .clickable { selectedPreset = preset.name; temp = preset.temp; duration = preset.duration }.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
                             T(preset.name, 12.sp, if (sel) C.OnAccent else C.Text, weight = if (sel) FontWeight.Bold else FontWeight.Normal)
                         }
                     }
                 }
                 Gap(16.dp)
-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(14.dp)) {
-                    T("Target temperature", 13.sp, C.Sub)
-                    Gap(6.dp)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        T("$temp°C", 22.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        StepButton(Icons.Default.Remove, enabled = temp > 45, "Decrease temperature") {
-                            temp = (temp - 5).coerceAtLeast(45)
-                            selectedPreset = null
+                @Composable fun StepCard(label: String, value: String, rangeText: String, decOn: Boolean, incOn: Boolean, decDesc: String, incDesc: String, step: (Int) -> Unit) =
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(14.dp)) {
+                        T(label, 13.sp, C.Sub); Gap(6.dp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            T(value, 22.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            StepButton(Icons.Default.Remove, decOn, decDesc) { step(-1); selectedPreset = null }
+                            Spacer(Modifier.width(8.dp))
+                            StepButton(Icons.Default.Add, incOn, incDesc) { step(1); selectedPreset = null }
                         }
-                        Spacer(Modifier.width(8.dp))
-                        StepButton(Icons.Default.Add, enabled = temp < ams.maxDryingTemp, "Increase temperature") {
-                            temp = (temp + 5).coerceAtMost(ams.maxDryingTemp)
-                            selectedPreset = null
-                        }
+                        Gap(4.dp); T(rangeText, 11.sp, C.Sub)
                     }
-                    Gap(4.dp)
-                    T("Supported range: 45°C – ${ams.maxDryingTemp}°C", 11.sp, C.Sub)
+                StepCard("Target temperature", "$temp°C", "Supported range: 45°C – ${ams.maxDryingTemp}°C", temp > 45, temp < ams.maxDryingTemp, "Decrease temperature", "Increase temperature") {
+                    temp = (temp + it * 5).coerceIn(45, ams.maxDryingTemp)
                 }
                 Gap(12.dp)
-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(14.dp)) {
-                    T("Drying duration", 13.sp, C.Sub)
-                    Gap(6.dp)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        T("${duration}h", 22.sp, weight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        StepButton(Icons.Default.Remove, enabled = duration > 1, "Decrease duration") {
-                            duration = (duration - 1).coerceAtLeast(1)
-                            selectedPreset = null
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        StepButton(Icons.Default.Add, enabled = duration < 24, "Increase duration") {
-                            duration = (duration + 1).coerceAtMost(24)
-                            selectedPreset = null
-                        }
-                    }
-                    Gap(4.dp)
-                    T("Supported range: 1h – 24h", 11.sp, C.Sub)
+                StepCard("Drying duration", "${duration}h", "Supported range: 1h – 24h", duration > 1, duration < 24, "Decrease duration", "Increase duration") {
+                    duration = (duration + it).coerceIn(1, 24)
                 }
                 Gap(12.dp)
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(C.Fill).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        T("Rotate spool when drying", 15.sp, weight = FontWeight.Medium)
-                        Gap(2.dp)
-                        T(
-                            if (rotateTray) "Unload filament from feeder and secure the tip into the spool rim before rotating."
-                            else "Even heating. Disabled to dry without rotating.",
-                            11.sp,
-                            C.Sub
-                        )
+                        T("Rotate spool when drying", 15.sp, weight = FontWeight.Medium); Gap(2.dp)
+                        T(if (rotateTray) "Unload filament from feeder and secure the tip into the spool rim before rotating." else "Even heating. Disabled to dry without rotating.", 11.sp, C.Sub)
                     }
-                    Spacer(Modifier.width(8.dp))
-                    Toggle(rotateTray) { rotateTray = it }
+                    Spacer(Modifier.width(8.dp)); Toggle(rotateTray) { rotateTray = it }
                 }
                 Gap(20.dp)
             }

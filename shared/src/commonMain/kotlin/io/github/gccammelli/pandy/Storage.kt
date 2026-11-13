@@ -101,12 +101,36 @@ suspend fun zipEntry(total: Long, wanted: List<Regex>, maxSize: Long, fetch: sus
     return hit.name to bytes
 }
 
-/** Objects on a plate from a 3MF's Metadata/slice_info.config: identify_id → name. */
-fun sliceObjects(xml: String, plate: Int): Map<Int, String> {
+/** Slice metadata for a plate from a 3MF's Metadata/slice_info.config. */
+data class SlicePlateInfo(
+    val objects: Map<Int, String> = emptyMap(),
+    val weightGrams: Double? = null,
+    val lengthMeters: Double? = null,
+    val predictionSeconds: Int? = null,
+    val filaments: List<Map<String, String>> = emptyList()
+)
+
+fun slicePlateInfo(xml: String, plate: Int): SlicePlateInfo {
     val plates = xml.split("<plate>").drop(1)
-    val p = plates.firstOrNull { Regex("""key="index"\s+value="$plate"""").containsMatchIn(it) } ?: plates.firstOrNull() ?: return emptyMap()
-    return Regex("""<object\s+([^>]*)/?>""").findAll(p).mapNotNull { m ->
+    val p = plates.firstOrNull { Regex("""key="index"\s+value="$plate"""").containsMatchIn(it) } ?: plates.firstOrNull() ?: return SlicePlateInfo()
+    val meta = Regex("""<metadata\s+([^>]*)/?>""").findAll(p).mapNotNull { m ->
+        val a = Regex("""(\w+)="([^"]*)"""").findAll(m.groupValues[1]).associate { it.groupValues[1] to it.groupValues[2] }
+        val k = a["key"] ?: return@mapNotNull null
+        k to (a["value"] ?: "")
+    }.toMap()
+    val objects = Regex("""<object\s+([^>]*)/?>""").findAll(p).mapNotNull { m ->
         val a = Regex("""(\w+)="([^"]*)"""").findAll(m.groupValues[1]).associate { it.groupValues[1] to it.groupValues[2] }
         (a["identify_id"]?.toIntOrNull() ?: return@mapNotNull null) to (a["name"] ?: "")
     }.toMap()
+    val filaments = Regex("""<filament\s+([^>]*)/?>""").findAll(p).map { m ->
+        Regex("""(\w+)="([^"]*)"""").findAll(m.groupValues[1]).associate { it.groupValues[1] to it.groupValues[2] }
+    }.toList()
+    val filWeight = filaments.mapNotNull { it["used_g"]?.toDoubleOrNull() }.sum().takeIf { it > 0 }
+    val filLength = filaments.mapNotNull { it["used_m"]?.toDoubleOrNull() }.sum().takeIf { it > 0 }
+    val weight = meta["weight"]?.toDoubleOrNull() ?: filWeight
+    val prediction = meta["prediction"]?.toIntOrNull()
+    return SlicePlateInfo(objects, weight, filLength, prediction, filaments)
 }
+
+/** Objects on a plate from a 3MF's Metadata/slice_info.config: identify_id → name. */
+fun sliceObjects(xml: String, plate: Int): Map<Int, String> = slicePlateInfo(xml, plate).objects

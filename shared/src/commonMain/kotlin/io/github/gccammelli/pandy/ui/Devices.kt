@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -52,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.gccammelli.pandy.AmsInfo
 import io.github.gccammelli.pandy.LocalPlatform
 import io.github.gccammelli.pandy.Printer
 import io.github.gccammelli.pandy.Repo
@@ -59,8 +61,12 @@ import io.github.gccammelli.pandy.Spool
 import io.github.gccammelli.pandy.UiState
 import io.github.gccammelli.pandy.button
 import io.github.gccammelli.pandy.displayName
+import io.github.gccammelli.pandy.dryingDurationText
+import io.github.gccammelli.pandy.externalBadge
+import io.github.gccammelli.pandy.externalTitle
+import io.github.gccammelli.pandy.visibleExternalSpools
 import io.github.gccammelli.pandy.modelBadge
-import io.github.gccammelli.pandy.isSingleSlot
+import io.github.gccammelli.pandy.slotLabel
 import io.github.gccammelli.pandy.light
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -198,32 +204,32 @@ private fun Hero(p: Printer) {
 private fun PrinterPage(p: Printer) = Box(Modifier.fillMaxSize().background(C.Card).padding(10.dp)) {
     val amsColors = p.ams.firstOrNull()?.second.orEmpty().map { Color(if (it?.known == true) it.color else 0xFFDDDDDD) }
     PrinterArt(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 4.dp), ams = p.info.ams.isNotEmpty(), lit = p.lightOn, amsColors = amsColors)
+    PrinterTempOverlay(p, chipBg = C.Fill, showHumidity = true)
+}
+
+@Composable
+fun BoxScope.PrinterTempOverlay(p: Printer, chipBg: Color = C.Fill, showHumidity: Boolean = false) {
     if (p.isDualNozzle) {
-        TempChip(null, "nozzle", p.leftNozzle ?: p.nozzle, p.leftNozzleTarget, Modifier.align(Alignment.TopStart), label = "L")
-        TempChip(null, "nozzle", p.rightNozzle ?: p.nozzle, p.rightNozzleTarget, Modifier.align(Alignment.TopEnd), label = "R")
+        TempChip("nozzle", p.leftNozzle ?: p.nozzle, p.leftNozzleTarget, Modifier.align(Alignment.TopStart), label = "L", background = chipBg)
+        TempChip("nozzle", p.rightNozzle ?: p.nozzle, p.rightNozzleTarget, Modifier.align(Alignment.TopEnd), label = "R", background = chipBg)
         if (p.chamber != null) {
-            TempChip(null, "chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.BottomStart))
-            TempChip(null, "bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomEnd))
+            TempChip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.BottomStart), background = chipBg)
+            TempChip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomEnd), background = chipBg)
         } else {
-            TempChip(null, "bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
-            p.ams.firstOrNull()?.let { (a, _) ->
-                p.amsNum(a, "sensor.humidity_index")?.let { h ->
-                    Row(Modifier.align(Alignment.BottomEnd).clip(CircleShape).background(C.Fill).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.WaterDrop, null, Modifier.size(14.dp), tint = humidityColor(h.toInt()))
-                        Spacer(Modifier.width(4.dp)); T("${h.toInt()}", 13.sp, weight = FontWeight.Bold)
-                    }
-                }
-            }
+            TempChip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart), background = chipBg)
         }
     } else {
-        TempChip(Icons.Outlined.Settings, "nozzle", p.nozzle, p.nozzleTarget, Modifier.align(Alignment.TopStart))
-        if (p.chamber != null) TempChip(null, "chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.TopEnd))
-        TempChip(null, "bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
+        TempChip("nozzle", p.nozzle, p.nozzleTarget, Modifier.align(Alignment.TopStart), background = chipBg)
+        if (p.chamber != null) TempChip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.TopEnd), background = chipBg)
+        TempChip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart), background = chipBg)
+    }
+    if (showHumidity && (!p.isDualNozzle || p.chamber == null)) {
         p.ams.firstOrNull()?.let { (a, _) ->
             p.amsNum(a, "sensor.humidity_index")?.let { h ->
-                Row(Modifier.align(Alignment.BottomEnd).clip(CircleShape).background(C.Fill).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.align(Alignment.BottomEnd).clip(CircleShape).background(chipBg).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.WaterDrop, null, Modifier.size(14.dp), tint = humidityColor(h.toInt()))
-                    Spacer(Modifier.width(4.dp)); T("${h.toInt()}", 13.sp, weight = FontWeight.Bold)
+                    Spacer(Modifier.width(4.dp))
+                    T("${h.toInt()}", 13.sp, weight = FontWeight.Bold)
                 }
             }
         }
@@ -262,8 +268,8 @@ fun humidityColor(level: Int) = when { level <= 2 -> Color(0xFF00A33E); level ==
 
 /** "28 /0°C" with a small symbol for which heater; an arrow while heating (orange) or cooling (blue). */
 @Composable
-private fun TempChip(icon: ImageVector?, which: String, now: Double?, target: Double?, modifier: Modifier = Modifier, label: String? = null) =
-    Row(modifier.clip(CircleShape).background(C.Fill).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+fun TempChip(which: String, now: Double?, target: Double?, modifier: Modifier = Modifier, label: String? = null, background: Color = C.Fill) =
+    Row(modifier.clip(CircleShape).background(background).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
         if (label != null) {
             T(label, 12.sp, C.Sub, FontWeight.Bold)
             Spacer(Modifier.width(4.dp))
@@ -315,7 +321,9 @@ private fun SectionHead(title: String, more: () -> Unit) = Row(Modifier.fillMaxW
 @Composable
 private fun PrintCard(p: Printer, err: (String) -> Unit) {
     var confirmStop by remember { mutableStateOf(false) }
-    Card(padding = androidx.compose.foundation.layout.PaddingValues(12.dp), onClick = if (p.printing) null else { { Nav.go(Screen.History) } }) {
+    Card(padding = androidx.compose.foundation.layout.PaddingValues(12.dp), onClick = {
+        if (p.printing) Nav.go(Screen.JobDetails) else Nav.go(Screen.History)
+    }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(C.Fill), contentAlignment = Alignment.Center) {
                 if (p.printing || p.status == "finish") HaImage(p.coverImage, Modifier.fillMaxSize().padding(4.dp))
@@ -343,7 +351,7 @@ private fun PrintCard(p: Printer, err: (String) -> Unit) {
                     else -> { T("Device Idle", 15.sp, weight = FontWeight.Medium); Gap(4.dp); T("Start printing Now!", 13.sp, C.Sub) }
                 }
             }
-            if (!p.printing) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = C.Faint)
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = C.Faint)
         }
         if (p.printing) {
             Gap(12.dp)
@@ -363,7 +371,7 @@ private fun PrintCard(p: Printer, err: (String) -> Unit) {
 }
 
 @Composable
-private fun RowScope.JobButton(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) =
+internal fun RowScope.JobButton(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) =
     Row(Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(8.dp)).background(C.Fill).clickable(onClick = onClick),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, Modifier.size(16.dp), tint = tint); Spacer(Modifier.width(4.dp)); T(label, 13.sp, C.Text)
@@ -402,34 +410,13 @@ fun NozzleCard(p: Printer, modifier: Modifier = Modifier, onClick: () -> Unit) =
         T("Nozzle & Extruder", 13.sp, C.Sub, modifier = Modifier.weight(1f))
         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp), tint = C.Faint)
     }
-    if (p.isDualNozzle) {
-        Row(Modifier.fillMaxWidth().height(96.dp), verticalAlignment = Alignment.CenterVertically) {
-            val lTemp = p.leftNozzle ?: p.nozzle
-            val lTarget = p.leftNozzleTarget ?: p.nozzleTarget
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    T(lTemp?.toInt()?.toString() ?: "--", 26.sp, tempColor(lTemp, lTarget), FontWeight.Bold)
-                    T("/${lTarget?.toInt() ?: 0}°C", 11.sp, C.Sub)
-                }
-            }
+    Row(Modifier.fillMaxWidth().height(96.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (p.isDualNozzle) {
+            NozzleTempBox(p.nozzleTemp("left"), p.nozzleTarget("left"))
             ToolheadArt(Modifier.size(56.dp, 84.dp))
-            val rTemp = p.rightNozzle ?: p.nozzle
-            val rTarget = p.rightNozzleTarget ?: p.nozzleTarget
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    T(rTemp?.toInt()?.toString() ?: "--", 26.sp, tempColor(rTemp, rTarget), FontWeight.Bold)
-                    T("/${rTarget?.toInt() ?: 0}°C", 11.sp, C.Sub)
-                }
-            }
-        }
-    } else {
-        Row(Modifier.fillMaxWidth().height(96.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    T(p.nozzle?.toInt()?.toString() ?: "--", 26.sp, tempColor(p.nozzle, p.nozzleTarget), FontWeight.Bold)
-                    T("/${p.nozzleTarget?.toInt() ?: 0}°C", 11.sp, C.Sub)
-                }
-            }
+            NozzleTempBox(p.nozzleTemp("right"), p.nozzleTarget("right"))
+        } else {
+            NozzleTempBox(p.nozzle, p.nozzleTarget)
             ToolheadArt(Modifier.size(56.dp, 84.dp))
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 p.state("sensor.nozzle_diameter")?.let { d ->
@@ -440,6 +427,14 @@ fun NozzleCard(p: Printer, modifier: Modifier = Modifier, onClick: () -> Unit) =
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RowScope.NozzleTempBox(now: Double?, target: Double?) = Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        T(now?.toInt()?.toString() ?: "--", 26.sp, tempColor(now, target), FontWeight.Bold)
+        T("/${target?.toInt() ?: 0}°C", 11.sp, C.Sub)
     }
 }
 
@@ -474,48 +469,54 @@ fun LightCard(p: Printer, modifier: Modifier, err: (String) -> Unit) =
 // ---------- Filament ----------
 
 @Composable
-private fun FilamentCard(p: Printer, onClick: () -> Unit) = Card(padding = androidx.compose.foundation.layout.PaddingValues(14.dp), onClick = onClick) {
-    if (p.ams.isEmpty() && p.external.isEmpty()) { T("No AMS or external spool in Home Assistant", 13.sp, C.Sub); return@Card }
-    p.ams.forEach { (a, trays) ->
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            T(a.displayName(), 13.sp, C.Sub)
-            a.modelBadge()?.let { badge ->
-                Spacer(Modifier.width(6.dp))
-                Box(Modifier.clip(RoundedCornerShape(4.dp)).background(C.Fill).padding(horizontal = 5.dp, vertical = 1.dp)) {
-                    T(badge, 10.sp, C.Sub, FontWeight.Medium)
-                }
-            }
-            if (p.amsIsDrying(a)) {
-                Spacer(Modifier.width(6.dp))
-                Box(Modifier.clip(RoundedCornerShape(4.dp)).background(C.AccentBg).padding(horizontal = 5.dp, vertical = 1.dp)) {
-                    T("Drying", 10.sp, C.Orange, FontWeight.Bold)
-                }
-            }
-            Spacer(Modifier.weight(1f))
-            p.amsNum(a, "sensor.humidity_index")?.let { h ->
-                Icon(Icons.Outlined.WaterDrop, null, Modifier.size(14.dp), tint = humidityColor(h.toInt()))
-                T(" ${h.toInt()}", 12.sp, C.Sub)
-            }
-            p.amsTemp(a)?.let { T("   ${it.toInt()}°C", 12.sp, C.Sub) }
+fun AmsHeaderRow(p: Printer, a: AmsInfo, detail: Boolean = false) = Row(verticalAlignment = Alignment.CenterVertically) {
+    T(a.displayName(), if (detail) 16.sp else 13.sp, if (detail) C.Text else C.Sub, if (detail) FontWeight.Bold else FontWeight.Normal)
+    a.modelBadge()?.let { badge ->
+        Spacer(Modifier.width(if (detail) 8.dp else 6.dp))
+        Box(Modifier.clip(RoundedCornerShape(4.dp)).background(if (detail) C.Track else C.Fill).padding(horizontal = 6.dp, vertical = if (detail) 2.dp else 1.dp)) {
+            T(badge, if (detail) 11.sp else 10.sp, C.Sub, FontWeight.Medium)
         }
+    }
+    if (p.amsIsDrying(a)) {
+        Spacer(Modifier.width(if (detail) 8.dp else 6.dp))
+        Box(Modifier.clip(RoundedCornerShape(4.dp)).background(C.AccentBg).padding(horizontal = 6.dp, vertical = if (detail) 2.dp else 1.dp)) {
+            T("Drying", if (detail) 11.sp else 10.sp, C.Orange, FontWeight.Bold)
+        }
+        if (!detail) p.amsDryingRemaining(a)?.takeIf { it > 0.0 }?.let { rem ->
+            Spacer(Modifier.width(4.dp))
+            T(dryingDurationText(rem), 11.sp, C.Orange, FontWeight.Medium)
+        }
+    }
+    Spacer(Modifier.weight(1f))
+    val metaSize = if (detail) 13.sp else 12.sp
+    p.amsNum(a, "sensor.humidity_index")?.let { h ->
+        Icon(Icons.Outlined.WaterDrop, null, Modifier.size(if (detail) 16.dp else 14.dp), tint = humidityColor(h.toInt()))
+        T(" ${h.toInt()}", metaSize, C.Sub)
+    }
+    if (detail) p.amsNum(a, "sensor.humidity")?.let { T("  ${it.toInt()}%", metaSize, C.Sub) }
+    p.amsTemp(a)?.let { T("  ${it.toInt()}°C", metaSize, C.Sub) }
+}
+
+@Composable
+private fun FilamentCard(p: Printer, onClick: () -> Unit) = Card(padding = androidx.compose.foundation.layout.PaddingValues(14.dp), onClick = onClick) {
+    val visibleExt = p.visibleExternalSpools()
+    if (p.ams.isEmpty() && visibleExt.isEmpty()) { T("No AMS or external spool in Home Assistant", 13.sp, C.Sub); return@Card }
+    p.ams.forEach { (a, trays) ->
+        AmsHeaderRow(p, a, detail = false)
         Gap(8.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            trays.forEachIndexed { i, s -> SlotTile(s, "${'A' + a.index - 1}${i + 1}", Modifier.weight(1f)) }
+            trays.forEachIndexed { i, s -> SlotTile(s, a.slotLabel(i), Modifier.weight(1f)) }
         }
-        Gap(12.dp)
+        if (visibleExt.isNotEmpty()) Gap(12.dp)
     }
-    p.external.forEachIndexed { i, s ->
-        if (i > 0) Gap(8.dp)
+    visibleExt.forEachIndexed { rowIdx, entry ->
+        val (i, s) = entry
+        if (rowIdx > 0) Gap(8.dp)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            val badge = if (p.external.size > 1) "Ext ${i + 1}" else "Ext"
-            SlotTile(s, badge, Modifier.width(64.dp))
+            SlotTile(s, p.externalBadge(i), Modifier.width(64.dp))
             Spacer(Modifier.width(12.dp))
             Column {
-                val title = if (p.external.size > 1) {
-                    val side = if (i == 0) "Left / Main" else "Right / Aux"
-                    "External Spool ${i + 1} ($side)"
-                } else "External Spool"
-                T(title, 14.sp, weight = FontWeight.Medium)
+                T(p.externalTitle(i), 14.sp, weight = FontWeight.Medium)
                 T(if (s.known) s.name else "Not set", 12.sp, C.Sub)
             }
         }

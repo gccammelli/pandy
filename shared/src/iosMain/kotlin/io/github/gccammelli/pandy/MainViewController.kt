@@ -111,6 +111,24 @@ private class IosPlatformUi : PlatformUi {
     override fun setDarkBars(dark: Boolean) =
         UIApplication.sharedApplication.setStatusBarStyle(if (dark) UIStatusBarStyleLightContent else UIStatusBarStyleDarkContent, true)
 
+    override fun share(text: String, imageBytes: ByteArray?, title: String?) {
+        val items = mutableListOf<Any>()
+        if (text.isNotBlank()) items.add(text)
+        if (imageBytes != null && imageBytes.isNotEmpty()) {
+            val img = platform.UIKit.UIImage.imageWithData(imageBytes.toNSData())
+            if (img != null) items.add(img)
+        }
+        val activity = UIActivityViewController(items, null)
+        val host = top() ?: return
+        val popover = (activity as UIViewController).performSelector(NSSelectorFromString("popoverPresentationController"))
+            as? UIPopoverPresentationController
+        popover?.let {
+            it.sourceView = host.view
+            it.sourceRect = host.view.bounds
+        }
+        host.presentViewController(activity, true, null)
+    }
+
     /** The system photo picker: no photo-library permission needed, the user hands over just the one picture. */
     /** Adds the photo to the library (asks for "add photos" permission the first time). */
     override fun saveImage(jpeg: ByteArray, name: String, done: (Throwable?) -> Unit) {

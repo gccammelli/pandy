@@ -139,9 +139,9 @@ class SlicerClient(
         return (o.s("path") ?: throw ApiException("The slicer didn't say where it put the file")) to firstPlate(o, plate)
     }
 
-    private fun firstPlate(o: JsonObject, plate: Int): SlicedPlate? = ((o["plates"] as? JsonArray)?.firstOrNull() as? JsonObject)?.let {
+    private fun firstPlate(o: JsonObject, plate: Int): SlicedPlate? = o.objects("plates").firstOrNull()?.let {
         SlicedPlate(it.s("index")?.toIntOrNull() ?: plate, it.s("seconds")?.toIntOrNull() ?: 0, it.s("grams")?.toDoubleOrNull() ?: 0.0,
-            (it["filaments"] as? JsonArray).orEmpty().mapNotNull { f -> (f as? JsonObject)?.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull.orEmpty() } })
+            it.objects("filaments").map { f -> f.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull.orEmpty() } })
     }
 }
 
@@ -170,7 +170,7 @@ suspend fun HaBackend.slicerIngress(): Pair<String, String> {
     fun supervisor(endpoint: String, method: String) = buildJsonObject { put("type", "supervisor/api"); put("endpoint", endpoint); put("method", method) }
     val addons = try { ws(listOf(supervisor("/addons", "get"))).first() as? JsonObject }
         catch (e: ApiException) { throw ApiException("Pandy's Home Assistant user must be an administrator to use the slicer add-on (${e.message})") }
-    val slug = (addons?.a("addons")).orEmpty().mapNotNull { (it as? JsonObject)?.s("slug") }.firstOrNull { it == "pandy_slicer" || it.endsWith("_pandy_slicer") }
+    val slug = addons?.objects("addons").orEmpty().mapNotNull { it.s("slug") }.firstOrNull { it == "pandy_slicer" || it.endsWith("_pandy_slicer") }
         ?: throw ApiException("Install the Pandy Slicer add-on in Home Assistant")
     val (info, session) = ws(listOf(supervisor("/addons/$slug/info", "get"), supervisor("/ingress/session", "post"))).map { it as? JsonObject }
     if (info?.s("state") != "started") throw ApiException("Start the Pandy Slicer add-on in Home Assistant")
@@ -183,7 +183,6 @@ fun String.encodeURLParam(): String = encodeToByteArray().joinToString("") { b -
     val c = b.toInt().toChar()
     if (b >= 0 && (c.isLetterOrDigit() || c in "-_.~")) "$c" else "%" + (b.toInt() and 0xFF).toString(16).uppercase().padStart(2, '0')
 }
-private fun JsonArray?.orEmpty() = this ?: JsonArray(emptyList())
 
 /** Model downloads follow redirects by hand, so the site's cookies never go to a host they weren't made for. */
 private val downloadHttp = HttpClient {

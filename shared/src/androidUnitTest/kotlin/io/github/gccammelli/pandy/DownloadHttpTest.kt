@@ -14,7 +14,7 @@ class DownloadHttpTest {
             cookies += exchange.requestHeaders.getFirst("Cookie")
             when(exchange.requestURI.path) {
                 "/failure" -> { exchange.sendResponseHeaders(503,4); exchange.responseBody.use { it.write("busy".toByteArray()) } }
-                "/oversize" -> { exchange.sendResponseHeaders(200,65L*1024*1024); exchange.responseBody.close() }
+                "/oversize" -> { exchange.sendResponseHeaders(200,65L*1024*1024); runCatching { exchange.responseBody.write(1); exchange.responseBody.flush() }; exchange.responseBody.close() }
                 else -> { exchange.sendResponseHeaders(200,0); exchange.responseBody.use { it.write(bytes) } }
             }
         }

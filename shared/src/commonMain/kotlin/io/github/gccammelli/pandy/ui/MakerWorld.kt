@@ -70,11 +70,14 @@ import io.github.gccammelli.pandy.ApiException
 import io.github.gccammelli.pandy.WebDownload
 import io.github.gccammelli.pandy.WebPage
 import io.github.gccammelli.pandy.WebState
+import io.github.gccammelli.pandy.amsSlot
 import io.github.gccammelli.pandy.autoMapping
 import io.github.gccammelli.pandy.buildPlateCode
 import io.github.gccammelli.pandy.buildPlateLabel
 import io.github.gccammelli.pandy.decodeImage
 import io.github.gccammelli.pandy.download
+import io.github.gccammelli.pandy.externalBadge
+import io.github.gccammelli.pandy.visibleExternalSpools
 import io.github.gccammelli.pandy.filamentKey
 import io.github.gccammelli.pandy.guide
 import io.github.gccammelli.pandy.hexColor
@@ -82,6 +85,8 @@ import io.github.gccammelli.pandy.isSingleSlot
 import io.github.gccammelli.pandy.readPreviewMeshes
 import io.github.gccammelli.pandy.readProject
 import io.github.gccammelli.pandy.shortModel
+import io.github.gccammelli.pandy.slotLabel
+import io.github.gccammelli.pandy.spoolForTrayId
 import io.github.gccammelli.pandy.startPrint
 import io.github.gccammelli.pandy.loadedTrayIds
 import io.github.gccammelli.pandy.loadedSpools
@@ -607,7 +612,7 @@ private fun PrepareView(
             }
         }
         if (step == Step.Slicing || step == Step.Starting) T(step.label, 13.sp, C.Sub, modifier = Modifier.padding(22.dp, 8.dp))
-        else if (printFailure != null) T(printFailure!!, 13.sp, C.Red, lh = 18.sp, modifier = Modifier.padding(22.dp, 8.dp))
+        else if (printFailure != null) T(printFailure, 13.sp, C.Red, lh = 18.sp, modifier = Modifier.padding(22.dp, 8.dp))
         else if (!canPrint && !Repo.demo) setupNote?.let { note ->
             if (setupGuide != null) SetupNote(note, setupGuide, Modifier.padding(14.dp))
             else T(note, 13.sp, C.Sub, lh = 18.sp, modifier = Modifier.padding(22.dp, 8.dp))
@@ -675,20 +680,14 @@ private fun HelpQuestion(onClick: () -> Unit) = Box(Modifier.size(30.dp).clickab
 
 @Composable
 private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, enabled: Boolean, selected: Boolean, opensPicker: Boolean, onClick: () -> Unit) {
-    val loadedAms = if (slot >= 0) p.ams.asSequence().mapNotNull { (ams, spools) ->
-        ams.slotForTrayId(slot)?.let { ams to spools.getOrNull(it) }
-    }.firstOrNull() else null
-    val loaded = when {
-        slot == 254 -> p.external.firstOrNull { it.known }
-        slot == 255 -> p.external.getOrNull(1)?.takeIf { it.known } ?: p.external.firstOrNull { it.known }
-        else -> loadedAms?.second
-    }
+    val loadedAms = p.amsSlot(slot)
+    val loaded = p.spoolForTrayId(slot)
     val trayLabel = when {
-        slot == 254 -> if (p.external.size > 1) "Ext 1" else "Ext"
+        slot == 254 -> p.externalBadge(0)
         slot == 255 -> "Ext 2"
         loadedAms == null -> "--"
         loadedAms.first.isSingleSlot() -> "HT"
-        else -> "${'A' + loadedAms.first.index - 1}${loadedAms.first.slotForTrayId(slot)!! + 1}"
+        else -> loadedAms.first.slotLabel(loadedAms.first.slotForTrayId(slot)!!)
     }
     Column(Modifier.width(112.dp).clip(RoundedCornerShape(10.dp)).border(if (selected) 2.dp else 1.dp, if (selected) C.Accent else C.Line, RoundedCornerShape(10.dp))
         .clickable(enabled = enabled, onClick = onClick)) {
@@ -696,7 +695,7 @@ private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, en
             T(type, 14.sp, Color.White, maxLines = 1)
         }
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(30.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(hexColor(colour))))
+            SpoolDot(Color(hexColor(colour)), 30.dp)
             Spacer(Modifier.width(7.dp))
             Column(Modifier.weight(1f)) {
                 T(trayLabel, 12.sp, C.Text, FontWeight.Medium)
@@ -724,19 +723,11 @@ private fun PreviewView(p: Printer, project: Project, plate: Int, auto: List<Int
     var custom by remember { mutableStateOf<Map<Int, Long>>(emptyMap()) }
     var colors by remember { mutableStateOf(false) }
     val modelColors = project.filaments.map { (_, colour) -> hexColor(colour) }
-    fun spoolColor(slot: Int): Long? = when {
-        slot == 254 -> p.external.firstOrNull { it.known }?.color
-        slot == 255 -> p.external.getOrNull(1)?.takeIf { it.known }?.color ?: p.external.firstOrNull { it.known }?.color
-        slot >= 0 -> p.ams.asSequence().mapNotNull { (ams, spools) ->
-            ams.slotForTrayId(slot)?.let { spools.getOrNull(it)?.takeIf { spool -> spool.known }?.color }
-        }.firstOrNull()
-        else -> null
-    }
     val validSlots = p.loadedTrayIds()
     val printerColors = project.filaments.mapIndexed { i, (type, colour) ->
         val slot = (if (presets) manualMapping[filamentKey(type, colour)]?.takeIf { it in validSlots } else null)
             ?: auto?.getOrNull(i)?.takeIf { it in validSlots } ?: -1
-        spoolColor(slot) ?: hexColor(colour)
+        p.spoolForTrayId(slot)?.takeIf { it.known }?.color ?: hexColor(colour)
     }
     val mesh = project.meshes[plate] ?: project.mesh?.takeIf { project.meshes.isEmpty() }
     // A plain model (an STL) is shown in the colour of the spool picked for it.
@@ -806,7 +797,7 @@ private fun PreviewColorsSheet(project: Project, p: Printer, current: List<Long>
 }
 
 @Composable
-private fun PreviewMeshCanvas(mesh: PreviewMesh, colors: List<Long>, showPlate: Boolean) {
+internal fun PreviewMeshCanvas(mesh: PreviewMesh, colors: List<Long>, showPlate: Boolean) {
     var yaw by remember(mesh) { mutableFloatStateOf(-0.55f) }
     var pitch by remember(mesh) { mutableFloatStateOf(0.65f) }
     var zoom by remember(mesh) { mutableFloatStateOf(1f) }
@@ -889,15 +880,15 @@ private fun FilamentPicker(p: Printer, project: Project, index: Int, auto: List<
         p.ams.flatMap { (ams, spools) -> spools.mapIndexedNotNull { slot, spool -> spool?.takeIf { it.known }?.let { ams to (ams.trayId(slot) to it) } } }.forEach { (ams, tray) ->
             val (slot, spool) = tray
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { choose(slot) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(28.dp).clip(CircleShape).background(Color(spool.color)))
-                Spacer(Modifier.width(10.dp)); T(if (ams.model.contains("HT", ignoreCase = true) || ams.model.contains("N3S", ignoreCase = true)) "AMS HT" else "AMS ${ams.index} · slot ${slot % 4 + 1}", 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (slot == current) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
+                SpoolDot(Color(spool.color), 28.dp, bordered = false)
+                Spacer(Modifier.width(10.dp)); T(if (ams.isSingleSlot()) "AMS HT" else "AMS ${ams.index} · slot ${slot % 4 + 1}", 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (slot == current) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
             }
         }
-        p.external.forEachIndexed { i, spool ->
+        p.visibleExternalSpools().forEach { (i, spool) ->
             val slotId = if (i == 0) 254 else 255
             val label = if (p.external.size > 1) "External spool ${i + 1}" else "External spool"
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { choose(slotId) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(28.dp).clip(CircleShape).background(Color(spool.color))); Spacer(Modifier.width(10.dp)); T(label, 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (current == slotId) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
+                SpoolDot(Color(spool.color), 28.dp, bordered = false); Spacer(Modifier.width(10.dp)); T(label, 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (current == slotId) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
             }
         }
     }
