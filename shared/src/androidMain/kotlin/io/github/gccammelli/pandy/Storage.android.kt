@@ -81,9 +81,14 @@ internal class FtpsStorage(
             val n = Regex("""(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)""").find(pasv)!!.groupValues.drop(1).map { it.toInt() }
             // Android's TLS finds the session to resume by the socket's own port, so this one reports the control port.
             val plain = object : Socket() { override fun getPort() = controlPort }.apply { connect(InetSocketAddress(host, n[4] * 256 + n[5]), 10_000); soTimeout = 30_000 }
-            if (rest > 0) cmd("REST $rest", 300..399)
-            cmd(command, 100..199)
-            return (factory.createSocket(plain, host, controlPort, true) as SSLSocket).apply { enabledProtocols = arrayOf("TLSv1.2"); tickets(); soTimeout = 30_000; startHandshake() }
+            try {
+                if (rest > 0) cmd("REST $rest", 300..399)
+                cmd(command, 100..199)
+                return (factory.createSocket(plain, host, controlPort, true) as SSLSocket).apply { enabledProtocols = arrayOf("TLSv1.2"); tickets(); soTimeout = 30_000; startHandshake() }
+            } catch (e: Exception) {
+                runCatching { plain.close() } // an unused data connection must not hold one of the printer's few FTP slots
+                throw e
+            }
         }
     }
 
