@@ -404,6 +404,9 @@ private fun trayAttrs(t: JsonObject, name: String, active: Boolean, slot: Int) =
 }
 
 /** The current job's 3MF, read from the printer's storage: plate picture, pick map and parts. */
+/** Looks for a job's 3MF before giving up until the job changes. */
+internal const val JOB_LOOKUPS = 3
+
 class LanJob(val key: String, val cover: ByteArray?, val pick: ByteArray?, val objects: Map<Int, String>)
 
 data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String, val deviceModel: String = "", val trayAmsId: Int? = null)
@@ -512,6 +515,8 @@ class DirectPrinter(
     private val linkFactory: (LanConfig) -> LanLink = ::lanLink,
     private val storageFactory: (LanConfig) -> PrinterStorage = ::printerStorage,
     private val jpegStream: suspend (LanConfig, (ByteArray) -> Unit) -> Unit = ::lanJpegStream,
+    /** Wait between looks for a job's picture that was not found. */
+    private val jobRetryMs: Long = 30_000,
 ) : HaBackend, PrinterFiles {
     override val base = "lan://${config.ip}"
     private var report = JsonObject(emptyMap())
@@ -529,6 +534,8 @@ class DirectPrinter(
     private var job: LanJob? = null
     private var jobLoading: String? = null
     private var jobMissAt = 0L
+    private var jobMisses = 0
+    private var jobState: String? = null
 
     /** When the job changes, finds its 3MF on the printer (as the integration does) and reads its picture and parts. */
     private fun checkJob() {
@@ -537,19 +544,28 @@ class DirectPrinter(
         val gcode = p.str("gcode_file").orEmpty()
         val key = "$task|$gcode"
         val now = Clock.System.now().toEpochMilliseconds()
-        // Found, or being looked for; a miss is retried every 30 s (the printer can be busy just as a print starts).
-        if ((key == job?.key && (job?.cover != null || now - jobMissAt < 30_000)) || key == jobLoading || (task.isEmpty() && gcode.isEmpty())) return
+        // Found, or being looked for; a miss is retried twice, 30 s apart (the printer can be busy just as a print starts),
+        // then left until the job or the print's state changes (a reprint of the same file, a printer back after a restart).
+        // Each look is a few FTPS logins, and a job with no 3MF (a calibration, a G-code file) would otherwise be looked
+        // for all day, by every phone, until the printer's small file service stops answering.
+        val state = p.str("gcode_state")
+        if (key != job?.key || state != jobState) jobMisses = 0
+        jobState = state
+        if ((key == job?.key && (job?.cover != null || jobMisses >= JOB_LOOKUPS || now - jobMissAt < jobRetryMs)) || key == jobLoading || (task.isEmpty() && gcode.isEmpty())) return
         jobLoading = key
         scope.launch {
             val found = runCatching { findJobFile(task, gcode) }.getOrNull()
             val plate = Regex("""plate_(\d+)\.gcode""").find(gcode)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            job = if (found == null) LanJob(key, null, null, emptyMap()) else {
+            val result = if (found == null) LanJob(key, null, null, emptyMap()) else {
                 val (path, size) = found
                 suspend fun entry(vararg names: String) = runCatching { zipEntry(size, names.map { Regex(it) }) { o, l -> storage.read(path, o, l) }?.second }.getOrNull()
                 LanJob(key, entry("Metadata/plate_$plate\\.png", "Metadata/plate_\\d+\\.png"), entry("Metadata/pick_$plate\\.png"),
                     entry("Metadata/slice_info\\.config")?.decodeToString()?.let { sliceObjects(it, plate) }.orEmpty())
             }
-            if (job?.cover == null) jobMissAt = Clock.System.now().toEpochMilliseconds()
+            if (jobLoading != key) return@launch // a newer job is being looked for; this result is stale
+            job = result
+            // A retry must list the folders again: the file may have arrived since.
+            if (result.cover == null) { jobMissAt = Clock.System.now().toEpochMilliseconds(); jobMisses++; listings.remove("/cache"); listings.remove("/") }
             jobLoading = null
             onReport?.invoke()
         }

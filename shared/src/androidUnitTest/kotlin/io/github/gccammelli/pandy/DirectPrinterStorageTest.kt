@@ -100,4 +100,34 @@ class DirectPrinterStorageTest {
             } finally { printer.stop() }
         }
     }
+
+    @Test fun aJobWithoutAnArchiveIsLookedForThreeTimesThenLeftUntilTheJobChanges() = runBlocking<Unit> {
+        val lists = java.util.concurrent.atomic.AtomicInteger()
+        val storage = object : PrinterStorage {
+            override suspend fun list(dir: String): List<FileEntry> { lists.incrementAndGet(); return emptyList() }
+            override suspend fun read(path: String, offset: Long, length: Int): ByteArray = error("nothing to read")
+            override suspend fun write(path: String, data: ByteArray, progress: (Float) -> Unit) = Unit
+        }
+        var task = "xyzCalibration_cube"
+        val link = object : LanLink {
+            override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) {
+                onConnected()
+                while (true) { // the printer reports about once a second
+                    onMessage(buildJsonObject { putJsonObject("print") { put("command", "push_status"); put("subtask_name", task); put("gcode_file", "/sdcard/$task.gcode") } }.toString())
+                    delay(5)
+                }
+            }
+            override fun publish(payload: String) = Unit
+            override fun close() = Unit
+        }
+        val printer = DirectPrinter(LanConfig("192.0.2.1", "TEST", "code", "X1C"), true, { link }, { storage }, jobRetryMs = 20)
+        try {
+            printer.printers()
+            withTimeout(5000) { while (lists.get() < JOB_LOOKUPS * 2) delay(5) } // each look lists /cache and /
+            delay(300) // fifteen retry intervals: no more looks
+            assertEquals(JOB_LOOKUPS * 2, lists.get())
+            task = "next_job"
+            withTimeout(5000) { while (lists.get() <= JOB_LOOKUPS * 2) delay(5) }
+        } finally { printer.stop() }
+    }
 }

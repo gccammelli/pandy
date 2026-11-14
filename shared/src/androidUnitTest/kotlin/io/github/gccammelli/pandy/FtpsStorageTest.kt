@@ -25,6 +25,8 @@ class FtpsStorageTest {
         val commands = ConcurrentLinkedQueue<String>()
         val failures = ConcurrentLinkedQueue<Throwable>()
         var uploaded = byteArrayOf()
+        /** After a refused transfer: whether the client closed the data connection it had opened (null: not checked). */
+        @Volatile var dataClosedAfterRefusal: Boolean? = null
         private val context = testTlsContext()
         private val server = listen()
         val port: Int get() = server.localPort
@@ -59,7 +61,16 @@ class FtpsStorageTest {
                                 }
                                 "REST" -> { offset = command.substringAfter(' ').toInt(); reply("350 Restart accepted") }
                                 "LIST", "RETR", "STOR" -> {
-                                    if (rejectTransfer) { reply("550 File unavailable"); continue }
+                                    if (rejectTransfer) {
+                                        reply("550 File unavailable")
+                                        (data!!.accept() as SSLSocket).use { unused ->
+                                            unused.soTimeout = 2000
+                                            dataClosedAfterRefusal = try { unused.inputStream.read(); true }
+                                                catch (e: java.net.SocketTimeoutException) { false } catch (e: java.io.IOException) { true }
+                                        }
+                                        data.close(); data = null
+                                        continue
+                                    }
                                     reply("150 Opening protected data connection")
                                     (data!!.accept() as SSLSocket).use { transfer ->
                                         transfer.soTimeout = 5000
@@ -170,6 +181,8 @@ class FtpsStorageTest {
         }
         Peer(rejectTransfer = true).use { peer ->
             assertEquals(550, assertFailsWith<PrinterStorageException> { peer.storage().read("/missing", 0, -1) }.code)
+            peer.close()
+            assertEquals(true, peer.dataClosedAfterRefusal, "the refused transfer's data connection stays open")
         }
     }
 
