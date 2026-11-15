@@ -186,7 +186,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
     val platform = LocalPlatform.current
     val phone = io.github.gccammelli.pandy.usesPhoneSlicer(Repo.phoneSlicerPreferred, platform.phoneSlicerSupported, platform.phoneSlicerAvailable(), slicerClient != null)
     val phoneAvailable = phone && platform.phoneSlicerAvailable()
-    var studioModel by remember { mutableStateOf<ByteArray?>(null) } // a plain model Studio's plate can take: an STL, or a 3MF that is no project
+    var studioModel by remember { mutableStateOf<ByteArray?>(null) } // what Studio's plate can take: an STL or a 3MF (a project's plate as geometry)
     var step by remember { mutableStateOf(Step.Download) }
     var data by remember { mutableStateOf<ByteArray?>(null) }
     var stlSource by remember { mutableStateOf<ByteArray?>(null) } // an STL's own bytes: its 3D preview is built from them, not from the wrapped 3MF
@@ -258,7 +258,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             val bytes = if (isStl) withContext(Dispatchers.Default) { io.github.gccammelli.pandy.stlTo3mf(downloaded) } else downloaded
             stlSource = downloaded.takeIf { isStl }
             data = bytes
-            if (platform.studio != null) studioModel = if (isStl) downloaded else bytes.takeIf { withContext(Dispatchers.Default) { runCatching { io.github.gccammelli.pandy.studio.studio.requirePlainEditorModel(it) }.isSuccess } }
+            if (platform.studio != null) studioModel = if (isStl) downloaded else bytes
             reading = true
             val loaded = try {
                 // shortcut: timeout checks happen between zip entries; revisit if a scanner proves slow
@@ -418,7 +418,7 @@ fun PrintModelSheet(d: WebDownload, close: () -> Unit, slicerClient: io.github.g
             setupNote = setupNote, setupGuide = setupGuide, help = { help = it }, printFailure = printFailure,
             // Studio's tab offers the plugin while it is missing.
             getSlicer = if (phone && !phoneAvailable && platform.studio != null) ({ close(); Nav.stack.clear(); Nav.tab = io.github.gccammelli.pandy.studio.ui.STUDIO_TAB }) else null,
-            openInStudio = studioModel?.let { model -> { close(); io.github.gccammelli.pandy.studio.ui.StudioSession.open(name + if (stlSource != null) ".stl" else ".3mf", model, project = false); Unit } },
+            openInStudio = studioModel?.let { model -> { close(); io.github.gccammelli.pandy.studio.ui.StudioSession.open(name + if (stlSource != null) ".stl" else ".3mf", model, project = false, plate = plate); Unit } },
         )
         PrepareView.Preview -> PreviewView(p, pr, plate, auto, manualMapping, presets, plainColor = pickedSpool?.second?.color, back = { view = PrepareView.Prepare })
         PrepareView.SlicerSettings -> AdvancedSlicerSettingsForBackend(slicer.takeUnless { phone }, slicerSettings, back = { view = PrepareView.Prepare }, phoneSettings = if (phone) ({ io.github.gccammelli.pandy.phoneSettings(platform.phoneSlicer("CAPABILITIES_V1", "{\"version\":1}")) }) else null) { values, info ->

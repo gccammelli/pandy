@@ -52,6 +52,8 @@ object StudioSession {
     var studio by mutableStateOf<Studio?>(null); private set
     /** Models another app handed to Pandy, waiting for the slicer's profiles (or the slicer itself). */
     val pending = mutableStateListOf<Pair<String, ByteArray>>()
+    /** The plate to take from a pending project, by file name (plate 1 otherwise). */
+    private val pendingPlates = mutableMapOf<String, Int>()
     /** The sliced plate the print sheet is showing. */
     var print by mutableStateOf<StudioPrint?>(null)
     var notice by mutableStateOf<String?>(null)
@@ -68,7 +70,7 @@ object StudioSession {
      * A file opened with Pandy. A model goes to Studio's plate; a 3MF project (plates, profiles: what the editor can't
      * keep) goes to the print sheet MakerWorld models use. False for anything else.
      */
-    fun open(name: String, bytes: ByteArray, project: Boolean = isProject(name, bytes)): Boolean {
+    fun open(name: String, bytes: ByteArray, project: Boolean = isProject(name, bytes), plate: Int = 1): Boolean {
         val lower = name.lowercase()
         if (!lower.endsWith(".stl") && !lower.endsWith(".3mf")) return false
         Nav.stack.clear()
@@ -78,6 +80,7 @@ object StudioSession {
         } else {
             Nav.tab = STUDIO_TAB
             pending += name to bytes
+            if (plate != 1) pendingPlates[name] = plate else pendingPlates.remove(name)
         }
         return true
     }
@@ -90,14 +93,14 @@ object StudioSession {
         val s = studio?.takeIf { it.library != null } ?: return
         if (pending.isEmpty()) return
         val files = pending.toList(); pending.clear()
-        files.forEach { (name, bytes) -> runCatching { s.addFile(name, bytes) }.onFailure { notice = "Couldn't open $name: ${it.message ?: it}" } }
+        files.forEach { (name, bytes) -> runCatching { s.addFile(name, bytes, pendingPlates.remove(name) ?: 1) }.onFailure { notice = "Couldn't open $name: ${it.message ?: it}" } }
         if (s.scene.objects.isNotEmpty() && nav.stack.none { it == StudioScreen.Plate }) { nav.stack.clear(); nav.stack += listOf(StudioScreen.Home, StudioScreen.Plate) }
     }
 
     /** Back inside the tab; false at its first screen. */
     fun back(): Boolean = nav.back()
 
-    fun reset() { studio = null; pending.clear(); print = null; notice = null; nav.stack.clear(); nav.stack += StudioScreen.Home }
+    fun reset() { studio = null; pending.clear(); pendingPlates.clear(); print = null; notice = null; nav.stack.clear(); nav.stack += StudioScreen.Home }
 }
 
 /** Lets the user pick models and puts them on the plate; a file that can't be opened is reported, the rest still open. */

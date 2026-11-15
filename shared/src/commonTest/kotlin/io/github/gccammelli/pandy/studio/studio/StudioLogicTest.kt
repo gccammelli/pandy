@@ -122,6 +122,29 @@ class StudioLogicTest {
         assertNull(s.scene.bed.plate); assertTrue(s.scene.bed.exclude.isEmpty())
     }
 
+    @Test fun aProjectOpensTheObjectsOfOnePlateCentredOnTheBed() {
+        // Two plates side by side in the build, as Bambu Studio lays them out; plate 2 holds two objects.
+        val cube = Shapes.box(10f, 10f, 10f)
+        val model = ThreeMf.writePlain(listOf(
+            SceneObject("one", cube, Mat4.translation(100f, 100f, 0f)),
+            SceneObject("two", cube, Mat4.translation(400f, 100f, 0f)),
+            SceneObject("three", cube, Mat4.translation(440f, 100f, 0f))))
+        val plates = """<config><plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="1"/></model_instance></plate>
+            <plate><metadata key="plater_id" value="2"/><model_instance><metadata key="object_id" value="2"/></model_instance>
+            <model_instance><metadata key="object_id" value="3"/></model_instance></plate></config>"""
+        val project = Zip.write(Zip.read(model).toList() + listOf("Metadata/model_settings.config" to plates.encodeToByteArray(),
+            "Metadata/project_settings.config" to "{}".encodeToByteArray()), true)
+        assertEquals(setOf("2", "3"), projectPlateObjects(project, 2)); assertEquals(emptySet(), projectPlateObjects(project, 5))
+        assertNull(projectPlateObjects(model, 1)) // a plain model names no plates
+        val s = loaded()
+        s.addFile("project.3mf", project, plate = 2)
+        assertEquals(listOf("two", "three"), s.scene.objects.map { it.name })
+        val all = s.scene.objects.map { it.worldBounds() }.reduce { a, b -> a.union(b) }
+        assertEquals(s.scene.bed.centerX, all.center.x, 0.01f); assertEquals(s.scene.bed.centerY, all.center.y, 0.01f)
+        assertEquals(40f, s.scene.objects[1].x - s.scene.objects[0].x, 0.01f) // the plate's own layout is kept
+        assertFailsWith<IllegalArgumentException> { s.addFile("project.3mf", project, plate = 5) }
+    }
+
     @Test fun filamentsCanBeAddedRecolouredAndRemovedWithObjectsFollowing() {
         val s = loaded(); val pla = s.filamentChoices.first { "PLA" in it.name }; val petg = s.filamentChoices.first { "PETG" in it.name }
         assertEquals(listOf("#00AE42"), s.scene.colors)

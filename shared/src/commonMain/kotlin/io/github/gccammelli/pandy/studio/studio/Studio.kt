@@ -229,17 +229,27 @@ class Studio(private var platform: Platform, private val scope: CoroutineScope) 
         scene.add(o.copy(scene.newId())); scene.arrange(); invalidate()
     }
 
-    fun addFile(name: String, bytes: ByteArray) {
+    /**
+     * Puts a file's models on the plate. A 3MF project (its own plates and print settings, as MakerWorld's) gives the
+     * objects of its [plate] only, geometry and placement: Studio slices them with its own settings.
+     */
+    fun addFile(name: String, bytes: ByteArray, plate: Int = 1) {
+        val project = name.lowercase().endsWith(".3mf") && runCatching { requirePlainEditorModel(bytes) }.isFailure
         val objects = if (name.lowercase().endsWith(".3mf")) {
-            requirePlainEditorModel(bytes)
-            ThreeMf.read(bytes)
+            ThreeMf.read(bytes, if (project) projectPlateObjects(bytes, plate) else null).also { require(it.isNotEmpty()) { "Plate $plate of this project has no objects." } }
         }
         else listOf(SceneObject(name.substringBeforeLast('.'), Stl.read(bytes), Mat4.identity()))
-        for (o in objects) {
-            val po = PlateObject.of(scene.newId(), o)
-            // Drop new models in the middle of the bed when they come from a file with no placement of their own.
-            if (!name.lowercase().endsWith(".3mf") || objects.size == 1) { po.x = scene.bed.centerX; po.y = scene.bed.centerY }
-            scene.add(po)
+        val added = objects.map { o ->
+            PlateObject.of(scene.newId(), o).also { po ->
+                // Drop new models in the middle of the bed when they come from a file with no placement of their own.
+                if (!name.lowercase().endsWith(".3mf") || objects.size == 1) { po.x = scene.bed.centerX; po.y = scene.bed.centerY }
+                scene.add(po)
+            }
+        }
+        // A project's plates sit side by side in its build: keep the plate's layout, centred on this bed.
+        if (project && added.size > 1) added.map { it.worldBounds() }.reduce { a, b -> a.union(b) }.let { all ->
+            val dx = scene.bed.centerX - all.center.x; val dy = scene.bed.centerY - all.center.y
+            added.forEach { it.x += dx; it.y += dy }
         }
         if (scene.objects.size > 1 && objects.size >= 1 && !name.lowercase().endsWith(".3mf")) scene.arrange()
         invalidate()

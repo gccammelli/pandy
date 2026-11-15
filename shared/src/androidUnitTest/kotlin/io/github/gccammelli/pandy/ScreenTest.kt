@@ -1056,9 +1056,24 @@ class ScreenTest {
         org.junit.Assert.assertTrue(commands.isEmpty())
     }
 
-    @Test fun aProjectOrAPhoneWithoutStudioDoesNotOfferPandyStudio() {
-        // Studio's plate can't keep a project's plates and profiles.
-        prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to """{"profile_name":"Fine detail"}""".toByteArray())),ui=phoneWithStudio(pluginInstalled=true))
+    @Test fun aProjectOpensItsSelectedPlateInPandyStudio() {
+        // A MakerWorld project goes to Studio as the selected plate's geometry; Studio slices it with its own settings.
+        val project=modelBytes(mapOf("Metadata/project_settings.config" to """{"profile_name":"Fine detail"}""".toByteArray()))
+        prepareModel(project,ui=phoneWithStudio(pluginInstalled=true))
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Open in Pandy Studio").performClick()
+        compose.runOnIdle {
+            try {
+                assertEquals(io.github.gccammelli.pandy.studio.ui.STUDIO_TAB,Nav.tab)
+                val (name,bytes)=io.github.gccammelli.pandy.studio.ui.StudioSession.pending.single()
+                assertEquals("Test model.3mf",name); assertTrue(project.contentEquals(bytes))
+            } finally { io.github.gccammelli.pandy.studio.ui.StudioSession.reset(); Nav.tab=0 }
+        }
+        org.junit.Assert.assertTrue(commands.isEmpty())
+    }
+
+    @Test fun aPhoneWithoutStudioDoesNotOfferPandyStudioForAProject() {
+        prepareModel(modelBytes(mapOf("Metadata/project_settings.config" to """{"profile_name":"Fine detail"}""".toByteArray())))
         compose.onNodeWithText("Next").performClick()
         compose.onNodeWithText("Print (demo)").assertExists()
         compose.onNodeWithText("Open in Pandy Studio").assertDoesNotExist()

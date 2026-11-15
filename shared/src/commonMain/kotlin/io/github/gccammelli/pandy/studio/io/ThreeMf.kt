@@ -16,7 +16,8 @@ object ThreeMf {
     private data class Component(val objectId: String, val path: String?, val transform: Mat4)
     private data class Model(val unit: Float, val objects: Map<String,Node>, val root: Node)
 
-    fun read(bytes: ByteArray): List<SceneObject> {
+    /** The build's objects; [only]: just the build items whose object id is in it (one plate of a project). */
+    fun read(bytes: ByteArray, only: Set<String>? = null): List<SceneObject> {
         val entries=try { Zip.read(bytes) } catch(e: Exception) { throw IllegalArgumentException("Invalid 3MF ZIP: ${e.message}",e) }
         val primary=entries["3D/3dmodel.model"] ?: entries.entries.firstOrNull { it.key.endsWith(".model") }?.value
             ?: throw IllegalArgumentException("3MF archive has no model document")
@@ -27,6 +28,7 @@ object ThreeMf {
         var number=1
         for(item in builds) {
             val objectId=item.attrs["objectid"] ?: throw IllegalArgumentException("3MF build item has no objectid")
+            if(only!=null&&objectId !in only) continue
             val node=rootModel.objects[objectId] ?: throw IllegalArgumentException("3MF object $objectId was not found")
             val mesh=resolveMesh(node,rootModel,entries,docs,HashSet())
             val transform=parseTransform(item.attrs["transform"])
