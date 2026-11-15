@@ -32,6 +32,7 @@ jobs:
       - name: Test
         run: |
           python3 .github/scripts/public_issue_patch.py --self-test
+          python3 .github/scripts/test_public_issue_workflows.py
           python3 tools/check_codecov.py --self-test
           ./gradlew testDebugUnitTest :shared:koverXmlReportDebug :shared:koverVerifyDebug
 
