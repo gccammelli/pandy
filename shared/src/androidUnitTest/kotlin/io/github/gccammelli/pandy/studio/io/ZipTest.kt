@@ -47,4 +47,22 @@ class ZipTest {
         val damaged = bytes.copyOf().also { it[60] = (it[60] + 1).toByte() }
         assertFailsWith<IllegalArgumentException> { Zip.read(damaged) }
     }
+
+    @Test fun aCommentWithAFakeEndRecordAndDuplicateNamesAreNotTrusted() {
+        val good = Zip.write(listOf("a.txt" to "hello".encodeToByteArray()), true)
+        // An end-of-directory signature inside the archive comment is not the end record.
+        val fake = byteArrayOf(0x50, 0x4b, 0x05, 0x06) + ByteArray(18)
+        val commented = good.copyOf(good.size - 2) + byteArrayOf(fake.size.toByte(), 0) + fake
+        assertEquals(listOf("a.txt"), Zip.read(commented).keys.toList())
+        val twice = slicerStyleZip(listOf(Triple("a.txt", "one".encodeToByteArray(), false), Triple("a.txt", "two".encodeToByteArray(), true)))
+        assertFailsWith<IllegalArgumentException> { Zip.read(twice) }
+    }
+
+    @Test fun aDeclaredSizeLargerThanTheDataIsRefusedWithoutAllocatingIt() {
+        val bytes = slicerStyleZip(listOf(Triple("big.gcode", "G1 X1\n".repeat(100).encodeToByteArray(), true)))
+        // Claim 300 MB in the central directory: the reader must not believe it.
+        val central = bytes.size - 22 - 46 - "big.gcode".length
+        val claimed = bytes.copyOf().also { b -> val v = 300L shl 20; for (k in 0 until 4) b[central + 24 + k] = ((v shr (8 * k)) and 0xff).toByte() }
+        assertFailsWith<IllegalArgumentException> { Zip.read(claimed) }
+    }
 }

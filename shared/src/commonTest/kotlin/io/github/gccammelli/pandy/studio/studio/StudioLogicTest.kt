@@ -134,7 +134,7 @@ class StudioLogicTest {
             <model_instance><metadata key="object_id" value="3"/></model_instance></plate></config>"""
         val project = Zip.write(Zip.read(model).toList() + listOf("Metadata/model_settings.config" to plates.encodeToByteArray(),
             "Metadata/project_settings.config" to "{}".encodeToByteArray()), true)
-        assertEquals(setOf("2", "3"), projectPlateObjects(project, 2)); assertEquals(emptySet(), projectPlateObjects(project, 5))
+        assertEquals(setOf("2" to 0, "3" to 0), projectPlateObjects(project, 2)); assertEquals(emptySet(), projectPlateObjects(project, 5))
         assertNull(projectPlateObjects(model, 1)) // a plain model names no plates
         val s = loaded()
         s.addFile("project.3mf", project, plate = 2)
@@ -143,6 +143,18 @@ class StudioLogicTest {
         assertEquals(s.scene.bed.centerX, all.center.x, 0.01f); assertEquals(s.scene.bed.centerY, all.center.y, 0.01f)
         assertEquals(40f, s.scene.objects[1].x - s.scene.objects[0].x, 0.01f) // the plate's own layout is kept
         assertFailsWith<IllegalArgumentException> { s.addFile("project.3mf", project, plate = 5) }
+    }
+
+    @Test fun anObjectWithInstancesOnTwoPlatesOpensOnlyThisPlatesInstance() {
+        val cube = Shapes.box(10f, 10f, 10f)
+        val model = ThreeMf.writePlain(listOf(SceneObject("cube", cube, Mat4.translation(100f, 100f, 0f)), SceneObject("cube", cube, Mat4.translation(400f, 100f, 0f))))
+        // Both build items name object 1 as two instances, as when one object is copied to a second plate.
+        val oneObject = Zip.read(model).toMutableMap().also { e -> e["3D/3dmodel.model"] = e.getValue("3D/3dmodel.model").decodeToString().replace("objectid=\"2\"", "objectid=\"1\"").encodeToByteArray() }
+        val plates = """<config><plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="1"/><metadata key="instance_id" value="0"/></model_instance></plate>
+            <plate><metadata key="plater_id" value="2"/><model_instance><metadata key="object_id" value="1"/><metadata key="instance_id" value="1"/></model_instance></plate></config>"""
+        val project = Zip.write(oneObject.toList() + listOf("Metadata/model_settings.config" to plates.encodeToByteArray(), "Metadata/project_settings.config" to "{}".encodeToByteArray()), true)
+        assertEquals(1, ThreeMf.read(project, projectPlateObjects(project, 2)).size)
+        assertEquals(400f, ThreeMf.read(project, projectPlateObjects(project, 2)).single().transform.m[12], 0.01f)
     }
 
     @Test fun filamentsCanBeAddedRecolouredAndRemovedWithObjectsFollowing() {

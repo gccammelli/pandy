@@ -46,42 +46,55 @@ actual object Zip {
     /**
      * Reads the entries through the central directory. Unlike a stream reader this also takes entries stored with a data
      * descriptor (sizes after the data), which the slicers write: a stream reader drops or rejects them. Null when the
-     * archive has no plain central directory (ZIP64, encrypted), so the stream reader can try.
+     * archive has no plain central directory (ZIP64, encrypted, inconsistent), so the stream reader can try.
      */
-    private fun readCentral(bytes: ByteArray): Map<String, ByteArray>? {
+    private fun readCentral(bytes: ByteArray): Map<String, ByteArray>? = try { central(bytes) } catch (e: IndexOutOfBoundsException) { null }
+
+    private fun central(bytes: ByteArray): Map<String, ByteArray>? {
+        val size = bytes.size.toLong()
+        // The end record is the last 22 bytes plus its comment, right after the central directory it describes: a
+        // signature that doesn't fit both (one inside a comment) is skipped.
         var eocd = -1
         var i = bytes.size - 22
-        while (i >= maxOf(0, bytes.size - 22 - 0xffff)) { if (u32(bytes, i) == 0x06054b50L) { eocd = i; break }; i-- }
+        while (i >= maxOf(0, bytes.size - 22 - 0xffff)) {
+            if (u32(bytes, i) == 0x06054b50L && i + 22L + u16(bytes, i + 20) == size && u32(bytes, i + 16) + u32(bytes, i + 12) == i.toLong()) { eocd = i; break }
+            i--
+        }
         if (eocd < 0) return null
-        val count = u16(bytes, eocd + 10); val dirSize = u32(bytes, eocd + 12); val dirOffset = u32(bytes, eocd + 16)
-        if (count == 0xffff || dirOffset + dirSize > eocd) return null
+        val count = u16(bytes, eocd + 10); val dirOffset = u32(bytes, eocd + 16)
+        if (count == 0xffff) return null
         val entries = LinkedHashMap<String, ByteArray>()
-        var p = dirOffset.toInt(); var total = 0L
+        var p = dirOffset; var total = 0L
         repeat(count) {
-            if (p + 46 > eocd || u32(bytes, p) != 0x02014b50L) return null
-            val flags = u16(bytes, p + 8); val method = u16(bytes, p + 10); val crc = u32(bytes, p + 16)
-            val packed = u32(bytes, p + 20); val size = u32(bytes, p + 24)
-            val nameLength = u16(bytes, p + 28); val extra = u16(bytes, p + 30); val comment = u16(bytes, p + 32); val local = u32(bytes, p + 42)
-            if (flags and 1 != 0 || packed == 0xffffffffL || size == 0xffffffffL || local == 0xffffffffL) return null
-            if (p + 46 + nameLength > eocd) return null
-            val name = bytes.decodeToString(p + 46, p + 46 + nameLength)
-            val l = local.toInt()
-            if (l + 30 > bytes.size || u32(bytes, l) != 0x04034b50L) return null
-            val start = l + 30 + u16(bytes, l + 26) + u16(bytes, l + 28)
-            if (start + packed > bytes.size) return null
+            if (p + 46 > eocd || u32(bytes, p.toInt()) != 0x02014b50L) return null
+            val at = p.toInt()
+            val flags = u16(bytes, at + 8); val method = u16(bytes, at + 10); val crc = u32(bytes, at + 16)
+            val packed = u32(bytes, at + 20); val length = u32(bytes, at + 24)
+            val nameLength = u16(bytes, at + 28); val extra = u16(bytes, at + 30); val comment = u16(bytes, at + 32); val local = u32(bytes, at + 42)
+            if (flags and 1 != 0 || packed == 0xffffffffL || length == 0xffffffffL || local == 0xffffffffL) return null
+            if (p + 46 + nameLength > eocd || local + 30 > size || u32(bytes, local.toInt()) != 0x04034b50L) return null
+            val name = bytes.decodeToString(at + 46, at + 46 + nameLength)
+            require(name !in entries) { "Malformed ZIP archive: $name appears twice" }
+            val start = local + 30 + u16(bytes, local.toInt() + 26) + u16(bytes, local.toInt() + 28)
+            if (start + packed > size) return null
             // A small archive can expand to gigabytes (a ZIP bomb): stop well before the phone runs out of memory.
-            total += size
+            total += length
             require(total <= MAX_EXPANDED) { "The file expands to more than ${MAX_EXPANDED shr 20} MB" }
             val data = when (method) {
-                0 -> { if (packed != size) return null; bytes.copyOfRange(start, start + size.toInt()) }
+                0 -> { require(packed == length) { "Malformed ZIP archive: $name is damaged" }; bytes.copyOfRange(start.toInt(), (start + length).toInt()) }
                 8 -> {
+                    // Inflated into a growing buffer, never past the declared size: a false size can't make it allocate.
                     val inflater = Inflater(true)
                     try {
-                        inflater.setInput(bytes, start, packed.toInt())
-                        val out = ByteArray(size.toInt()); var n = 0
-                        while (n < out.size) { val r = inflater.inflate(out, n, out.size - n); if (r == 0 && (inflater.finished() || inflater.needsInput() || inflater.needsDictionary())) break; n += r }
-                        if (n != out.size) return null
-                        out
+                        inflater.setInput(bytes, start.toInt(), packed.toInt())
+                        val out = ByteArrayOutputStream(minOf(length, 1L shl 20).toInt()); val buf = ByteArray(1 shl 16)
+                        while (!inflater.finished()) {
+                            val r = inflater.inflate(buf)
+                            require(!(r == 0 && (inflater.needsInput() || inflater.needsDictionary())) && out.size() + r <= length) { "Malformed ZIP archive: $name is damaged" }
+                            out.write(buf, 0, r)
+                        }
+                        require(out.size().toLong() == length && inflater.remaining == 0) { "Malformed ZIP archive: $name is damaged" }
+                        out.toByteArray()
                     } finally { inflater.end() }
                 }
                 else -> return null

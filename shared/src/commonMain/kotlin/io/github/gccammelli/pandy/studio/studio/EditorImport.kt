@@ -16,14 +16,17 @@ fun requirePlainEditorModel(bytes: ByteArray) {
 }
 
 /**
- * The objects (build item object ids) a project puts on [plate], from its plate settings; null when the project names
- * no plates, so every object is taken.
+ * The object instances a project puts on [plate] (object id, instance number), from its plate settings; null when the
+ * project names no plates, so every object is taken. One object can have instances on several plates.
  */
-fun projectPlateObjects(bytes: ByteArray, plate: Int): Set<String>? {
+fun projectPlateObjects(bytes: ByteArray, plate: Int): Set<Pair<String, Int>>? {
     val config = Zip.read(bytes).entries.firstOrNull { it.key.equals("Metadata/model_settings.config", ignoreCase = true) }?.value?.decodeToString() ?: return null
     fun meta(block: String, key: String) = Regex("""<metadata\s+key="$key"\s+value="([^"]*)"""").findAll(block).map { it.groupValues[1] }.toList()
     val plates = Regex("""<plate>(.*?)</plate>""", RegexOption.DOT_MATCHES_ALL).findAll(config).map { it.groupValues[1] }.toList()
     if (plates.isEmpty()) return null
     val block = plates.firstOrNull { meta(it, "plater_id").firstOrNull()?.toIntOrNull() == plate } ?: return emptySet()
-    return Regex("""<model_instance>(.*?)</model_instance>""", RegexOption.DOT_MATCHES_ALL).findAll(block).flatMap { meta(it.groupValues[1], "object_id") }.toSet()
+    return Regex("""<model_instance>(.*?)</model_instance>""", RegexOption.DOT_MATCHES_ALL).findAll(block).mapNotNull { m ->
+        val inst = m.groupValues[1]
+        meta(inst, "object_id").firstOrNull()?.let { it to (meta(inst, "instance_id").firstOrNull()?.toIntOrNull() ?: 0) }
+    }.toSet()
 }
