@@ -47,6 +47,7 @@ object Repo {
     val connected get() = ha != null
     private var token: String? = null
     private var directBackend: DirectPrinter? = null
+    val directPrinter: DirectPrinter? get() = directBackend
     /** Home Assistant's token as an HTTP header, for players and downloads that fetch from it directly. */
     fun authHeaders(): Map<String, String> = token?.let { mapOf("Authorization" to "Bearer $it") }.orEmpty()
     val haUrl get() = store.settings.getString("ha_url")
@@ -280,6 +281,18 @@ object Repo {
         store.settings.putString("filament_preset_$serial", mapping.entries.joinToString(",") { "${it.key}:${it.value}" }.ifBlank { null })
     }
 
+    val filamentPricePerKg: Double? get() = if (::store.isInitialized) store.settings.getString("filament_price_per_kg")?.toDoubleOrNull()?.takeIf { it > 0.0 } else null
+    fun setFilamentPricePerKg(price: Double?) { if (::store.isInitialized) store.settings.putString("filament_price_per_kg", price?.takeIf { it > 0.0 }?.toString()) }
+    val filamentCurrency: String get() = (if (::store.isInitialized) store.settings.getString("filament_currency") else null)?.takeIf { it.isNotBlank() } ?: "€"
+    fun setFilamentCurrency(currency: String?) { if (::store.isInitialized) store.settings.putString("filament_currency", currency?.trim()?.ifBlank { null }) }
+    fun spoolPricePerKg(spool: Spool?): Double? =
+        if (!::store.isInitialized) null
+        else spool?.entityId?.takeIf { it.isNotBlank() }?.let { store.settings.getString("spool_price_$it")?.toDoubleOrNull()?.takeIf { p -> p > 0.0 } }
+            ?: filamentPricePerKg
+    fun setSpoolPricePerKg(entityId: String, price: Double?) {
+        if (::store.isInitialized) store.settings.putString("spool_price_$entityId", price?.takeIf { it > 0.0 }?.toString())
+    }
+
     // ---------- Live updates ----------
 
     /**
@@ -360,11 +373,11 @@ suspend fun HaBackend.printers(): List<PrinterInfo> {
 // ---------- Printer controls ----------
 
 fun Printer.light(on: Boolean, err: (String) -> Unit) = Repo.act(err) {
-    call("light", if (on) "turn_on" else "turn_off", buildJsonObject { put("entity_id", info.ids["light.chamber_light"]!!) })
+    callEntity("light", if (on) "turn_on" else "turn_off", info.ids["light.chamber_light"]!!)
 }
 
 fun Printer.setSpeed(option: String, err: (String) -> Unit) = Repo.act(err) {
-    call("select", "select_option", buildJsonObject { put("entity_id", info.ids["select.printing_speed"]!!); put("option", option) })
+    callEntity("select", "select_option", info.ids["select.printing_speed"]!!, "option" to option)
 }
 
 /** [which]: "nozzle", "bed" or "chamber", or "left_nozzle", "right_nozzle". */
@@ -377,8 +390,8 @@ fun Printer.setTarget(which: String, celsius: Int, err: (String) -> Unit) = Repo
 }
 
 fun Printer.setFan(entityId: String, percent: Int, err: (String) -> Unit) = Repo.act(err) {
-    if (percent <= 0) call("fan", "turn_off", buildJsonObject { put("entity_id", entityId) })
-    else call("fan", "set_percentage", buildJsonObject { put("entity_id", entityId); put("percentage", percent) })
+    if (percent <= 0) callEntity("fan", "turn_off", entityId)
+    else callEntity("fan", "set_percentage", entityId, "percentage" to percent)
 }
 
 fun Printer.button(key: String, err: (String) -> Unit) = Repo.act(err) { press(this@button, key) }
@@ -418,11 +431,11 @@ fun Printer.unload(err: (String) -> Unit) = Repo.act(err) {
 }
 
 fun Printer.load(s: Spool, err: (String) -> Unit) = Repo.act(err) {
-    call("bambu_lab", "load_filament", buildJsonObject { put("entity_id", s.entityId) })
+    callEntity("bambu_lab", "load_filament", s.entityId)
 }
 
 fun Printer.toggleCamera(on: Boolean, err: (String) -> Unit) = Repo.act(err) {
-    call("switch", if (on) "turn_on" else "turn_off", buildJsonObject { put("entity_id", info.ids["switch.camera"] ?: return@act) })
+    callEntity("switch", if (on) "turn_on" else "turn_off", info.ids["switch.camera"] ?: return@act)
 }
 
 /** True when Home Assistant (or the direct backend) says the service itself does not exist, as opposed to the call failing. */

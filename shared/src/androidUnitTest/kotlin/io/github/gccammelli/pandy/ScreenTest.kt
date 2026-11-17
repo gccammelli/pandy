@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import io.github.gccammelli.pandy.ui.*
+import androidx.compose.ui.graphics.asAndroidBitmap
 import org.junit.Rule
 import org.junit.Test
 import org.junit.Before
@@ -1951,6 +1952,29 @@ class ScreenTest {
         assertEquals(listOf(65,0),set)
     }
 
+    @Test fun temperatureEntrySteppersIncrementAndDecrementInFiveDegreeSteps() {
+        val set=mutableListOf<Int>(); var closed=0
+        show("Temperature") { TempSheet("Temperature","Test heater",listOf(0,40),215.0,0..300,{closed++}) { set+=it } }
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.onNodeWithContentDescription("Decrease temperature").performClick()
+        compose.onNodeWithContentDescription("Decrease temperature").performClick()
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(listOf(210),set)
+        assertEquals(1,closed)
+    }
+
+    @Test fun temperatureEntrySteppersClampToRangeLimits() {
+        val set=mutableListOf<Int>()
+        show("Temperature") { TempSheet("Temperature","Test heater",listOf(0,40),0.0,0..50,{}) { set+=it } }
+        compose.onNodeWithContentDescription("Decrease temperature").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.onNode(hasSetTextAction()).performTextReplacement("48")
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.onNodeWithContentDescription("Increase temperature").assertIsNotEnabled()
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(listOf(50),set)
+    }
+
     @Test fun heatedChamberUsesItsOwnTarget() {
         val id="number.chamber_target"
         val info=printer.info.copy(ids=printer.info.ids+("number.target_chamber_temperature" to id))
@@ -2882,6 +2906,176 @@ class ScreenTest {
         compose.waitForIdle()
         compose.onAllNodesWithText("External Spool 1 (Left / Main)").onFirst().assertExists()
         compose.onAllNodesWithText("External Spool 2 (Right / Aux)").onFirst().assertExists()
+    }
+
+    @Test fun unsetExternalSpoolHiddenWhenAmsIsConnectedToMain() {
+        val ext1 = entity("Empty", mapOf("type" to "", "empty" to "true", "active" to "false"))
+        val ext2 = entity("Generic PETG", mapOf("name" to "Generic PETG", "type" to "PETG", "color" to "#00AE42FF", "empty" to "false", "active" to "false"))
+        val info = printer.info.copy(
+            model = "X2D",
+            external = listOf("sensor.spool_1", "sensor.spool_2")
+        )
+        val p = variant(info = info, set = arrayOf(
+            "sensor.spool_1" to ext1,
+            "sensor.spool_2" to ext2
+        ))
+
+        val showFilament = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    if (showFilament.value) FilamentScreen(p)
+                    else DevicesTab(st.copy(printers = listOf(p)), p)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onAllNodesWithText("External Spool 1 (Left / Main)").assertCountEquals(0)
+        compose.onAllNodesWithText("External Spool 2 (Right / Aux)").onFirst().assertExists()
+
+        compose.runOnIdle { showFilament.value = true }
+        compose.waitForIdle()
+        compose.onNodeWithText("External Spool 1 (Left / Main)").assertExists()
+        compose.onNodeWithText("External Spool 2 (Right / Aux)").assertExists()
+    }
+
+    @Test fun printCardOpensJobDetailsDuringPrintingAndShowsArrow() {
+        ThemeMode.mode = "light"
+        val currentPrinter = androidx.compose.runtime.mutableStateOf(printer)
+        val showScreen = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    if (showScreen.value) JobDetailsScreen(currentPrinter.value)
+                    else DevicesTab(st, currentPrinter.value)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("About 1h 23min left").assertExists()
+
+        fun saveTestCapture(name: String) {
+            val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
+            val root = generateSequence(java.io.File(System.getProperty("user.dir") ?: ".")) { it.parentFile }
+                .firstOrNull { java.io.File(it, "settings.gradle.kts").exists() }
+                ?: java.io.File(".")
+            val out = java.io.File(root, "build/test-screenshots/$name")
+            out.parentFile?.mkdirs()
+            java.io.FileOutputStream(out).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+
+        saveTestCapture("devices-tab-print-card.png")
+
+        compose.onNodeWithText("Articulated Panda Keychain").performClick()
+        kotlin.test.assertEquals(Screen.JobDetails, Nav.stack.last())
+
+        compose.runOnIdle { showScreen.value = true }
+        compose.waitForIdle()
+        compose.onNodeWithText("Print Details").assertExists()
+        compose.onNodeWithText("Print Speed").assertExists()
+        compose.onNodeWithText("Material & Cost").assertExists()
+
+        saveTestCapture("job-details-light.png")
+
+        compose.onNodeWithText("Contrast: Auto").assertExists().performClick()
+        compose.onNodeWithText("Contrast: Light").assertExists().performClick()
+        compose.onNodeWithText("Contrast: Dark").assertExists().performClick()
+        compose.onNodeWithText("Contrast: Auto").assertExists()
+
+        compose.onNodeWithText("Stop").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Stop printing?").assertExists()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.waitForIdle()
+
+        compose.runOnIdle { ThemeMode.mode = "dark" }
+        compose.waitForIdle()
+        saveTestCapture("job-details-dark.png")
+        compose.runOnIdle { ThemeMode.mode = "system" }
+
+        val finished = variant(set = arrayOf("sensor.print_status" to entity("finish"), "sensor.print_progress" to entity("100")))
+        compose.runOnIdle { currentPrinter.value = finished }
+        compose.waitForIdle()
+        compose.onNodeWithText("Share Print Summary").assertExists()
+        compose.onNodeWithText("Print Speed").assertDoesNotExist()
+        compose.onNodeWithText("Pause").assertDoesNotExist()
+        compose.onNodeWithText("Stop").assertDoesNotExist()
+    }
+
+    @Test fun filamentCostCanBeConfiguredInSettingsAndPerSpool() {
+        val spool = Spool("sensor.ams_tray_1", 1, "Bambu PLA", "PLA", 0xFF000000L, emptyList(), 80, active = true, empty = false, nozzleMin = 190, nozzleMax = 230, filamentId = "GFA00")
+        try {
+            Repo.setFilamentPricePerKg(25.0)
+            Repo.setFilamentCurrency("$")
+            assertEquals(25.0, Repo.spoolPricePerKg(spool))
+            val p = variant(set = arrayOf("sensor.print_status" to entity("finish"), "sensor.print_progress" to entity("100"), "sensor.print_weight" to entity("50.0")))
+            val text = buildPrintShareText(p)
+            assertTrue(text.contains("• Estimated Cost: ~1.25 $"))
+            Repo.setSpoolPricePerKg(spool.entityId, 34.5)
+            assertEquals(34.5, Repo.spoolPricePerKg(spool))
+
+            show("Settings") { SettingsScreen() }
+            compose.onNodeWithText("Filament cost").assertExists().performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Default filament cost").assertExists()
+            compose.onNodeWithText("Save").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Filament cost").assertExists().performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Clear default cost").performClick()
+            compose.waitForIdle()
+            org.junit.Assert.assertNull(Repo.filamentPricePerKg)
+        } finally {
+            Repo.setFilamentPricePerKg(null)
+            Repo.setFilamentCurrency(null)
+            Repo.setSpoolPricePerKg(spool.entityId, null)
+        }
+    }
+
+    @Test fun jobDetailsLazyMeshSpeedAndShareWorkEndToEnd() {
+        try {
+            Repo.setFilamentPricePerKg(20.0)
+            Repo.setFilamentCurrency("€")
+            val active = variant(set = arrayOf(
+                "sensor.subtask_name" to entity("Articulated Panda Keychain"),
+                "sensor.print_weight" to entity("0"),
+                "sensor.print_length" to entity("0"),
+            ))
+            show("Print Details") { JobDetailsScreen(active) }
+            compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("View 3D").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("View 3D").performClick()
+            compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithText("3D (Active)").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Silent\n50%").performClick()
+            compose.onNodeWithText("Pause").performClick()
+            compose.onNodeWithContentDescription("Share").performClick()
+            compose.waitForIdle()
+        } finally {
+            Repo.setFilamentPricePerKg(null)
+            Repo.setFilamentCurrency(null)
+        }
+    }
+
+    @Test fun filamentScreenSpoolPriceSheetSavesAndClears() {
+        show("Filament") { FilamentScreen(printer) }
+        compose.onNodeWithText("A1").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Set filament price").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Save").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("A1").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Set filament price").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Clear price").performClick()
+        compose.waitForIdle()
+    }
+
+    @Test fun historyScreenShareButtonWorks() {
+        show("History") { HistoryScreen(printer) }
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithContentDescription("Share").fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodesWithContentDescription("Share").onFirst().performClick()
+        compose.waitForIdle()
     }
 
     @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {

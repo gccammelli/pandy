@@ -17,9 +17,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -115,7 +115,7 @@ fun PrinterFilesScreen() {
                         Group {
                             list.forEach { f ->
                                 Row(Modifier.fillMaxWidth().clickable(enabled = f.dir) { dir = (dir.trimEnd('/') + "/" + f.name) }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(if (f.dir) Icons.Outlined.Folder else Icons.Outlined.InsertDriveFile, null, Modifier.size(22.dp), tint = if (f.dir) C.Accent else C.Sub)
+                                    Icon(if (f.dir) Icons.Outlined.Folder else Icons.AutoMirrored.Outlined.InsertDriveFile, null, Modifier.size(22.dp), tint = if (f.dir) C.Accent else C.Sub)
                                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                                         T(f.name, 14.sp, maxLines = 2)
                                         if (!f.dir) T("${sizeText(f.size)}  ·  ${f.modified.replace('T', ' ')}", 11.sp, C.Sub)

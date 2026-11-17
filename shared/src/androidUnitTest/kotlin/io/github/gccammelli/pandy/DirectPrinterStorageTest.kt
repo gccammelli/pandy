@@ -130,4 +130,41 @@ class DirectPrinterStorageTest {
             withTimeout(5000) { while (lists.get() <= JOB_LOOKUPS * 2) delay(5) }
         } finally { printer.stop() }
     }
+
+    @Test fun jobMeshIsLoadedLazilyOnlyWhenRequested() = runBlocking<Unit> {
+        val archive = java.io.ByteArrayOutputStream().apply {
+            java.util.zip.ZipOutputStream(this).use { z ->
+                z.putNextEntry(java.util.zip.ZipEntry("Metadata/plate_1.png")); z.write(byteArrayOf(1, 2, 3)); z.closeEntry()
+                z.putNextEntry(java.util.zip.ZipEntry("3D/3dmodel.model"))
+                z.write("""<model><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>""".toByteArray())
+                z.closeEntry()
+            }
+        }.toByteArray()
+        val storage = object : PrinterStorage {
+            override suspend fun list(dir: String) = if (dir == "/cache") listOf(FileEntry("cube.3mf", archive.size.toLong(), "2026-04-14 01:02", false)) else emptyList()
+            override suspend fun read(path: String, offset: Long, length: Int): ByteArray {
+                val end = if (length < 0) archive.size else minOf(archive.size, offset.toInt() + length)
+                return archive.copyOfRange(offset.toInt(), end)
+            }
+            override suspend fun write(path: String, data: ByteArray, progress: (Float) -> Unit) = Unit
+        }
+        val link = object : LanLink {
+            override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) {
+                onConnected()
+                onMessage("""{"print":{"command":"push_status","subtask_name":"cube","gcode_file":"/data/Metadata/plate_1.gcode","gcode_state":"RUNNING"}}""")
+                awaitCancellation()
+            }
+            override fun publish(payload: String) = Unit
+            override fun close() = Unit
+        }
+        val printer = DirectPrinter(LanConfig("192.0.2.1", "TEST", "code", "X1C"), true, { link }, { storage })
+        try {
+            printer.printers()
+            withTimeout(3000) { while (runCatching { printer.bytes("/api/image_proxy/job") }.getOrNull() == null) delay(10) }
+            assertNull(printer.currentMesh)
+            val mesh = printer.loadJobMesh()
+            assertNotNull(mesh)
+            assertEquals(mesh, printer.currentMesh)
+        } finally { printer.stop() }
+    }
 }

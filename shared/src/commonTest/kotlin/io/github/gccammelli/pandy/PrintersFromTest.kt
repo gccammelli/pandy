@@ -147,4 +147,25 @@ class PrintersFromTest {
         assertEquals(1440.0, Entity("sensor.r", "1", unit("d")).minutes!!, 0.001)
         assertNull(Entity("sensor.r", "unavailable", unit("h")).minutes)
     }
+
+    @Test fun caseInsensitiveSerialPrefixInUniqueId() {
+        val devs = array("""[{"id":"p_sn","identifiers":[["bambu_lab","00M09A123456789"]]}]""")
+        val ents = array("[" + listOf(
+            entity("sensor.weight", "p_sn", null, "00m09a123456789_print_weight"),
+            entity("sensor.length", "p_sn", null, "00m09a123456789_print_length"),
+            entity("image.cover", "p_sn", null, "00m09a123456789_cover_image")
+        ).joinToString(",") + "]")
+        val printer = printersFrom(devs, ents).single()
+        assertEquals("sensor.weight", printer.ids["sensor.print_weight"])
+        assertEquals("sensor.length", printer.ids["sensor.print_length"])
+        assertEquals("image.cover", printer.ids["image.cover_image"])
+    }
+
+    @Test fun pickImageDoesNotFallBackToGenericCoverImage() {
+        val info = PrinterInfo("p", "SN", "X1C", "X1C", null, mapOf("image.image" to "img.cover"), emptyList(), emptyList())
+        val states = mapOf("img.cover" to Entity("img.cover", "2026-11-17T00:00:00", JsonObject(emptyMap())))
+        val p = Printer(info, states)
+        assertEquals("/api/image_proxy/img.cover?v=2026-11-17T00:00:00", p.coverImage)
+        assertNull(p.pickImage)
+    }
 }

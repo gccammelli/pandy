@@ -113,6 +113,9 @@ class KitTest {
                     MiniCard("both", "value", Modifier, { T("both") }) { }
                     Empty("nothing here"); Empty("custom icon", Icons.Default.Close)
                     HaImage(null, Modifier.size(10.dp)); HaImage("/api/bambu_lab/file_cache/x.png", Modifier.size(10.dp)); HaImage("/api/camera_proxy/x", Modifier.size(10.dp))
+                    StepButton(Icons.Default.Close, true, "step enabled") { }
+                    StepButton(Icons.Default.Close, false, "step disabled") { }
+                    SpoolDot(Color.Red); SpoolDot(Color.Green, 28.dp, bordered = false)
                 }
                 1 -> TempSheet("Empty target", "hint", listOf(0, 50), null, 0..100, {}) { set += it }
                 2 -> TempSheet("Zero target", "hint", listOf(0, 50), 0.0, 0..100, {}) { set += it }

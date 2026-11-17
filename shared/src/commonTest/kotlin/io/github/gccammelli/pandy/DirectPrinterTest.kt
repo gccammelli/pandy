@@ -184,6 +184,14 @@ class DirectPrinterTest {
         } finally { printer.stop() }
     }
 
+    @Test fun rtspCameraRejectsSnapshotRequestsCleanly() = runBlocking<Unit> {
+        val printer = DirectPrinter(config.copy(model = "X1C"))
+        try {
+            val err = kotlin.test.assertFailsWith<ApiException> { printer.bytes("/api/camera_proxy/live") }
+            assertEquals("The camera uses RTSP video and has no snapshot", err.message)
+        } finally { printer.stop() }
+    }
+
     @Test fun serviceCommandsProduceExpectedMqttPackets() = runBlocking<Unit> {
         val link = Link(report()); val printer = DirectPrinter(config, true, { link })
         try {
