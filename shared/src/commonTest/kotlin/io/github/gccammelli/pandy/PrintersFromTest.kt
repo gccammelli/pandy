@@ -147,4 +147,49 @@ class PrintersFromTest {
         assertEquals(1440.0, Entity("sensor.r", "1", unit("d")).minutes!!, 0.001)
         assertNull(Entity("sensor.r", "unavailable", unit("h")).minutes)
     }
+
+    @Test fun caseInsensitiveSerialPrefixInUniqueId() {
+        val devs = array("""[{"id":"p_sn","identifiers":[["bambu_lab","00M09A123456789"]]},{"id":"p_nosn","identifiers":[]}]""")
+        val ents = array("[" + listOf(
+            entity("sensor.weight", "p_sn", null, "00m09a123456789_print_weight"),
+            entity("sensor.length", "p_sn", null, "00m09a123456789_print_length"),
+            entity("image.cover", "p_sn", null, "00m09a123456789_cover_image"),
+            entity("sensor.other", "p_sn", null, "other_metric"),
+            entity("sensor.nouid", "p_sn", null, null),
+            entity("sensor.nosn", "p_nosn", null, "abc_temp")
+        ).joinToString(",") + "]")
+        val printer = printersFrom(devs, ents).first { it.haId == "p_sn" }
+        assertEquals("sensor.weight", printer.ids["sensor.print_weight"])
+        assertEquals("sensor.length", printer.ids["sensor.print_length"])
+        assertEquals("image.cover", printer.ids["image.cover_image"])
+        assertEquals("sensor.other", printer.ids["sensor.metric"])
+        assertNull(printer.ids["sensor.nouid"])
+    }
+
+    @Test fun pickImageDoesNotFallBackToGenericCoverImage() {
+        val infoGeneric = PrinterInfo("p", "SN", "X1C", "X1C", null, mapOf("image.image" to "img.cover"), emptyList(), emptyList())
+        val ok = Entity("img.cover", "2026-11-17T00:00:00", JsonObject(emptyMap()))
+        val okPic = Entity("img.cover", "2026-11-17T00:00:00", JsonObject(mapOf("entity_picture" to kotlinx.serialization.json.JsonPrimitive("/api/image_proxy/img.cover?token=abc"))))
+        val unavail = Entity("img.cover", "unavailable", JsonObject(emptyMap()))
+        val blank = Entity("img.cover", "", JsonObject(emptyMap()))
+        assertEquals("/api/image_proxy/img.cover?v=2026-11-17T00:00:00", Printer(infoGeneric, mapOf("img.cover" to ok)).coverImage)
+        assertEquals("/api/image_proxy/img.cover?token=abc", Printer(infoGeneric, mapOf("img.cover" to okPic)).coverImage)
+        assertNull(Printer(infoGeneric, mapOf("img.cover" to unavail)).coverImage)
+        assertNull(Printer(infoGeneric, mapOf("img.cover" to blank)).coverImage)
+        assertNull(Printer(infoGeneric, emptyMap()).coverImage)
+        assertNull(Printer(infoGeneric, mapOf("img.cover" to ok)).pickImage)
+
+        val infoBoth = PrinterInfo("p", "SN", "X1C", "X1C", null, mapOf("image.cover_image" to "img.c", "image.pick_image" to "img.p"), emptyList(), emptyList())
+        val cOk = Entity("img.c", "v1", JsonObject(emptyMap()))
+        val pOk = Entity("img.p", "v2", JsonObject(emptyMap()))
+        val pPic = Entity("img.p", "v2", JsonObject(mapOf("entity_picture" to kotlinx.serialization.json.JsonPrimitive("/api/image_proxy/img.p?token=xyz"))))
+        val pUnavail = Entity("img.p", "unavailable", JsonObject(emptyMap()))
+        val pBlank = Entity("img.p", " ", JsonObject(emptyMap()))
+        assertEquals("/api/image_proxy/img.c?v=v1", Printer(infoBoth, mapOf("img.c" to cOk)).coverImage)
+        assertEquals("/api/image_proxy/img.p?v=v2", Printer(infoBoth, mapOf("img.p" to pOk)).pickImage)
+        assertEquals("/api/image_proxy/img.p?token=xyz", Printer(infoBoth, mapOf("img.p" to pPic)).pickImage)
+        assertNull(Printer(infoBoth, mapOf("img.p" to pUnavail)).pickImage)
+        assertNull(Printer(infoBoth, mapOf("img.p" to pBlank)).pickImage)
+        assertNull(Printer(infoBoth, emptyMap()).pickImage)
+    }
 }

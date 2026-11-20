@@ -130,4 +130,39 @@ class DirectPrinterStorageTest {
             withTimeout(5000) { while (lists.get() <= JOB_LOOKUPS * 2) delay(5) }
         } finally { printer.stop() }
     }
+
+    @Test fun checkJobToleratesNonPrintMessagesAndMissingFtpsFolders() = runBlocking<Unit> {
+        val archive = java.io.ByteArrayOutputStream().apply {
+            java.util.zip.ZipOutputStream(this).use { z ->
+                z.putNextEntry(java.util.zip.ZipEntry("Metadata/plate_1.png")); z.write(byteArrayOf(7, 8, 9)); z.closeEntry()
+            }
+        }.toByteArray()
+        val storage = object : PrinterStorage {
+            override suspend fun list(dir: String): List<FileEntry> {
+                if (dir == "/cache") throw PrinterStorageException(550, "No such directory")
+                return listOf(FileEntry("MY_MODEL.3MF", archive.size.toLong(), "2026-11-17 01:02", false))
+            }
+            override suspend fun read(path: String, offset: Long, length: Int): ByteArray {
+                val end = if (length < 0) archive.size else minOf(archive.size, offset.toInt() + length)
+                return archive.copyOfRange(offset.toInt(), end)
+            }
+            override suspend fun write(path: String, data: ByteArray, progress: (Float) -> Unit) = Unit
+        }
+        val link = object : LanLink {
+            override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) {
+                onConnected()
+                onMessage("""{"info":{"command":"get_version"}}""")
+                onMessage("""{"print":{"command":"push_status","subtask_name":"my model.3mf","gcode_file":"/data/other.3mf","gcode_state":"RUNNING"}}""")
+                awaitCancellation()
+            }
+            override fun publish(payload: String) = Unit
+            override fun close() = Unit
+        }
+        val printer = DirectPrinter(LanConfig("192.0.2.1", "TEST", "code", "X1C"), true, { link }, { storage })
+        try {
+            printer.printers()
+            withTimeout(3000) { while (runCatching { printer.bytes("/api/image_proxy/job") }.getOrNull() == null) delay(10) }
+            assertContentEquals(byteArrayOf(7, 8, 9), printer.bytes("/api/image_proxy/job"))
+        } finally { printer.stop() }
+    }
 }

@@ -539,7 +539,7 @@ class DirectPrinter(
 
     /** When the job changes, finds its 3MF on the printer (as the integration does) and reads its picture and parts. */
     private fun checkJob() {
-        val p = report.o("print")!! // checkJob runs on a print status report
+        val p = report.o("print") ?: return // checkJob runs on a print status report
         val task = p.str("subtask_name").orEmpty()
         val gcode = p.str("gcode_file").orEmpty()
         val key = "$task|$gcode"
@@ -558,9 +558,12 @@ class DirectPrinter(
             val plate = Regex("""plate_(\d+)\.gcode""").find(gcode)?.groupValues?.get(1)?.toIntOrNull() ?: 1
             val result = if (found == null) LanJob(key, null, null, emptyMap()) else {
                 val (path, size) = found
-                suspend fun entry(vararg names: String) = runCatching { zipEntry(size, names.map { Regex(it) }) { o, l -> storage.read(path, o, l) }?.second }.getOrNull()
-                LanJob(key, entry("Metadata/plate_$plate\\.png", "Metadata/plate_\\d+\\.png"), entry("Metadata/pick_$plate\\.png"),
-                    entry("Metadata/slice_info\\.config")?.decodeToString()?.let { sliceObjects(it, plate) }.orEmpty())
+                suspend fun entry(vararg names: String) = runCatching {
+                    zipEntry(size, names.map { Regex(it, RegexOption.IGNORE_CASE) }) { o, l -> storage.read(path, o, l) }?.second
+                }.getOrNull()
+                LanJob(key, entry(".*Metadata/plate_$plate\\.png", "Metadata/plate_$plate\\.png", ".*Metadata/plate_\\d+\\.png", "Metadata/.*\\.png"),
+                    entry(".*Metadata/pick_$plate\\.png", "Metadata/pick_$plate\\.png"),
+                    entry(".*Metadata/slice_info\\.config", "Metadata/slice_info\\.config")?.decodeToString()?.let { sliceObjects(it, plate) }.orEmpty())
             }
             if (jobLoading != key) return@launch // a newer job is being looked for; this result is stale
             job = result
@@ -572,14 +575,23 @@ class DirectPrinter(
     }
 
     private suspend fun findJobFile(task: String, gcode: String): Pair<String, Long>? {
-        val names = buildList {
-            if (task.isNotEmpty()) { if (task.endsWith(".3mf")) add(task) else { add("$task.3mf"); add("$task.gcode.3mf") } }
+        val names = buildSet {
+            val variants = listOf(task, task.replace(' ', '_'), task.replace('_', ' '))
+            for (t in variants) {
+                if (t.isNotBlank()) {
+                    if (t.endsWith(".3mf", ignoreCase = true)) add(t)
+                    else { add("$t.3mf"); add("$t.gcode.3mf") }
+                }
+            }
             val g = gcode.substringAfterLast('/')
-            if (g.isNotEmpty() && g != task && !g.startsWith("plate_")) { if (g.endsWith(".3mf")) add(g) else { add("$g.3mf"); add("$g.gcode.3mf") } }
+            if (g.isNotBlank() && g != task && !g.startsWith("plate_")) {
+                if (g.endsWith(".3mf", ignoreCase = true)) add(g)
+                else { add("$g.3mf"); add("$g.gcode.3mf") }
+            }
         }
         val dirs = listOf("/cache/" to listCached("/cache"), "/" to listCached("/"))
-        for (n in names) for ((d, files) in dirs) files.firstOrNull { it.name == n }?.let { return d + it.name to it.size }
-        if (task.isEmpty()) dirs.flatMap { (d, f) -> f.filter { it.name.endsWith(".3mf") }.map { d + it.name to it } }.maxByOrNull { it.second.modified }?.let { return it.first to it.second.size }
+        for (n in names) for ((d, files) in dirs) files.firstOrNull { it.name.equals(n, ignoreCase = true) }?.let { return d + it.name to it.size }
+        if (task.isEmpty()) dirs.flatMap { (d, f) -> f.filter { it.name.endsWith(".3mf", ignoreCase = true) }.map { d + it.name to it } }.maxByOrNull { it.second.modified }?.let { return it.first to it.second.size }
         return null
     }
 
@@ -631,7 +643,7 @@ class DirectPrinter(
     private suspend fun listCached(dir: String): List<FileEntry> {
         val now = Clock.System.now().toEpochMilliseconds()
         listings[dir]?.takeIf { now - it.first < 30_000 }?.let { return it.second }
-        return storage.list(dir).also { listings[dir] = now to it }
+        return runCatching { storage.list(dir) }.getOrDefault(emptyList()).also { listings[dir] = now to it }
     }
 
     private suspend fun sizeOf(path: String) =
