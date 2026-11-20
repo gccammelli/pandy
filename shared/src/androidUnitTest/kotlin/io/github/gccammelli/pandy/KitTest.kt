@@ -73,6 +73,8 @@ class KitTest {
                     Radio(true, "selected") {}; Radio(false, "unselected") {}; Radio(true, "disabled", enabled = false) {}
                     AccentButton("go") {}; AccentButton("modifier", Modifier.padding(1.dp)) {}; AccentButton("off", enabled = false) {}
                     OutlineButton("outline", Color.Red) {}; OutlineButton("outline off", Color.Red, enabled = false) {}; OutlineButton("outline modifier", Color.Red, Modifier.padding(1.dp)) {}
+                    StepButton(Icons.Default.Close, true) {}; StepButton(Icons.Default.Close, false, "disabled") {}
+                    SpoolDot(Color.Red); SpoolDot(Color.Blue, 24.dp, bordered = false)
                     PrinterArt(Modifier.size(80.dp), ams = false, lit = false); PrinterArt(Modifier.size(80.dp), ams = true, lit = true)
                     PrinterArt(Modifier.size(80.dp), ams = true, lit = false, dark = true); PrinterArt(Modifier.size(80.dp), ams = true, lit = true, dark = false, amsColors = listOf(Color.Red, Color.Green))
                     PandaMark(Modifier.size(40.dp))
@@ -113,6 +115,9 @@ class KitTest {
                     MiniCard("both", "value", Modifier, { T("both") }) { }
                     Empty("nothing here"); Empty("custom icon", Icons.Default.Close)
                     HaImage(null, Modifier.size(10.dp)); HaImage("/api/bambu_lab/file_cache/x.png", Modifier.size(10.dp)); HaImage("/api/camera_proxy/x", Modifier.size(10.dp))
+                    StepButton(Icons.Default.Close, true, "step enabled") { }
+                    StepButton(Icons.Default.Close, false, "step disabled") { }
+                    SpoolDot(Color.Red); SpoolDot(Color.Green, 28.dp, bordered = false)
                 }
                 1 -> TempSheet("Empty target", "hint", listOf(0, 50), null, 0..100, {}) { set += it }
                 2 -> TempSheet("Zero target", "hint", listOf(0, 50), 0.0, 0..100, {}) { set += it }

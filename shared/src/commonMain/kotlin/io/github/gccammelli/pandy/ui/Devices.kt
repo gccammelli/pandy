@@ -199,13 +199,13 @@ private fun PrinterPage(p: Printer) = Box(Modifier.fillMaxSize().background(C.Ca
     val amsColors = p.ams.firstOrNull()?.second.orEmpty().map { Color(if (it?.known == true) it.color else 0xFFDDDDDD) }
     PrinterArt(Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 4.dp), ams = p.info.ams.isNotEmpty(), lit = p.lightOn, amsColors = amsColors)
     if (p.isDualNozzle) {
-        TempChip(null, "nozzle", p.leftNozzle ?: p.nozzle, p.leftNozzleTarget, Modifier.align(Alignment.TopStart), label = "L")
-        TempChip(null, "nozzle", p.rightNozzle ?: p.nozzle, p.rightNozzleTarget, Modifier.align(Alignment.TopEnd), label = "R")
+        TempChip("nozzle", p.leftNozzle ?: p.nozzle, p.leftNozzleTarget, Modifier.align(Alignment.TopStart), label = "L")
+        TempChip("nozzle", p.rightNozzle ?: p.nozzle, p.rightNozzleTarget, Modifier.align(Alignment.TopEnd), label = "R")
         if (p.chamber != null) {
-            TempChip(null, "chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.BottomStart))
-            TempChip(null, "bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomEnd))
+            TempChip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.BottomStart))
+            TempChip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomEnd))
         } else {
-            TempChip(null, "bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
+            TempChip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
             p.ams.firstOrNull()?.let { (a, _) ->
                 p.amsNum(a, "sensor.humidity_index")?.let { h ->
                     Row(Modifier.align(Alignment.BottomEnd).clip(CircleShape).background(C.Fill).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -216,9 +216,9 @@ private fun PrinterPage(p: Printer) = Box(Modifier.fillMaxSize().background(C.Ca
             }
         }
     } else {
-        TempChip(Icons.Outlined.Settings, "nozzle", p.nozzle, p.nozzleTarget, Modifier.align(Alignment.TopStart))
-        if (p.chamber != null) TempChip(null, "chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.TopEnd))
-        TempChip(null, "bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
+        TempChip("nozzle", p.nozzle, p.nozzleTarget, Modifier.align(Alignment.TopStart))
+        if (p.chamber != null) TempChip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.TopEnd))
+        TempChip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
         p.ams.firstOrNull()?.let { (a, _) ->
             p.amsNum(a, "sensor.humidity_index")?.let { h ->
                 Row(Modifier.align(Alignment.BottomEnd).clip(CircleShape).background(C.Fill).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -262,8 +262,8 @@ fun humidityColor(level: Int) = when { level <= 2 -> Color(0xFF00A33E); level ==
 
 /** "28 /0°C" with a small symbol for which heater; an arrow while heating (orange) or cooling (blue). */
 @Composable
-private fun TempChip(icon: ImageVector?, which: String, now: Double?, target: Double?, modifier: Modifier = Modifier, label: String? = null) =
-    Row(modifier.clip(CircleShape).background(C.Fill).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+fun TempChip(which: String, now: Double?, target: Double?, modifier: Modifier = Modifier, label: String? = null, background: Color = C.Fill) =
+    Row(modifier.clip(CircleShape).background(background).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
         if (label != null) {
             T(label, 12.sp, C.Sub, FontWeight.Bold)
             Spacer(Modifier.width(4.dp))

@@ -196,7 +196,7 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
             val map = mapping
             fil.forEachIndexed { i, x ->
                 Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(18.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(io.github.gccammelli.pandy.hexColor(x["color"]))))
+                    SpoolDot(Color(io.github.gccammelli.pandy.hexColor(x["color"])))
                     Spacer(Modifier.width(8.dp)); T(x["type"] ?: "?", 13.sp, modifier = Modifier.width(60.dp))
                     T("→", 13.sp, C.Sub); Spacer(Modifier.width(8.dp))
                     val t = map?.getOrNull(i)
@@ -206,7 +206,7 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
                         val a = match?.first
                         val s = match?.second
                         val slot = a?.slotForTrayId(t)
-                        Box(Modifier.size(18.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(s?.color ?: 0xFFDDDDDD)))
+                        SpoolDot(Color(s?.color ?: 0xFFDDDDDD))
                         Spacer(Modifier.width(8.dp)); T(if (a?.isSingleSlot() == true) "HT ${s?.type.orEmpty()}" else "${a?.let { 'A' + it.index - 1 }}${slot?.plus(1) ?: ""} ${s?.type.orEmpty()}", 13.sp)
                     }
                 }

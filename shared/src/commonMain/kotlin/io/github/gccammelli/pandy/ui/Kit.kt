@@ -180,6 +180,18 @@ fun OutlineButton(text: String, color: Color, modifier: Modifier = Modifier, ena
         T(text, 16.sp, if (enabled) color else C.Sub)
     }
 
+/** Stepper button (+ / −) used for discrete increments (fans, temperatures, drying). */
+@Composable
+fun StepButton(icon: ImageVector, enabled: Boolean, desc: String? = null, onClick: () -> Unit) =
+    Box(Modifier.size(44.dp, 36.dp).clip(RoundedCornerShape(6.dp)).background(C.Card).clickable(enabled = enabled, onClickLabel = desc, onClick = onClick), contentAlignment = Alignment.Center) {
+        Icon(icon, desc, Modifier.size(18.dp), tint = if (enabled) C.Text else C.Faint)
+    }
+
+/** A circular filament colour swatch with an optional thin border. */
+@Composable
+fun SpoolDot(color: Color, size: Dp = 18.dp, bordered: Boolean = true) =
+    Box(Modifier.size(size).clip(CircleShape).then(if (bordered) Modifier.border(1.dp, C.Line, CircleShape) else Modifier).background(color))
+
 /** Handy's bottom sheet: centred title, close X top right, content, then an optional green button. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

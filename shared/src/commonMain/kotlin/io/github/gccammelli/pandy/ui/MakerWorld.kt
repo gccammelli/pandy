@@ -607,7 +607,7 @@ private fun PrepareView(
             }
         }
         if (step == Step.Slicing || step == Step.Starting) T(step.label, 13.sp, C.Sub, modifier = Modifier.padding(22.dp, 8.dp))
-        else if (printFailure != null) T(printFailure!!, 13.sp, C.Red, lh = 18.sp, modifier = Modifier.padding(22.dp, 8.dp))
+        else if (printFailure != null) T(printFailure, 13.sp, C.Red, lh = 18.sp, modifier = Modifier.padding(22.dp, 8.dp))
         else if (!canPrint && !Repo.demo) setupNote?.let { note ->
             if (setupGuide != null) SetupNote(note, setupGuide, Modifier.padding(14.dp))
             else T(note, 13.sp, C.Sub, lh = 18.sp, modifier = Modifier.padding(22.dp, 8.dp))
@@ -696,7 +696,7 @@ private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, en
             T(type, 14.sp, Color.White, maxLines = 1)
         }
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(30.dp).clip(CircleShape).border(1.dp, C.Line, CircleShape).background(Color(hexColor(colour))))
+            SpoolDot(Color(hexColor(colour)), 30.dp)
             Spacer(Modifier.width(7.dp))
             Column(Modifier.weight(1f)) {
                 T(trayLabel, 12.sp, C.Text, FontWeight.Medium)
@@ -889,15 +889,15 @@ private fun FilamentPicker(p: Printer, project: Project, index: Int, auto: List<
         p.ams.flatMap { (ams, spools) -> spools.mapIndexedNotNull { slot, spool -> spool?.takeIf { it.known }?.let { ams to (ams.trayId(slot) to it) } } }.forEach { (ams, tray) ->
             val (slot, spool) = tray
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { choose(slot) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(28.dp).clip(CircleShape).background(Color(spool.color)))
-                Spacer(Modifier.width(10.dp)); T(if (ams.model.contains("HT", ignoreCase = true) || ams.model.contains("N3S", ignoreCase = true)) "AMS HT" else "AMS ${ams.index} · slot ${slot % 4 + 1}", 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (slot == current) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
+                SpoolDot(Color(spool.color), 28.dp, bordered = false)
+                Spacer(Modifier.width(10.dp)); T(if (ams.isSingleSlot()) "AMS HT" else "AMS ${ams.index} · slot ${slot % 4 + 1}", 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (slot == current) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
             }
         }
         p.external.forEachIndexed { i, spool ->
             val slotId = if (i == 0) 254 else 255
             val label = if (p.external.size > 1) "External spool ${i + 1}" else "External spool"
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { choose(slotId) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(28.dp).clip(CircleShape).background(Color(spool.color))); Spacer(Modifier.width(10.dp)); T(label, 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (current == slotId) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
+                SpoolDot(Color(spool.color), 28.dp, bordered = false); Spacer(Modifier.width(10.dp)); T(label, 14.sp, modifier = Modifier.weight(1f)); T(spool.type, 13.sp, C.Sub); if (current == slotId) { Spacer(Modifier.width(8.dp)); T("✓", 18.sp, C.Accent, FontWeight.Bold) }
             }
         }
     }

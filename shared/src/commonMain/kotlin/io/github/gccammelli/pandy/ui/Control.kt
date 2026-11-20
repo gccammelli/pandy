@@ -82,18 +82,18 @@ fun ControlScreen(p: Printer) {
             Box(Modifier.fillMaxWidth().height(200.dp).padding(vertical = 8.dp)) {
                 PrinterArt(Modifier.fillMaxSize().padding(horizontal = 60.dp), ams = p.info.ams.isNotEmpty(), lit = p.lightOn)
                 if (p.isDualNozzle) {
-                    Chip("nozzle", p.leftNozzle ?: p.nozzle, p.leftNozzleTarget, Modifier.align(Alignment.TopStart), label = "L")
-                    Chip("nozzle", p.rightNozzle ?: p.nozzle, p.rightNozzleTarget, Modifier.align(Alignment.TopEnd), label = "R")
+                    TempChip("nozzle", p.leftNozzle ?: p.nozzle, p.leftNozzleTarget, Modifier.align(Alignment.TopStart), label = "L", background = C.Card)
+                    TempChip("nozzle", p.rightNozzle ?: p.nozzle, p.rightNozzleTarget, Modifier.align(Alignment.TopEnd), label = "R", background = C.Card)
                     if (p.chamber != null) {
-                        Chip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.BottomStart))
-                        Chip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomEnd))
+                        TempChip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.BottomStart), background = C.Card)
+                        TempChip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomEnd), background = C.Card)
                     } else {
-                        Chip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
+                        TempChip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart), background = C.Card)
                     }
                 } else {
-                    Chip("nozzle", p.nozzle, p.nozzleTarget, Modifier.align(Alignment.TopStart))
-                    if (p.chamber != null) Chip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.TopEnd))
-                    Chip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart))
+                    TempChip("nozzle", p.nozzle, p.nozzleTarget, Modifier.align(Alignment.TopStart), background = C.Card)
+                    if (p.chamber != null) TempChip("chamber", p.chamber, p.chamberTarget, Modifier.align(Alignment.TopEnd), background = C.Card)
+                    TempChip("bed", p.bed, p.bedTarget, Modifier.align(Alignment.BottomStart), background = C.Card)
                 }
                 p.doorOpen?.let { open ->
                     DoorChip(open, Modifier.align(Alignment.BottomCenter))
@@ -139,18 +139,6 @@ private fun ChamberInfoSheet(p: Printer, close: () -> Unit) = Sheet(close, "Cham
     T("The chamber temperature is shown by the printer. This model does not have a chamber heater, so Pandy cannot set it.", 14.sp, C.Sub, lh = 20.sp)
     Gap(20.dp)
 }
-
-@Composable
-private fun Chip(which: String, now: Double?, target: Double?, modifier: Modifier = Modifier, label: String? = null) =
-    Row(modifier.clip(RoundedCornerShape(50)).background(C.Card).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (label != null) {
-            T(label, 12.sp, C.Sub, FontWeight.Bold)
-            Spacer(Modifier.width(4.dp))
-        }
-        HeaterGlyph(which, Modifier.size(14.dp))
-        Spacer(Modifier.width(5.dp))
-        TempText(now, target, 14.sp, 10.sp)
-    }
 
 @Composable
 private fun TempCard(label: String, now: Double?, target: Double?, modifier: Modifier, onClick: (() -> Unit)?) =
@@ -254,7 +242,7 @@ private fun KeyButton(icon: androidx.compose.ui.graphics.vector.ImageVector, ena
         Icon(icon, null, Modifier.size(36.dp), tint = if (enabled) C.Text else C.Faint)
     }
 
-/** Handy's temperature entry: a number field in °C, a picture with a hint, presets and Done. */
+/** Handy's temperature entry: a number field in °C with stepper buttons, a picture with a hint, presets and Done. */
 @Composable
 fun TempSheet(title: String, hint: String, presets: List<Int>, current: Double?, range: IntRange, close: () -> Unit, set: (Int) -> Unit) {
     val start = current?.toInt()?.takeIf { it > 0 }?.toString() ?: ""
@@ -264,11 +252,24 @@ fun TempSheet(title: String, hint: String, presets: List<Int>, current: Double?,
     val focus = remember { FocusRequester() }
     fun done() { text.toIntOrNull()?.let { set(it.coerceIn(range)) }; close() }
     Sheet(close, title, centeredTitle = true, confirm = null) {
-        OutlinedTextField(field, { t -> field = t.copy(text = t.text.filter { it.isDigit() }.take(3)) }, Modifier.fillMaxWidth().focusRequester(focus), singleLine = true,
-            trailingIcon = { T("°C", 14.sp, C.Sub) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { done() }),
-            colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = C.Fill, focusedContainerColor = C.Fill, unfocusedBorderColor = Color.Transparent, focusedBorderColor = C.Accent))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            val curVal = text.toIntOrNull() ?: range.first
+            StepButton(Icons.Default.Remove, enabled = curVal > range.first, desc = "Decrease temperature") {
+                val newVal = (curVal - 5).coerceAtLeast(range.first)
+                setText(if (newVal == 0 && range.first == 0) "0" else "$newVal")
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedTextField(field, { t -> field = t.copy(text = t.text.filter { it.isDigit() }.take(3)) }, Modifier.weight(1f).focusRequester(focus), singleLine = true,
+                trailingIcon = { T("°C", 14.sp, C.Sub) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { done() }),
+                colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = C.Fill, focusedContainerColor = C.Fill, unfocusedBorderColor = Color.Transparent, focusedBorderColor = C.Accent))
+            Spacer(Modifier.width(8.dp))
+            StepButton(Icons.Default.Add, enabled = curVal < range.last, desc = "Increase temperature") {
+                val newVal = (curVal + 5).coerceAtMost(range.last)
+                setText("$newVal")
+            }
+        }
         Gap(16.dp)
         Row(verticalAlignment = Alignment.CenterVertically) {
             PrinterArt(Modifier.size(90.dp), ams = false, lit = true)
@@ -301,21 +302,15 @@ private fun FanSheet(p: Printer, err: (String) -> Unit, close: () -> Unit) = She
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.weight(1f), verticalAlignment = Alignment.Bottom) { T("$pct", 20.sp, weight = FontWeight.Bold); T("%", 12.sp, C.Sub) }
-                    StepButton(Icons.Default.Remove, pct > 0) { p.setFan(id, (pct - 10).coerceAtLeast(0), err) }
+                    StepButton(Icons.Default.Remove, pct > 0, desc = "Decrease fan speed") { p.setFan(id, (pct - 10).coerceAtLeast(0), err) }
                     Spacer(Modifier.width(8.dp))
-                    StepButton(Icons.Default.Add, pct < 100) { p.setFan(id, (pct + 10).coerceAtMost(100), err) }
+                    StepButton(Icons.Default.Add, pct < 100, desc = "Increase fan speed") { p.setFan(id, (pct + 10).coerceAtMost(100), err) }
                 }
             }
         }
         Gap(16.dp)
     }
 }
-
-@Composable
-private fun StepButton(icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean, onClick: () -> Unit) =
-    Box(Modifier.size(44.dp, 36.dp).clip(RoundedCornerShape(6.dp)).background(C.Card).clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(icon, null, Modifier.size(18.dp), tint = if (enabled) C.Text else C.Faint)
-    }
 
 // ---------- Motion ----------
 
