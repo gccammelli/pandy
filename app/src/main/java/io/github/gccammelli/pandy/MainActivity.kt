@@ -175,6 +175,33 @@ open class MainActivity : ComponentActivity(), PlatformUi {
         startActivity(packageManager.getLaunchIntentForPackage(androidPackage) ?: Intent(Intent.ACTION_VIEW, Uri.parse(storeUrl)))
     override fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
+    override fun share(text: String, imageBytes: ByteArray?, title: String?) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            putExtra(Intent.EXTRA_TEXT, text)
+            if (title != null) putExtra(Intent.EXTRA_SUBJECT, title)
+            val isPng = imageBytes != null && imageBytes.size >= 4 && imageBytes[0] == 0x89.toByte() && imageBytes[1] == 0x50.toByte()
+            val mime = if (isPng) "image/png" else "image/jpeg"
+            val ext = if (isPng) "png" else "jpg"
+            val uri = if (imageBytes != null && imageBytes.isNotEmpty()) {
+                runCatching {
+                    val dir = java.io.File(cacheDir, "shared_images").apply { mkdirs() }
+                    dir.listFiles()?.forEach { it.delete() }
+                    val file = java.io.File(dir, "pandy_share.$ext").apply { writeBytes(imageBytes) }
+                    androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "$packageName.slicerfiles", file)
+                }.getOrNull()
+            } else null
+            if (uri != null) {
+                type = mime
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = android.content.ClipData.newRawUri(title ?: "Share print", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } else {
+                type = "text/plain"
+            }
+        }
+        startActivity(Intent.createChooser(intent, title ?: "Share print"))
+    }
+
     override fun pickImage(done: (ByteArray?) -> Unit) {
         pendingPick = done
         pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
