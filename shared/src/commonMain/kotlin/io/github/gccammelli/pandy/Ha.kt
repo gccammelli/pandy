@@ -355,6 +355,7 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val layer get() = num("sensor.current_layer")?.toInt()
     val layers get() = num("sensor.total_layers")?.toInt()
     val task get() = state("sensor.subtask_name")
+    val gcodeFile get() = state("sensor.gcode_file")
     val stage get() = state("sensor.stage")
     val lightOn get() = get("light.chamber_light")?.on ?: false
     val speed get() = state("select.printing_speed") ?: state("sensor.speed_profile")
@@ -384,6 +385,9 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val objects: Map<Int, String> get() = get("sensor.printable_objects")?.attrs?.o("objects")
         ?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { it to ((v as? JsonPrimitive)?.contentOrNull ?: "") } }?.toMap().orEmpty()
     val skipped: List<Int> get() = get("sensor.skipped_objects")?.attrs?.a("objects")?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }.orEmpty()
+    val printWeight: Double? get() = (num("sensor.print_weight") ?: num("sensor.weight"))?.takeIf { it > 0 } ?: get("sensor.printable_objects")?.attrs?.s("weight_g")?.toDoubleOrNull()
+    val printLength: Double? get() = (num("sensor.print_length") ?: num("sensor.length"))?.takeIf { it > 0 } ?: get("sensor.printable_objects")?.attrs?.s("length_m")?.toDoubleOrNull()
+    val mesh: PreviewMesh? get() = (Repo.directPrinter ?: Repo.extras as? DirectPrinter ?: Repo.ha as? DirectPrinter)?.currentMesh
 
     val ams: List<Pair<AmsInfo, List<Spool?>>> get() = info.ams.map { a ->
         val n = if (a.isSingleSlot()) 1 else 4
@@ -679,6 +683,28 @@ fun AmsInfo.slotForTrayId(id: Int): Int? {
 }
 
 fun isAmsTrayId(id: Int) = id in 0..103 || id in 128..135
+
+fun AmsInfo.slotLabel(slot: Int) = "${'A' + index - 1}${slot + 1}"
+fun Printer.externalBadge(index: Int): String = if (external.size > 1) "Ext ${index + 1}" else "Ext"
+
+/** The spool currently feeding the toolhead (from AMS or external holder). */
+fun Printer.activeSpool(): Pair<String, Spool>? {
+    ams.forEach { (a, spools) ->
+        spools.forEachIndexed { i, s ->
+            if (s != null && s.active) return a.slotLabel(i) to s
+        }
+    }
+    external.forEachIndexed { i, s ->
+        if (s.active) return externalBadge(i) to s
+    }
+    return null
+}
+
+/** The active plate index parsed from [Printer.gcodeFile] or [Printer.task], or null when unknown. */
+fun Printer.activePlate(): Int? =
+    listOfNotNull(gcodeFile, task).firstNotNullOfOrNull { s ->
+        Regex("""plate[_\s](\d+)""", RegexOption.IGNORE_CASE).find(s)?.groupValues?.get(1)?.toIntOrNull()
+    }
 
 /** The currently loaded absolute tray IDs (plus 254 and 255 for external spools). */
 fun Printer.loadedTrayIds(): Set<Int> = ams.flatMap { (a, spools) ->

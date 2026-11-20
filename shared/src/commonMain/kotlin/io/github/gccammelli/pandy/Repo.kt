@@ -47,6 +47,7 @@ object Repo {
     val connected get() = ha != null
     private var token: String? = null
     private var directBackend: DirectPrinter? = null
+    val directPrinter: DirectPrinter? get() = directBackend
     /** Home Assistant's token as an HTTP header, for players and downloads that fetch from it directly. */
     fun authHeaders(): Map<String, String> = token?.let { mapOf("Authorization" to "Bearer $it") }.orEmpty()
     val haUrl get() = store.settings.getString("ha_url")
@@ -278,6 +279,18 @@ object Repo {
 
     fun setFilamentPreset(serial: String, mapping: Map<String, Int>) {
         store.settings.putString("filament_preset_$serial", mapping.entries.joinToString(",") { "${it.key}:${it.value}" }.ifBlank { null })
+    }
+
+    val filamentPricePerKg: Double? get() = if (::store.isInitialized) store.settings.getString("filament_price_per_kg")?.toDoubleOrNull()?.takeIf { it > 0.0 } else null
+    fun setFilamentPricePerKg(price: Double?) { if (::store.isInitialized) store.settings.putString("filament_price_per_kg", price?.takeIf { it > 0.0 }?.toString()) }
+    val filamentCurrency: String get() = (if (::store.isInitialized) store.settings.getString("filament_currency") else null)?.takeIf { it.isNotBlank() } ?: "€"
+    fun setFilamentCurrency(currency: String?) { if (::store.isInitialized) store.settings.putString("filament_currency", currency?.trim()?.ifBlank { null }) }
+    fun spoolPricePerKg(spool: Spool?): Double? =
+        if (!::store.isInitialized) null
+        else spool?.entityId?.takeIf { it.isNotBlank() }?.let { store.settings.getString("spool_price_$it")?.toDoubleOrNull()?.takeIf { p -> p > 0.0 } }
+            ?: filamentPricePerKg
+    fun setSpoolPricePerKg(entityId: String, price: Double?) {
+        if (::store.isInitialized) store.settings.putString("spool_price_$entityId", price?.takeIf { it > 0.0 }?.toString())
     }
 
     // ---------- Live updates ----------

@@ -314,6 +314,8 @@ fun SettingsScreen() {
     val pl = LocalPlatform.current
     var timelapseDefault by remember { mutableStateOf(Repo.timelapseDefault) }
     var showUnavailable by remember { mutableStateOf(Repo.showUnavailable) }
+    var showCostSheet by remember { mutableStateOf(false) }
+    var costVersion by remember { mutableStateOf(0) }
     Page("Settings", { Nav.back() }) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
             T("Appearance", 13.sp, C.Sub, modifier = Modifier.padding(start = 6.dp, bottom = 6.dp))
@@ -331,6 +333,10 @@ fun SettingsScreen() {
                     timelapseDefault = it
                     Repo.setTimelapseDefault(it)
                 }
+                val costValue = remember(costVersion) {
+                    Repo.filamentPricePerKg?.let { "$it ${Repo.filamentCurrency}/kg" } ?: "Not set"
+                }
+                NavRow("Filament cost", value = costValue) { showCostSheet = true }
                 if (pl.canNotify && !Repo.demo) {
                     var notify by remember { mutableStateOf(Repo.notify) }
                     ToggleRow("Print notifications", notify) {
@@ -374,6 +380,40 @@ fun SettingsScreen() {
                 if (!Repo.demo) NavRow("Slicer for model prints", value = Repo.slicerUrl ?: if (Repo.haApi != null) "Home Assistant add-on" else "Set up") { Nav.go(Screen.Slicer) }
                 NavRow(if (Repo.demo) "Leave the demo" else "Disconnect", labelColor = C.Red, chevron = false) { Nav.stack.clear(); Repo.logout() }
             }
+        }
+    }
+    if (showCostSheet) {
+        var priceText by remember { mutableStateOf(Repo.filamentPricePerKg?.toString().orEmpty()) }
+        var currencyText by remember { mutableStateOf(Repo.filamentCurrency) }
+        Sheet({ showCostSheet = false }, "Default filament cost", centeredTitle = true, confirm = "Save", onConfirm = {
+            Repo.setFilamentPricePerKg(priceText.trim().replace(',', '.').toDoubleOrNull())
+            Repo.setFilamentCurrency(currencyText)
+            costVersion++
+            showCostSheet = false
+        }) {
+            androidx.compose.material3.OutlinedTextField(
+                priceText,
+                { priceText = it.replace(',', '.').take(12) },
+                Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { T("Price per kg", 14.sp, C.Sub) },
+                placeholder = { T("Leave blank to hide cost", 14.sp, C.Sub) },
+            )
+            Gap(10.dp)
+            androidx.compose.material3.OutlinedTextField(
+                currencyText,
+                { currencyText = it.take(6) },
+                Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { T("Currency symbol (e.g. €, $, £)", 14.sp, C.Sub) },
+            )
+            Gap(10.dp)
+            OutlineButton("Clear default cost", C.Sub, Modifier.fillMaxWidth()) {
+                Repo.setFilamentPricePerKg(null)
+                costVersion++
+                showCostSheet = false
+            }
+            Gap(8.dp)
         }
     }
 }

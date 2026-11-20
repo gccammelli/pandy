@@ -330,7 +330,13 @@ fun lanEntities(c: LanConfig, r: JsonObject, online: Boolean, job: LanJob? = nul
     if (job != null) {
         add("image", "cover_image", job.key, uid = "cover_image")
         if (job.pick != null) add("image", "pick_image", job.key, uid = "pick_image")
-        add("sensor", "printable_objects", job.objects.size, buildJsonObject { putJsonObject("objects") { job.objects.forEach { (k, v) -> put("$k", v) } } })
+        add("sensor", "printable_objects", job.objects.size, buildJsonObject {
+            putJsonObject("objects") { job.objects.forEach { (k, v) -> put("$k", v) } }
+            job.weightGrams?.let { put("weight_g", it) }
+            job.lengthMeters?.let { put("length_m", it) }
+        })
+        job.weightGrams?.let { add("sensor", "print_weight", it) }
+        job.lengthMeters?.let { add("sensor", "print_length", it) }
     }
     val skipped = (p["s_obj"] as? JsonArray).orEmpty()
     add("sensor", "skipped_objects", skipped.size, buildJsonObject { put("objects", JsonArray(skipped)) })
@@ -407,7 +413,16 @@ private fun trayAttrs(t: JsonObject, name: String, active: Boolean, slot: Int) =
 /** Looks for a job's 3MF before giving up until the job changes. */
 internal const val JOB_LOOKUPS = 3
 
-class LanJob(val key: String, val cover: ByteArray?, val pick: ByteArray?, val objects: Map<Int, String>)
+class LanJob(
+    val key: String,
+    val cover: ByteArray?,
+    val pick: ByteArray?,
+    val objects: Map<Int, String>,
+    val weightGrams: Double? = null,
+    val lengthMeters: Double? = null,
+    val path: String? = null,
+    val size: Long = 0L
+)
 
 data class LanRow(val device: String, val domain: String, val key: String, val uid: String, val id: String, val deviceModel: String = "", val trayAmsId: Int? = null)
 
@@ -532,10 +547,29 @@ class DirectPrinter(
 
     private val storage by lazy { storageFactory(config) }
     private var job: LanJob? = null
+    private var cachedMeshKey: String? = null
+    private var cachedMesh: PreviewMesh? = null
+    val currentMesh: PreviewMesh? get() = cachedMesh?.takeIf { job?.key == cachedMeshKey }
     private var jobLoading: String? = null
     private var jobMissAt = 0L
     private var jobMisses = 0
     private var jobState: String? = null
+
+    /** Lazily reads and parses the active job's 3D preview geometry on demand, with a 16 MB size limit. */
+    suspend fun loadJobMesh(): PreviewMesh? {
+        val j = job ?: return null
+        if (j.key == cachedMeshKey && cachedMesh != null) return cachedMesh
+        val p = j.path ?: return null
+        if (j.size <= 0L || j.size > 16L * 1024 * 1024) return null
+        val xml = runCatching {
+            zipEntry(
+                j.size,
+                listOf(Regex(".*/3dmodel\\.model", RegexOption.IGNORE_CASE), Regex("3D/3dmodel\\.model", RegexOption.IGNORE_CASE)),
+                maxSize = 16L * 1024 * 1024,
+            ) { o, l -> storage.read(p, o, l) }?.second?.decodeToString()
+        }.getOrNull() ?: return null
+        return previewMesh(xml)?.also { cachedMeshKey = j.key; cachedMesh = it }
+    }
 
     /** When the job changes, finds its 3MF on the printer (as the integration does) and reads its picture and parts. */
     private fun checkJob() {
@@ -555,12 +589,22 @@ class DirectPrinter(
         jobLoading = key
         scope.launch {
             val found = runCatching { findJobFile(task, gcode) }.getOrNull()
-            val plate = Regex("""plate_(\d+)\.gcode""").find(gcode)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            val plate = Regex("""plate_(\d+)\.gcode""").find(gcode)?.groupValues?.get(1)?.toIntOrNull()
+            val imgPlate = plate ?: 1
             val result = if (found == null) LanJob(key, null, null, emptyMap()) else {
                 val (path, size) = found
-                suspend fun entry(vararg names: String) = runCatching { zipEntry(size, names.map { Regex(it) }) { o, l -> storage.read(path, o, l) }?.second }.getOrNull()
-                LanJob(key, entry("Metadata/plate_$plate\\.png", "Metadata/plate_\\d+\\.png"), entry("Metadata/pick_$plate\\.png"),
-                    entry("Metadata/slice_info\\.config")?.decodeToString()?.let { sliceObjects(it, plate) }.orEmpty())
+                suspend fun entry(vararg names: String) = runCatching { zipEntry(size, names.map { Regex(it, RegexOption.IGNORE_CASE) }) { o, l -> storage.read(path, o, l) }?.second }.getOrNull()
+                val plateInfo = entry(".*Metadata/slice_info\\.config", "Metadata/slice_info\\.config")?.decodeToString()?.let { slicePlateInfo(it, plate) }
+                LanJob(
+                    key,
+                    entry(".*Metadata/plate_$imgPlate\\.png", "Metadata/plate_$imgPlate\\.png", ".*Metadata/plate_\\d+\\.png", "Metadata/.*\\.png"),
+                    entry(".*Metadata/pick_$imgPlate\\.png", "Metadata/pick_$imgPlate\\.png"),
+                    plateInfo?.objects.orEmpty(),
+                    plateInfo?.weightGrams,
+                    plateInfo?.lengthMeters,
+                    path,
+                    size,
+                )
             }
             if (jobLoading != key) return@launch // a newer job is being looked for; this result is stale
             job = result

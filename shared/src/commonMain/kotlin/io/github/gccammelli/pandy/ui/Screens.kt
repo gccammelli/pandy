@@ -184,6 +184,7 @@ fun FilamentScreen(p: Printer) {
     var open by remember { mutableStateOf<io.github.gccammelli.pandy.Spool?>(null) }
     var dryingAms by remember { mutableStateOf<io.github.gccammelli.pandy.AmsInfo?>(null) }
     var edit by remember { mutableStateOf<io.github.gccammelli.pandy.Spool?>(null) }
+    var priceSpool by remember { mutableStateOf<io.github.gccammelli.pandy.Spool?>(null) }
     Page("Filament", { Nav.back() }) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(14.dp)) {
             p.ams.forEach { (a, trays) ->
@@ -286,13 +287,40 @@ fun FilamentScreen(p: Printer) {
                     InfoLine("Type", s.type.ifBlank { "--" })
                     InfoLine("Nozzle", if (s.nozzleMin != null) "${s.nozzleMin}–${s.nozzleMax}°C" else "--")
                     InfoLine("Remaining", if (s.remain >= 0) "${s.remain}%" else "Unknown")
+                    InfoLine("Price", Repo.spoolPricePerKg(s)?.let { "$it ${Repo.filamentCurrency}/kg" } ?: "Not set")
                 }
             }
             if (s.active) { Gap(10.dp); T("This filament is loaded in the nozzle.", 13.sp, C.Accent) }
+            if (s.entityId.isNotBlank()) {
+                Gap(12.dp)
+                OutlineButton("Set filament price", C.Text, Modifier.fillMaxWidth()) { priceSpool = s; open = null }
+            }
             if ((Repo.direct || Repo.demo) && !p.printing) {
-                Gap(14.dp)
+                Gap(10.dp)
                 if (s.rfid) T("This spool has a Bambu tag, so the AMS reads its filament itself. Only spools without a tag can be edited.", 12.sp, C.Sub, lh = 17.sp)
                 else OutlineButton("Edit filament", C.Accent, Modifier.fillMaxWidth()) { edit = s; open = null }
+            }
+            Gap(8.dp)
+        }
+    }
+    priceSpool?.let { s ->
+        var text by remember(s.entityId) { mutableStateOf(Repo.spoolPricePerKg(s)?.toString().orEmpty()) }
+        Sheet({ priceSpool = null }, "Spool price (${Repo.filamentCurrency}/kg)", centeredTitle = true, confirm = "Save", onConfirm = {
+            Repo.setSpoolPricePerKg(s.entityId, text.trim().replace(',', '.').toDoubleOrNull())
+            priceSpool = null
+        }) {
+            androidx.compose.material3.OutlinedTextField(
+                text,
+                { text = it.replace(',', '.').take(12) },
+                Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { T("Price per kg (${Repo.filamentCurrency})", 14.sp, C.Sub) },
+                placeholder = { T("Leave blank to use default or hide", 14.sp, C.Sub) },
+            )
+            Gap(10.dp)
+            OutlineButton("Clear price", C.Sub, Modifier.fillMaxWidth()) {
+                Repo.setSpoolPricePerKg(s.entityId, null)
+                priceSpool = null
             }
             Gap(8.dp)
         }

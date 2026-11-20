@@ -102,11 +102,37 @@ suspend fun zipEntry(total: Long, wanted: List<Regex>, maxSize: Long, fetch: sus
 }
 
 /** Objects on a plate from a 3MF's Metadata/slice_info.config: identify_id → name. */
-fun sliceObjects(xml: String, plate: Int): Map<Int, String> {
+data class SlicePlateInfo(
+    val objects: Map<Int, String> = emptyMap(),
+    val weightGrams: Double? = null,
+    val lengthMeters: Double? = null,
+    val filaments: List<Map<String, String>> = emptyList()
+)
+
+fun slicePlateInfo(xml: String, plate: Int? = 1): SlicePlateInfo {
     val plates = xml.split("<plate>").drop(1)
-    val p = plates.firstOrNull { Regex("""key="index"\s+value="$plate"""").containsMatchIn(it) } ?: plates.firstOrNull() ?: return emptyMap()
-    return Regex("""<object\s+([^>]*)/?>""").findAll(p).mapNotNull { m ->
+    val p = when {
+        plate != null -> plates.firstOrNull { Regex("""key="index"\s+value="$plate"""").containsMatchIn(it) } ?: plates.firstOrNull()
+        plates.size == 1 -> plates.first()
+        else -> null
+    } ?: return SlicePlateInfo()
+    val meta = Regex("""<metadata\s+([^>]*)/?>""").findAll(p).mapNotNull { m ->
+        val a = Regex("""(\w+)="([^"]*)"""").findAll(m.groupValues[1]).associate { it.groupValues[1] to it.groupValues[2] }
+        val k = a["key"] ?: return@mapNotNull null
+        k to (a["value"] ?: "")
+    }.toMap()
+    val objects = Regex("""<object\s+([^>]*)/?>""").findAll(p).mapNotNull { m ->
         val a = Regex("""(\w+)="([^"]*)"""").findAll(m.groupValues[1]).associate { it.groupValues[1] to it.groupValues[2] }
         (a["identify_id"]?.toIntOrNull() ?: return@mapNotNull null) to (a["name"] ?: "")
     }.toMap()
+    val filaments = Regex("""<filament\s+([^>]*)/?>""").findAll(p).map { m ->
+        Regex("""(\w+)="([^"]*)"""").findAll(m.groupValues[1]).associate { it.groupValues[1] to it.groupValues[2] }
+    }.toList()
+    val weight = meta["weight"]?.toDoubleOrNull()
+        ?: filaments.sumOf { it["used_g"]?.toDoubleOrNull() ?: 0.0 }.takeIf { it > 0 }
+    val length = meta["length"]?.toDoubleOrNull()?.let { it / 1000.0 }
+        ?: filaments.sumOf { it["used_m"]?.toDoubleOrNull() ?: 0.0 }.takeIf { it > 0 }
+    return SlicePlateInfo(objects, weight, length, filaments)
 }
+
+fun sliceObjects(xml: String, plate: Int): Map<Int, String> = slicePlateInfo(xml, plate).objects

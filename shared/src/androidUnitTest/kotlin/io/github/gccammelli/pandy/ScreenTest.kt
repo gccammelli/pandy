@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import io.github.gccammelli.pandy.ui.*
+import androidx.compose.ui.graphics.asAndroidBitmap
 import org.junit.Rule
 import org.junit.Test
 import org.junit.Before
@@ -2884,6 +2885,269 @@ class ScreenTest {
         compose.onAllNodesWithText("External Spool 2 (Right / Aux)").onFirst().assertExists()
     }
 
+    @Test fun printCardOpensJobDetailsDuringPrintingAndShowsArrow() {
+        ThemeMode.mode = "light"
+        val currentPrinter = androidx.compose.runtime.mutableStateOf(printer)
+        val showScreen = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    if (showScreen.value) JobDetailsScreen(currentPrinter.value)
+                    else DevicesTab(st, currentPrinter.value)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("About 1h 23min left").assertExists()
+
+        fun saveTestCapture(name: String) {
+            val bmp = compose.onRoot().captureToImage().asAndroidBitmap()
+            val root = generateSequence(java.io.File(System.getProperty("user.dir") ?: ".")) { it.parentFile }
+                .firstOrNull { java.io.File(it, "settings.gradle.kts").exists() }
+                ?: java.io.File(".")
+            val out = java.io.File(root, "build/test-screenshots/$name")
+            out.parentFile?.mkdirs()
+            java.io.FileOutputStream(out).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+
+        saveTestCapture("devices-tab-print-card.png")
+
+        compose.onNodeWithText("Articulated Panda Keychain").performClick()
+        kotlin.test.assertEquals(Screen.JobDetails, Nav.stack.last())
+
+        compose.runOnIdle { showScreen.value = true }
+        compose.waitForIdle()
+        compose.onNodeWithText("Print Details").assertExists()
+        compose.onNodeWithText("Print Speed").assertExists()
+        compose.onNodeWithText("Material & Cost").assertExists()
+
+        saveTestCapture("job-details-light.png")
+
+        compose.onNodeWithText("Contrast: Auto").assertExists().performClick()
+        compose.onNodeWithText("Contrast: Light").assertExists().performClick()
+        compose.onNodeWithText("Contrast: Dark").assertExists().performClick()
+        compose.onNodeWithText("Contrast: Auto").assertExists()
+
+        compose.onNodeWithText("Stop").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Stop printing?").assertExists()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.waitForIdle()
+
+        compose.runOnIdle { ThemeMode.mode = "dark" }
+        compose.waitForIdle()
+        saveTestCapture("job-details-dark.png")
+        compose.runOnIdle { ThemeMode.mode = "system" }
+
+        val finished = variant(set = arrayOf("sensor.print_status" to entity("finish"), "sensor.print_progress" to entity("100")))
+        compose.runOnIdle { currentPrinter.value = finished }
+        compose.waitForIdle()
+        compose.onNodeWithText("Print Speed").assertDoesNotExist()
+        compose.onNodeWithText("Pause").assertDoesNotExist()
+        compose.onNodeWithText("Stop").assertDoesNotExist()
+    }
+
+    @Test fun filamentCostCanBeConfiguredInSettingsAndPerSpool() {
+        val spool = Spool("sensor.ams_tray_1", 1, "Bambu PLA", "PLA", 0xFF000000L, emptyList(), 80, active = true, empty = false, nozzleMin = 190, nozzleMax = 230, filamentId = "GFA00")
+        try {
+            Repo.setFilamentPricePerKg(25.0)
+            Repo.setFilamentCurrency("$")
+            assertEquals(25.0, Repo.spoolPricePerKg(spool))
+            Repo.setSpoolPricePerKg(spool.entityId, 34.5)
+            assertEquals(34.5, Repo.spoolPricePerKg(spool))
+            Repo.setSpoolPricePerKg(spool.entityId, 0.0)
+            assertEquals(25.0, Repo.spoolPricePerKg(spool))
+            assertEquals(25.0, Repo.spoolPricePerKg(null))
+            assertEquals(25.0, Repo.spoolPricePerKg(spool.copy(entityId = "")))
+            Repo.setFilamentPricePerKg(-5.0)
+            org.junit.Assert.assertNull(Repo.filamentPricePerKg)
+            Repo.setFilamentCurrency("   ")
+            assertEquals("€", Repo.filamentCurrency)
+            Repo.setFilamentPricePerKg(25.0)
+            Repo.setFilamentCurrency("$")
+
+            show("Settings") { SettingsScreen() }
+            compose.onNodeWithText("Filament cost").assertExists().performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Default filament cost").assertExists()
+            compose.onNodeWithText("Price per kg").performTextReplacement("28.5")
+            compose.onNodeWithText("Currency symbol (e.g. €, $, £)").performTextReplacement("$")
+            compose.onNodeWithText("Save").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("28.5 $/kg").assertExists().performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Clear default cost").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Not set").assertExists()
+        } finally {
+            Repo.setFilamentPricePerKg(null)
+            Repo.setFilamentCurrency(null)
+            Repo.setSpoolPricePerKg(spool.entityId, null)
+        }
+    }
+
+    @Test fun filamentScreenSpoolPriceCanBeSetAndCleared() {
+        try {
+            show("Filament") { FilamentScreen(printer) }
+            compose.onAllNodesWithText("A1").onFirst().performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Set filament price").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Price per kg (€)").performTextReplacement("34.5")
+            compose.onNodeWithText("Save").performClick()
+            compose.waitForIdle()
+            compose.onAllNodesWithText("A1").onFirst().performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("34.5 €/kg").assertExists()
+            compose.onNodeWithText("Set filament price").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Clear price").performClick()
+            compose.waitForIdle()
+        } finally {
+            printer.ams.firstOrNull()?.second?.firstOrNull()?.entityId?.let { Repo.setSpoolPricePerKg(it, null) }
+        }
+    }
+
+    @Test fun jobDetailsCoversCostPausedAndPreviewFallbacks() {
+        try {
+            Repo.setFilamentPricePerKg(25.0)
+            Repo.setFilamentCurrency("$")
+            val paused = variant(set = arrayOf(
+                "sensor.print_status" to entity("pause"),
+                "sensor.print_progress" to entity("50"),
+                "sensor.remaining_time" to entity("0"),
+                "sensor.print_weight" to entity("100.0"),
+                "sensor.print_length" to entity("30.0"),
+                "sensor.printable_objects" to Entity("sensor.printable_objects", "2", kotlinx.serialization.json.buildJsonObject {
+                    put("objects", kotlinx.serialization.json.buildJsonObject {
+                        put("1", kotlinx.serialization.json.JsonPrimitive("Part A"))
+                        put("2", kotlinx.serialization.json.JsonPrimitive("Part B"))
+                    })
+                }),
+            ))
+            val shareWithCost = buildPrintShareText(paused)
+            assertTrue(shareWithCost.contains("Estimated Cost"))
+            val current = androidx.compose.runtime.mutableStateOf(paused)
+            compose.setContent {
+                CompositionLocalProvider(LocalPlatform provides platform) {
+                    AppTheme { JobDetailsScreen(current.value) }
+                }
+            }
+            compose.waitForIdle()
+            compose.onNodeWithText("Paused").assertExists()
+            compose.onNodeWithText("Estimated Cost (25.0 $/kg)").assertExists()
+            compose.onNodeWithText("1.25", substring = true).assertExists()
+            compose.onNodeWithText("Silent\n50%").assertExists().performClick()
+            compose.onNodeWithText("Skip Parts").assertExists().performClick()
+            compose.onNodeWithText("Resume").assertExists().performClick()
+            compose.onNodeWithText("Stop").assertExists().performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Stop printing?").assertExists()
+            compose.onAllNodesWithText("Stop").onLast().performClick()
+            compose.waitForIdle()
+
+            val running = variant(set = arrayOf(
+                "sensor.print_status" to entity("running"),
+                "sensor.print_progress" to entity("40"),
+            ))
+            compose.runOnIdle { current.value = running }
+            compose.waitForIdle()
+            compose.onNodeWithText("Pause").assertExists().performClick()
+            compose.waitForIdle()
+
+            val noMedia = Printer(
+                PrinterInfo("p_nomedia", "SN_NOMEDIA", "X1C", "X1C", null, mapOf("sensor.print_status" to "s", "sensor.print_progress" to "p"), emptyList(), emptyList()),
+                mapOf("s" to entity("finish"), "p" to entity("100"))
+            )
+            compose.runOnIdle { current.value = noMedia }
+            compose.waitUntil(5000) {
+                compose.waitForIdle()
+                compose.onAllNodesWithText("3D preview not included in print file").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("Not specified in print file").assertExists()
+            compose.onNodeWithText("Completed").assertExists()
+        } finally {
+            Repo.setFilamentPricePerKg(null)
+            Repo.setFilamentCurrency(null)
+        }
+    }
+
+    @Test fun jobDetailsLoads3dPreviewFromHistoryCacheAndRoutesFromApp() {
+        val model3mf = modelBytes()
+        val prevExtras = Repo.extras
+        val historyGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val meshGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val fakeExtras = object : HaBackend {
+            override val base = "http://fake"
+            override suspend fun get(path: String): String = when {
+                path.contains("print_history") -> {
+                    historyGate.await()
+                    """{"files":[{"filename":"Articulated Panda Keychain.3mf","path":"SN/prints/Articulated Panda Keychain.3mf","size":${model3mf.size},"modified":"2026-11-17T10:00:00","thumbnail_path":"SN/prints/thumb.png"}]}"""
+                }
+                path.endsWith(".slice_info.config") -> """<config><plate><metadata key="index" value="1"/><metadata key="weight" value="42.5"/><metadata key="length" value="12500"/></plate></config>"""
+                else -> "{}"
+            }
+            override suspend fun post(path: String, body: String) = "[]"
+            override suspend fun bytes(path: String): ByteArray {
+                if (path.endsWith(".3mf")) {
+                    meshGate.await()
+                    return model3mf
+                }
+                return byteArrayOf(1, 2, 3)
+            }
+            override suspend fun ws(commands: List<kotlinx.serialization.json.JsonObject>) = emptyList<kotlinx.serialization.json.JsonElement?>()
+            override suspend fun stream(subscribe: kotlinx.serialization.json.JsonObject, onEvent: (kotlinx.serialization.json.JsonObject) -> Unit) {}
+        }
+        val extrasField = Repo::class.java.getDeclaredField("extras").apply { isAccessible = true }
+        try {
+            extrasField.set(Repo, fakeExtras)
+            // First check loading indicators while historyGate is pending on a printer with no cover/weight
+            val bareInfo = PrinterInfo("p_bare", "SN", "X1C", "X1C", null, mapOf("sensor.print_status" to "s", "sensor.print_progress" to "p", "sensor.subtask_name" to "t"), emptyList(), emptyList())
+            val barePrinter = Printer(bareInfo, mapOf("s" to entity("running"), "p" to entity("50"), "t" to entity("Articulated Panda Keychain")))
+            val useRoot = androidx.compose.runtime.mutableStateOf(false)
+            compose.setContent {
+                CompositionLocalProvider(LocalPlatform provides platform) {
+                    AppTheme {
+                        if (useRoot.value) Root() else JobDetailsScreen(barePrinter)
+                    }
+                }
+            }
+            compose.waitForIdle()
+            compose.onNodeWithText("Loading model preview...").assertExists()
+            compose.onNodeWithText("Calculating from slice data...").assertExists()
+            compose.onNodeWithText("Calculating...").assertExists()
+
+            historyGate.complete(Unit)
+            compose.waitUntil(5000) {
+                compose.waitForIdle()
+                compose.onAllNodesWithText("View 3D").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("View 3D").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("Loading 3D preview...").assertExists()
+
+            meshGate.complete(Unit)
+            compose.waitUntil(5000) {
+                compose.waitForIdle()
+                compose.onAllNodesWithText("3D (Active)").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("3D (Active)").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithText("View 3D").assertExists()
+
+            // Also verify App Root() routing to Screen.JobDetails
+            Nav.stack.clear()
+            Nav.go(Screen.JobDetails)
+            compose.runOnIdle { useRoot.value = true }
+            compose.waitForIdle()
+            compose.onNodeWithText("Print Details").assertExists()
+        } finally {
+            historyGate.complete(Unit)
+            meshGate.complete(Unit)
+            extrasField.set(Repo, prevExtras)
+            Nav.stack.clear()
+        }
+    }
     @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {
         show("Direct LAN connection") { AddDirectScreen() }
         compose.onNodeWithText("Connect",substring=false).assertIsNotEnabled()
