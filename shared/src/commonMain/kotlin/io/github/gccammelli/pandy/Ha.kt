@@ -393,6 +393,8 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     fun amsNum(a: AmsInfo, key: String) = a.ids[key]?.let { states[it] }?.num
     /** An AMS unit's temperature in Celsius, whatever unit Home Assistant displays it in. */
     fun amsTemp(a: AmsInfo) = a.ids["sensor.ams_temp"]?.let { states[it] }?.celsius
+    /** The nozzle an AMS is connected to on a dual-nozzle printer ("left", "right", or "track_switch"). */
+    fun amsConnectedNozzle(a: AmsInfo): String? = a.ids["sensor.connected_nozzle"]?.let { states[it]?.state }
     /** A boolean setting exposed by an AMS; null means this firmware/integration did not report it. */
     fun amsFlag(a: AmsInfo, key: String): Boolean? = a.ids["switch.$key"]?.let { id -> states[id]?.flag }
     /** null when the printer reports no drying state (missing, unavailable or unknown): it must not be read as "not drying". */
@@ -619,6 +621,9 @@ suspend fun HaBackend.startPrint(p: Printer, path: String, plate: Int, amsMappin
         if (useAms) put("ams_mapping", amsMapping!!.joinToString(","))
     })
 
+fun isDualNozzleModel(model: String): Boolean =
+    model.contains("2D", ignoreCase = true) || model.startsWith("H2C", ignoreCase = true) || model.startsWith("H2D", ignoreCase = true)
+
 /** The bed type names used by the printer's project-file command. */
 fun buildPlateCode(label: String) = when (label) {
     "Textured PEI Plate" -> "textured_plate"
@@ -684,6 +689,45 @@ fun isAmsTrayId(id: Int) = id in 0..103 || id in 128..135
 fun Printer.loadedTrayIds(): Set<Int> = ams.flatMap { (a, spools) ->
     spools.mapIndexedNotNull { i, s -> s?.takeIf { it.known }?.let { a.trayId(i) } }
 }.toSet() + external.mapIndexedNotNull { i, s -> if (s.known) (if (i == 0) 254 else 255) else null }
+
+fun Printer.externalBadge(index: Int): String = if (external.size > 1) "Ext ${index + 1}" else "Ext"
+fun Printer.externalTitle(index: Int): String =
+    if (external.size > 1) "External Spool ${index + 1} (${if (index == 0) "Left / Main" else "Right / Aux"})" else "External Spool"
+
+fun Printer.nozzleHasAms(side: String): Boolean {
+    if (!isDualNozzle) return ams.isNotEmpty()
+    return ams.any { (a, _) ->
+        val conn = amsConnectedNozzle(a)?.lowercase()
+        when (conn) {
+            "track_switch" -> true
+            "left", "main" -> side.equals("left", ignoreCase = true) || side.equals("main", ignoreCase = true)
+            "right", "aux" -> side.equals("right", ignoreCase = true) || side.equals("aux", ignoreCase = true)
+            else -> if (a.index == 1) (side.equals("left", ignoreCase = true) || side.equals("main", ignoreCase = true))
+                    else if (a.index == 2) (side.equals("right", ignoreCase = true) || side.equals("aux", ignoreCase = true))
+                    else false
+        }
+    }
+}
+
+fun Printer.externalSpoolHasAms(index: Int): Boolean {
+    val side = if (isDualNozzle) (if (index == 0) "left" else "right") else "main"
+    return nozzleHasAms(side)
+}
+
+/**
+ * Matches Bambu Handy visual behaviour: an external spool slot is hidden when an AMS feeds that inlet/nozzle,
+ * unless the external spool is actively in use (active feeding) or has a configured/known filament.
+ */
+fun Printer.shouldShowExternalSpool(index: Int): Boolean {
+    val s = external.getOrNull(index) ?: return false
+    if (s.active || s.known) return true
+    if (externalSpoolHasAms(index)) return false
+    return true
+}
+
+/** The external spools that should be visually rendered according to Handy's display rules. */
+fun Printer.visibleExternalSpools(): List<Pair<Int, Spool>> =
+    external.mapIndexedNotNull { i, s -> if (shouldShowExternalSpool(i)) i to s else null }
 
 /** The loaded spools with their absolute tray IDs (254 and 255 for external spools), in AMS order. */
 fun Printer.loadedSpools(): List<Pair<Int, Spool>> =
