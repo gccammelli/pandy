@@ -70,11 +70,13 @@ import io.github.gccammelli.pandy.ApiException
 import io.github.gccammelli.pandy.WebDownload
 import io.github.gccammelli.pandy.WebPage
 import io.github.gccammelli.pandy.WebState
+import io.github.gccammelli.pandy.amsSlot
 import io.github.gccammelli.pandy.autoMapping
 import io.github.gccammelli.pandy.buildPlateCode
 import io.github.gccammelli.pandy.buildPlateLabel
 import io.github.gccammelli.pandy.decodeImage
 import io.github.gccammelli.pandy.download
+import io.github.gccammelli.pandy.externalBadge
 import io.github.gccammelli.pandy.filamentKey
 import io.github.gccammelli.pandy.guide
 import io.github.gccammelli.pandy.hexColor
@@ -82,6 +84,8 @@ import io.github.gccammelli.pandy.isSingleSlot
 import io.github.gccammelli.pandy.readPreviewMeshes
 import io.github.gccammelli.pandy.readProject
 import io.github.gccammelli.pandy.shortModel
+import io.github.gccammelli.pandy.slotLabel
+import io.github.gccammelli.pandy.spoolForTrayId
 import io.github.gccammelli.pandy.startPrint
 import io.github.gccammelli.pandy.loadedTrayIds
 import io.github.gccammelli.pandy.loadedSpools
@@ -675,20 +679,14 @@ private fun HelpQuestion(onClick: () -> Unit) = Box(Modifier.size(30.dp).clickab
 
 @Composable
 private fun FilamentChip(type: String, colour: String, slot: Int, p: Printer, enabled: Boolean, selected: Boolean, opensPicker: Boolean, onClick: () -> Unit) {
-    val loadedAms = if (slot >= 0) p.ams.asSequence().mapNotNull { (ams, spools) ->
-        ams.slotForTrayId(slot)?.let { ams to spools.getOrNull(it) }
-    }.firstOrNull() else null
-    val loaded = when {
-        slot == 254 -> p.external.firstOrNull { it.known }
-        slot == 255 -> p.external.getOrNull(1)?.takeIf { it.known } ?: p.external.firstOrNull { it.known }
-        else -> loadedAms?.second
-    }
+    val loadedAms = p.amsSlot(slot)
+    val loaded = p.spoolForTrayId(slot)
     val trayLabel = when {
-        slot == 254 -> if (p.external.size > 1) "Ext 1" else "Ext"
+        slot == 254 -> p.externalBadge(0)
         slot == 255 -> "Ext 2"
         loadedAms == null -> "--"
         loadedAms.first.isSingleSlot() -> "HT"
-        else -> "${'A' + loadedAms.first.index - 1}${loadedAms.first.slotForTrayId(slot)!! + 1}"
+        else -> loadedAms.first.slotLabel(loadedAms.first.slotForTrayId(slot)!!)
     }
     Column(Modifier.width(112.dp).clip(RoundedCornerShape(10.dp)).border(if (selected) 2.dp else 1.dp, if (selected) C.Accent else C.Line, RoundedCornerShape(10.dp))
         .clickable(enabled = enabled, onClick = onClick)) {
@@ -724,19 +722,11 @@ private fun PreviewView(p: Printer, project: Project, plate: Int, auto: List<Int
     var custom by remember { mutableStateOf<Map<Int, Long>>(emptyMap()) }
     var colors by remember { mutableStateOf(false) }
     val modelColors = project.filaments.map { (_, colour) -> hexColor(colour) }
-    fun spoolColor(slot: Int): Long? = when {
-        slot == 254 -> p.external.firstOrNull { it.known }?.color
-        slot == 255 -> p.external.getOrNull(1)?.takeIf { it.known }?.color ?: p.external.firstOrNull { it.known }?.color
-        slot >= 0 -> p.ams.asSequence().mapNotNull { (ams, spools) ->
-            ams.slotForTrayId(slot)?.let { spools.getOrNull(it)?.takeIf { spool -> spool.known }?.color }
-        }.firstOrNull()
-        else -> null
-    }
     val validSlots = p.loadedTrayIds()
     val printerColors = project.filaments.mapIndexed { i, (type, colour) ->
         val slot = (if (presets) manualMapping[filamentKey(type, colour)]?.takeIf { it in validSlots } else null)
             ?: auto?.getOrNull(i)?.takeIf { it in validSlots } ?: -1
-        spoolColor(slot) ?: hexColor(colour)
+        p.spoolForTrayId(slot)?.takeIf { it.known }?.color ?: hexColor(colour)
     }
     val mesh = project.meshes[plate] ?: project.mesh?.takeIf { project.meshes.isEmpty() }
     // A plain model (an STL) is shown in the colour of the spool picked for it.

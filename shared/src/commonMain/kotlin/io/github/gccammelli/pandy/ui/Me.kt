@@ -54,10 +54,12 @@ import io.github.gccammelli.pandy.REPO_URL
 import io.github.gccammelli.pandy.Repo
 import io.github.gccammelli.pandy.UiState
 import io.github.gccammelli.pandy.VideoPlayer
+import io.github.gccammelli.pandy.amsSlot
 import io.github.gccammelli.pandy.autoMapping
 import io.github.gccammelli.pandy.ensureOnPrinter
 import io.github.gccammelli.pandy.isSingleSlot
 import io.github.gccammelli.pandy.slotForTrayId
+import io.github.gccammelli.pandy.slotLabel
 import io.github.gccammelli.pandy.startPrint
 import io.github.gccammelli.pandy.printHistory
 import io.github.gccammelli.pandy.sliceInfo
@@ -202,7 +204,7 @@ fun ReprintSheet(p: Printer, f: CachedFile, close: () -> Unit) {
                     val t = map?.getOrNull(i)
                     if (t == null || t == 254) T("External spool", 13.sp, C.Sub)
                     else {
-                        val match = p.ams.asSequence().mapNotNull { (a, spools) -> a.slotForTrayId(t)?.let { a to spools.getOrNull(it) } }.firstOrNull()
+                        val match = p.amsSlot(t)
                         val a = match?.first
                         val s = match?.second
                         val slot = a?.slotForTrayId(t)

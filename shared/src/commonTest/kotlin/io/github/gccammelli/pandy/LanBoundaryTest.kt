@@ -213,11 +213,17 @@ class LanBoundaryTest {
         assertEquals("6", startCmd.s("duration"))
         assertEquals("45", startCmd.s("cooling_temp"))
         assertEquals("true", startCmd.s("rotate_tray"))
+        assertEquals("", startCmd.s("filament"))
+        assertEquals("false", startCmd.s("close_power_conflict"))
 
         val stopCmd = amsStopDryingCommand("102", 0)["print"]!!.jsonObject
         assertEquals("ams_filament_drying", stopCmd.s("command"))
         assertEquals("0", stopCmd.s("mode"))
         assertEquals("0", stopCmd.s("ams_id"))
+        assertEquals("", stopCmd.s("filament"))
+        assertEquals("0", stopCmd.s("temp"))
+        assertEquals("0", stopCmd.s("duration"))
+        assertEquals("false", stopCmd.s("close_power_conflict"))
 
         val startCmdNoRotate = amsDryingCommand("101", 0, 50, 4, false)["print"]!!.jsonObject
         assertEquals("false", startCmdNoRotate.s("rotate_tray"))
@@ -533,5 +539,134 @@ class LanBoundaryTest {
         assertEquals("255", ext2Cmd.s("ams_id"))
         assertEquals("0", ext2Cmd.s("slot_id"))
         assertEquals("255", ext2Cmd.s("tray_id"))
+    }
+
+    @Test fun jsonExtensionsAndHardwarePredicatesCoverAllCases() {
+        val sample = obj("""{
+            "items": [{"id": 1, "name": "a"}, "not_an_object", {"id": 2, "name": "b"}],
+            "tags": ["alpha", "beta", 42],
+            "nums": ["10", "bad", "25"],
+            "csv": " 1, 2 , bad, 4 ",
+            "not_array": "hello"
+        }""")
+        assertEquals(2, sample.objects("items").size)
+        assertEquals(0, sample.objects("not_array").size)
+        assertEquals(0, (null as kotlinx.serialization.json.JsonArray?).objects().size)
+        assertEquals(0, (null as kotlinx.serialization.json.JsonArray?).orEmpty().size)
+        assertEquals(listOf("alpha", "beta", "42"), sample.strings("tags"))
+        assertEquals(emptyList(), sample.strings("not_array"))
+        assertEquals(listOf(10, 25), sample.ints("nums"))
+        assertEquals(listOf(1, 2, 4), sample.csvInts("csv"))
+        assertEquals(emptyList(), sample.csvInts("missing"))
+
+        val payload = entityPayload(
+            "light.chamber",
+            "on" to true,
+            "pct" to 80,
+            "label" to "main",
+            "raw" to kotlinx.serialization.json.JsonPrimitive("val"),
+            "custom" to listOf(1, 2),
+            "ignored" to null
+        )
+        assertEquals("light.chamber", payload.s("entity_id"))
+        assertEquals("true", payload.s("on"))
+        assertEquals("80", payload.s("pct"))
+        assertEquals("main", payload.s("label"))
+        assertEquals("val", payload.s("raw"))
+        assertEquals("[1, 2]", payload.s("custom"))
+        assertFalse(payload.containsKey("ignored"))
+
+        assertTrue(isDualNozzleModel("X2D"))
+        assertTrue(isDualNozzleModel("H2D Pro"))
+        assertTrue(isDualNozzleModel("H2C"))
+        assertFalse(isDualNozzleModel("X1C"))
+
+        assertTrue(isEnclosedPrinter("X1C"))
+        assertTrue(isEnclosedPrinter("P1S"))
+        assertFalse(isEnclosedPrinter("A1"))
+        assertFalse(isEnclosedPrinter("A2L"))
+
+        assertTrue(hasChamberSensor("X1C"))
+        assertTrue(hasChamberSensor("X2D"))
+        assertFalse(hasChamberSensor("P1S"))
+
+        val x2dPrinter = Printer(PrinterInfo("p", "S", "X2D", "X2D", null, emptyMap(), emptyList(), emptyList()), emptyMap())
+        assertTrue(x2dPrinter.hasLidar)
+        assertTrue(x2dPrinter.isEnclosed)
+        val a1Printer = Printer(PrinterInfo("p", "S", "A1", "A1", null, emptyMap(), emptyList(), emptyList()), emptyMap())
+        assertFalse(a1Printer.hasLidar)
+        assertFalse(a1Printer.isEnclosed)
+
+        // deepMerge preserves existing fields of AMS units by id across partial reports
+        val firstReport = obj("""{"print":{"ams":{"ams":[{"id":"0","model":"AMS 2 Pro","dry_setting":{"dry_temperature":55,"dry_duration":6},"tray":[{"id":0,"tray_type":"PLA"}]}]}}}""")
+        val deltaReport = obj("""{"print":{"ams":{"ams":[{"id":"0","dry_time":180,"info":"0x10"}]}}}""")
+        val merged = deepMerge(firstReport, deltaReport)
+        val mergedEntities = lanEntities(config, merged, true).filter { it.first.device == "ams0" }.associate { it.first.key to it.second }
+        assertEquals("on", mergedEntities.getValue("drying").state)
+        assertEquals("3.0", mergedEntities.getValue("remaining_drying_time").state)
+        assertEquals("55.0", mergedEntities.getValue("drying_target_temp").state)
+
+        // Full status reports drop unplugged AMS units; silent AMS 2 Pro reports omit binary_sensor.drying
+        val twoUnits = obj("""{"print":{"ams":{"ams":[{"id":"0","model":"AMS 2 Pro","tray":[]},{"id":"1","model":"AMS","tray":[]}]}}}""")
+        val oneUnitFull = obj("""{"print":{"ams":{"ams":[{"id":"0","model":"AMS 2 Pro","tray":[]}]}}}""")
+        val afterUnplug = deepMerge(twoUnits, oneUnitFull)
+        val afterUnplugEntities = lanEntities(config, afterUnplug, true)
+        assertFalse(afterUnplugEntities.any { it.first.device == "ams1" })
+        assertFalse(afterUnplugEntities.any { it.first.device == "ams0" && it.first.key == "drying" })
+
+        // Cover deepMerge edge cases (non-id entries, new unit in full/delta reports)
+        val badArray = obj("""{"print":{"ams":{"ams":["raw"]}}}""")
+        assertEquals(badArray, deepMerge(twoUnits, badArray))
+        val noIdArray = obj("""{"print":{"ams":{"ams":[{"tray":[]}]}}}""")
+        assertEquals(noIdArray, deepMerge(twoUnits, noIdArray))
+        val fullWithNew = obj("""{"print":{"ams":{"ams":[{"id":"0","model":"AMS 2 Pro","tray":[]},{"id":"2","model":"AMS","tray":[]}]}}}""")
+        val mergedFullNew = deepMerge(oneUnitFull, fullWithNew)
+        assertEquals(2, mergedFullNew.o("print")!!.o("ams")!!.objects("ams").size)
+        val deltaNew = obj("""{"print":{"ams":{"ams":[{"id":"2","temp":30.0}]}}}""")
+        val mergedDeltaNew = deepMerge(oneUnitFull, deltaNew)
+        assertEquals(2, mergedDeltaNew.o("print")!!.o("ams")!!.objects("ams").size)
+
+        // Cover drying telemetry fallbacks (idle, _dry_status, dry_status, remain_time, target_temp, drying_temp)
+        val idleDrying = obj("""{"print":{"ams":{"ams":[{"id":"0","model":"AMS 2 Pro","is_drying":false,"dry_time":0,"dry_setting":{"dry_temperature":0},"tray":[]}]}}}""")
+        val idleEnt = lanEntities(config, idleDrying, true).filter { it.first.device == "ams0" }.associate { it.first.key to it.second }
+        assertEquals("off", idleEnt.getValue("drying").state)
+        assertEquals("0.0", idleEnt.getValue("remaining_drying_time").state)
+        assertEquals("0.0", idleEnt.getValue("drying_target_temp").state)
+
+        val fallbackDrying = obj("""{"print":{"ams":{"ams":[{"id":"0","model":"AMS 2 Pro","dry_status":2,"remain_time":90,"drying_temp":60,"tray":[]}]}}}""")
+        val fbEnt = lanEntities(config, fallbackDrying, true).filter { it.first.device == "ams0" }.associate { it.first.key to it.second }
+        assertEquals("on", fbEnt.getValue("drying").state)
+        assertEquals("1.5", fbEnt.getValue("remaining_drying_time").state)
+        assertEquals("60.0", fbEnt.getValue("drying_target_temp").state)
+
+        val settingDurDrying = obj("""{"print":{"ams":{"ams":[{"id":"0","model":"AMS 2 Pro","drying_status":"drying","dry_setting":{"dry_duration":4},"target_temp":50,"tray":[]}]}}}""")
+        val sdEnt = lanEntities(config, settingDurDrying, true).filter { it.first.device == "ams0" }.associate { it.first.key to it.second }
+        assertEquals("on", sdEnt.getValue("drying").state)
+        assertEquals("4.0", sdEnt.getValue("remaining_drying_time").state)
+        assertEquals("50.0", sdEnt.getValue("drying_target_temp").state)
+
+        // Cover Ha.kt helpers: dryingDurationText, amsSlot, spoolForTrayId, externalBadge, externalTitle
+        assertEquals("1h 30m", dryingDurationText(1.5))
+        assertEquals("0h 45m", dryingDurationText(0.75))
+        val amsInfo = AmsInfo("a1", 1, "AMS 2 Pro", emptyMap(), mapOf(1 to "t1"))
+        val t1 = Entity("t1", "PLA", jsonObj("type" to "PLA", "name" to "Bambu PLA", "empty" to "false"))
+        val e1 = Entity("e1", "PETG", jsonObj("type" to "PETG", "name" to "PETG", "empty" to "false"))
+        val e2 = Entity("e2", "ABS", jsonObj("type" to "ABS", "name" to "ABS", "empty" to "false"))
+        val pDualExt = Printer(PrinterInfo("p", "S", "X2D", "X2D", null, emptyMap(), listOf(amsInfo), listOf("e1", "e2")), mapOf("t1" to t1, "e1" to e1, "e2" to e2))
+        assertNull(pDualExt.amsSlot(-1))
+        assertNull(pDualExt.amsSlot(99))
+        assertEquals("PLA", pDualExt.amsSlot(0)?.second?.type)
+        assertEquals("PETG", pDualExt.spoolForTrayId(254)?.type)
+        assertEquals("ABS", pDualExt.spoolForTrayId(255)?.type)
+        assertEquals("PLA", pDualExt.spoolForTrayId(0)?.type)
+        assertEquals("Ext 1", pDualExt.externalBadge(0))
+        assertEquals("Ext 2", pDualExt.externalBadge(1))
+        assertEquals("External Spool 1 (Left / Main)", pDualExt.externalTitle(0))
+        assertEquals("External Spool 2 (Right / Aux)", pDualExt.externalTitle(1))
+
+        val pSingleExt = Printer(PrinterInfo("p", "S", "X1C", "X1C", null, emptyMap(), emptyList(), listOf("e1")), mapOf("e1" to e1))
+        assertEquals("PETG", pSingleExt.spoolForTrayId(255)?.type)
+        assertEquals("Ext", pSingleExt.externalBadge(0))
+        assertEquals("External Spool", pSingleExt.externalTitle(0))
     }
 }
