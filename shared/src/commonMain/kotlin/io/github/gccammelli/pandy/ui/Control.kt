@@ -181,14 +181,10 @@ private fun NozzleSheet(p: Printer, err: (String) -> Unit, close: () -> Unit) {
     val pendingSwitch = switchingTo?.takeIf { it != p.activeNozzle } // done as soon as the printer reports the new nozzle active
     var temp by remember { mutableStateOf(false) }
     val curNozzle = selectedNozzle
-    val curTemp = if (curNozzle == "left") (p.leftNozzle ?: p.nozzle) else if (curNozzle == "right") (p.rightNozzle ?: p.nozzle) else p.nozzle
-    val curTarget = if (curNozzle == "left") (p.leftNozzleTarget ?: p.nozzleTarget) else if (curNozzle == "right") (p.rightNozzleTarget ?: p.nozzleTarget) else p.nozzleTarget
-    val curDiam = if (curNozzle == "left") (p.state("sensor.left_nozzle_diameter") ?: p.state("sensor.nozzle_diameter"))
-        else if (curNozzle == "right") (p.state("sensor.right_nozzle_diameter") ?: p.state("sensor.nozzle_diameter"))
-        else p.state("sensor.nozzle_diameter")
-    val curType = if (curNozzle == "left") (p.state("sensor.left_nozzle_type") ?: p.state("sensor.nozzle_type"))
-        else if (curNozzle == "right") (p.state("sensor.right_nozzle_type") ?: p.state("sensor.nozzle_type"))
-        else p.state("sensor.nozzle_type")
+    val curTemp = p.nozzleTemp(curNozzle)
+    val curTarget = p.nozzleTarget(curNozzle)
+    val curDiam = p.nozzleState("nozzle_diameter", curNozzle)
+    val curType = p.nozzleState("nozzle_type", curNozzle)
     val targetKey = if (curNozzle == "left") "left_nozzle" else if (curNozzle == "right") "right_nozzle" else "nozzle"
     val isSwitching = nozzleSwitching(p.printing, pendingSwitch, p.isDualNozzle, selectedNozzle, p.activeNozzle)
     val canExtrude = extrudeAllowed(p.printing, isSwitching, p.isDualNozzle, selectedNozzle, p.activeNozzle, curTemp)
@@ -203,14 +199,12 @@ private fun NozzleSheet(p: Printer, err: (String) -> Unit, close: () -> Unit) {
     Sheet(close, "Nozzle & Extruder", centeredTitle = true, confirm = null) {
         if (p.isDualNozzle) {
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(C.Fill).padding(3.dp)) {
-                val isLeft = selectedNozzle == "left"
-                Box(Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isLeft) C.Card else Color.Transparent)
-                    .clickable { pickNozzle("left") }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    T("Left Nozzle (L)", 13.sp, if (isLeft) C.Accent else C.Sub, if (isLeft) FontWeight.Bold else FontWeight.Normal)
-                }
-                Box(Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (!isLeft) C.Card else Color.Transparent)
-                    .clickable { pickNozzle("right") }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    T("Right Nozzle (R)", 13.sp, if (!isLeft) C.Accent else C.Sub, if (!isLeft) FontWeight.Bold else FontWeight.Normal)
+                listOf("left" to "Left Nozzle (L)", "right" to "Right Nozzle (R)").forEach { (side, label) ->
+                    val sel = selectedNozzle == side
+                    Box(Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (sel) C.Card else Color.Transparent)
+                        .clickable { pickNozzle(side) }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                        T(label, 13.sp, if (sel) C.Accent else C.Sub, if (sel) FontWeight.Bold else FontWeight.Normal)
+                    }
                 }
             }
             Gap(12.dp)
