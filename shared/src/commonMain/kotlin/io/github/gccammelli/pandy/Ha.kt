@@ -141,28 +141,18 @@ class HaHttp(url: String, private val token: String) : HaBackend {
     }
 }
 
-/**
- * Prefers the local backend; when it fails, uses the remote one and tries the local one again after [retryMs], so one
- * dropped connection doesn't leave the app on Home Assistant (or offline, if that is unreachable) until restarted.
- */
+/** Prefers the local backend until it fails, then uses the remote backend for the rest of this session. */
 internal class PreferPrimaryBackend(
     private val primary: HaBackend,
-    private val fallback: HaBackend,
-    private val retryMs: Long = 60_000,
+    private val fallback: HaBackend
 ) : HaBackend {
-    private var fellBackAt = 0L
     private var primaryAvailable = true
-        get() {
-            if (!field && kotlin.time.Clock.System.now().toEpochMilliseconds() - fellBackAt >= retryMs) field = true
-            return field
-        }
     internal val usingPrimary get() = primaryAvailable
     override val base get() = if (primaryAvailable) primary.base else fallback.base
 
     private fun useFallback() {
         if (!primaryAvailable) return
         primaryAvailable = false
-        fellBackAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
         (primary as? DirectPrinter)?.stop()
     }
 

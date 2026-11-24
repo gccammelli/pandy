@@ -701,8 +701,7 @@ class DirectPrinter(
     }
 
     /** Waits (up to 15 s) for the printer's first full report, so the registry lists the AMS and spools it has. */
-    /** The printer's first status report since connecting; a failed attempt is replaced on the next one, so it is never failed for good. */
-    @kotlin.concurrent.Volatile private var firstReport = CompletableDeferred<Unit>()
+    private val firstReport = CompletableDeferred<Unit>()
     private var running: Job? = null
     private var onReport: (() -> Unit)? = null
 
@@ -711,8 +710,6 @@ class DirectPrinter(
         running = scope.launch {
             var wait = 1_000L
             while (isActive) {
-                // Each attempt has its own signal: a failed one must not stay failed, and a stopped one can't touch the next.
-                val first = firstReport.takeUnless { it.isCancelled } ?: CompletableDeferred<Unit>().also { firstReport = it }
                 val l = linkFactory(config)
                 link = l
                 try {
@@ -725,14 +722,11 @@ class DirectPrinter(
                         if (msg.o("print") == null && msg.o("info") == null) return@run
                         report = deepMerge(report, msg)
                         lastReport = Clock.System.now().toEpochMilliseconds()
-                        if (msg.o("print")?.str("command") == "push_status") { first.complete(Unit); checkJob() }
+                        if (msg.o("print")?.str("command") == "push_status") { firstReport.complete(Unit); checkJob() }
                         onReport?.invoke()
                     }
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e // stopped: leave the signal to the next start
                 } catch (e: Exception) {
-                    // Whoever waits now hears why; anyone asking during the backoff waits for the next attempt instead.
-                    if (!first.isCompleted) { first.completeExceptionally(e); if (firstReport === first) firstReport = CompletableDeferred() }
+                    if (!firstReport.isCompleted) firstReport.completeExceptionally(e)
                 } finally { l.close(); link = null; onReport?.invoke() }
                 delay(wait)
                 wait = (wait * 2).coerceAtMost(30_000L)

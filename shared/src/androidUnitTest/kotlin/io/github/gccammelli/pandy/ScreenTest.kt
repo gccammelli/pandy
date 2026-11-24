@@ -54,10 +54,12 @@ class ScreenTest {
         override val canNotify = true
         override fun requestNotifications() { notificationRequests++ }
         override fun watchInBackground(on: Boolean) { backgroundWatching += on }
+        override fun share(text: String, imageBytes: ByteArray?, title: String?) { shares += text }
         override fun pickImage(done: (ByteArray?) -> Unit) = done(null)
         override fun saveImage(jpeg: ByteArray, name: String, done: (Throwable?) -> Unit) { savedImages += jpeg; done(saveImageError) }
     }
 
+    private val shares = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val commands = java.util.concurrent.ConcurrentLinkedQueue<Pair<String,String>>()
     private val savedImages = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
     private val savedFiles = java.util.concurrent.CopyOnWriteArrayList<Triple<String,String,ByteArray>>()
@@ -2882,6 +2884,21 @@ class ScreenTest {
         compose.waitForIdle()
         compose.onAllNodesWithText("External Spool 1 (Left / Main)").onFirst().assertExists()
         compose.onAllNodesWithText("External Spool 2 (Right / Aux)").onFirst().assertExists()
+    }
+
+    @Test fun historyScreenShareButtonWorks() {
+        show("History") { HistoryScreen(printer) }
+        compose.waitUntil(5000) { compose.waitForIdle(); compose.onAllNodesWithContentDescription("Share").fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodesWithContentDescription("Share").onFirst().performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); shares.size == 1 }
+        org.junit.Assert.assertTrue(shares[0].startsWith("Print from "))
+        org.junit.Assert.assertFalse(shares[0].contains("Plate"))
+        // Also open ReprintSheet and trigger its Share button: it adds the plate
+        compose.onAllNodesWithText("Articulated Panda Keychain").onFirst().performClick()
+        compose.waitForIdle()
+        compose.onAllNodesWithContentDescription("Share").onLast().performClick()
+        compose.waitUntil(5000) { compose.waitForIdle(); shares.size == 2 }
+        org.junit.Assert.assertTrue(shares[1].contains("• Plate "))
     }
 
     @Test fun directConnectionValidatesRequiredFieldsAndReportsAMalformedAddress() {

@@ -231,17 +231,6 @@ class RepositoryCoverageTest {
             val fallenBack = PreferPrimaryBackend(failing, recording)
             runCatching { fallenBack.startPrint(p, "cache/a.3mf", 1, null, false, true, true, "hot_plate") }
             fallenBack.startPrint(p, "cache/a.3mf", 1, null, false, true, true, "hot_plate"); assertNull(bodies.last()["bed_type"])
-            // After a failure the direct connection is tried again once the retry time has passed, not never again.
-            var primaryUp = false; var primaryCalls = 0
-            val flaky = object : HaBackend by demo {
-                override suspend fun post(path: String, body: String): String { primaryCalls++; if (!primaryUp) throw ApiException("down"); return "[]" }
-            }
-            val retrying = PreferPrimaryBackend(flaky, recording, retryMs = 50)
-            runCatching { retrying.post("/api/services/x/y", "{}") }
-            assertFalse(retrying.usingPrimary)
-            retrying.post("/api/services/x/y", "{}"); assertEquals(1, primaryCalls) // within the retry time: Home Assistant
-            primaryUp = true; Thread.sleep(80)
-            assertTrue(retrying.usingPrimary); retrying.post("/api/services/x/y", "{}"); assertEquals(2, primaryCalls)
         } finally { Repo.logout(); Dispatchers.resetMain() }
     }
 

@@ -130,28 +130,4 @@ class DirectPrinterStorageTest {
             withTimeout(5000) { while (lists.get() <= JOB_LOOKUPS * 2) delay(5) }
         } finally { printer.stop() }
     }
-
-    @Test fun aPrinterThatCouldNotBeReachedAtFirstIsUsedOnceItAnswers() = runBlocking<Unit> {
-        // The first attempt fails (the printer busy or out of connection slots); the next one gets through. The app
-        // must not stay "offline" until it is restarted.
-        var attempts = 0
-        val printer = DirectPrinter(LanConfig("192.0.2.1", "TEST", "code", "X1C"), true, {
-            object : LanLink {
-                override suspend fun run(onConnected: () -> Unit, onMessage: (String) -> Unit) {
-                    if (++attempts == 1) throw java.io.IOException("Connection refused")
-                    onConnected()
-                    onMessage("""{"print":{"command":"push_status","gcode_state":"IDLE"}}""")
-                    awaitCancellation()
-                }
-                override fun publish(payload: String) = Unit
-                override fun close() = Unit
-            }
-        }, { error("no storage") })
-        try {
-            assertFailsWith<ApiException> { printer.printers() }
-            withTimeout(10_000) { while (runCatching { printer.printers() }.isFailure) delay(200) }
-            assertEquals("TEST", printer.printers().single().serial)
-            assertTrue(attempts >= 2)
-        } finally { printer.stop() }
-    }
 }

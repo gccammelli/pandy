@@ -130,7 +130,19 @@ class AndroidNotifier(private val ctx: Context) : Notifier {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
 
         for (action in event.actions) {
-            val actIntent = actionIntent(ctx, event.serial.orEmpty(), action.id, notifId)
+            val actIntent = if (action.id == "share") {
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, event.title)
+                    putExtra(Intent.EXTRA_TEXT, "${event.title}\n${event.text}")
+                }
+                val chooser = Intent.createChooser(shareIntent, "Share print").apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                PendingIntent.getActivity(ctx, notifId, chooser, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            } else {
+                actionIntent(ctx, event.serial.orEmpty(), action.id, notifId)
+            }
             val actionBuilder = NotificationCompat.Action.Builder(R.drawable.ic_stat, action.label, actIntent)
             if (action.id == "stop") {
                 actionBuilder.setAuthenticationRequired(true)
