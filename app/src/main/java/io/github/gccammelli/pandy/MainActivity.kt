@@ -175,6 +175,40 @@ open class MainActivity : ComponentActivity(), PlatformUi {
         startActivity(packageManager.getLaunchIntentForPackage(androidPackage) ?: Intent(Intent.ACTION_VIEW, Uri.parse(storeUrl)))
     override fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
+    private var sharing = false
+    override fun share(text: String, imageBytes: ByteArray?, title: String?) {
+        if (sharing) return // a second tap while the picture is being written must not open a second chooser
+        sharing = true
+        CoroutineScope(Dispatchers.Main).launch {
+          try {
+            // The picture is written off the main thread, to a file of its own: the recipient's read grant covers that one URI only.
+            val uri = if (imageBytes != null && imageBytes.isNotEmpty()) withContext(Dispatchers.IO) {
+                runCatching {
+                    val ext = if (imageBytes.size >= 4 && imageBytes[0] == 0x89.toByte() && imageBytes[1] == 0x50.toByte()) "png" else "jpg"
+                    val dir = java.io.File(cacheDir, "shared_images").apply { mkdirs() }
+                    val cutoff = System.currentTimeMillis() - 60 * 60 * 1000
+                    dir.listFiles()?.forEach { if (it.lastModified() < cutoff) it.delete() } // old shares only: a recipient may still be reading a recent one
+                    val file = java.io.File(dir, "pandy_share_${java.util.UUID.randomUUID()}.$ext").apply { writeBytes(imageBytes) }
+                    androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "$packageName.slicerfiles", file) to ext
+                }.getOrNull()
+            } else null
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                putExtra(Intent.EXTRA_TEXT, text)
+                if (title != null) putExtra(Intent.EXTRA_SUBJECT, title)
+                if (uri != null) {
+                    type = if (uri.second == "png") "image/png" else "image/jpeg"
+                    putExtra(Intent.EXTRA_STREAM, uri.first)
+                    clipData = android.content.ClipData.newRawUri(title ?: "Share print", uri.first)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } else {
+                    type = "text/plain"
+                }
+            }
+            startActivity(Intent.createChooser(intent, title ?: "Share print"))
+          } finally { sharing = false }
+        }
+    }
+
     override fun pickImage(done: (ByteArray?) -> Unit) {
         pendingPick = done
         pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))

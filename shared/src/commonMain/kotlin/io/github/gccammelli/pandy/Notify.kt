@@ -7,7 +7,8 @@ enum class PrintEventType { FINISH, FAILED, PAUSED, ATTENTION }
 enum class PrintAction(val id: String, val label: String) {
     PAUSE("pause", "Pause"),
     RESUME("resume", "Resume"),
-    STOP("stop", "Stop")
+    STOP("stop", "Stop"),
+    SHARE("share", "Share")
 }
 
 /** Shows a phone notification. Android provides one; iOS can't watch in the background, so it has none. */
@@ -39,6 +40,7 @@ fun printEvent(before: Printer?, now: Printer): PrintEvent? {
             title = "Print finished",
             text = "$job is done on ${now.name}",
             type = PrintEventType.FINISH,
+            actions = listOf(PrintAction.SHARE),
             serial = now.serial,
             imagePath = now.coverImage
         )

@@ -74,7 +74,7 @@ class NotifyTest {
     fun eventTypesAndActionButtonsAreProvidedForPrintStates() {
         val finish = printEvent(printer("running"), printer("finish"))!!
         assertEquals(PrintEventType.FINISH, finish.type)
-        assertEquals(emptyList(), finish.actions)
+        assertEquals(listOf(PrintAction.SHARE), finish.actions)
         assertEquals("SN", finish.serial)
 
         val failed = printEvent(printer("running"), printer("failed", error = true))!!
@@ -115,5 +115,23 @@ class NotifyTest {
         }
     }
 
-
+    @Test
+    fun notificationsUseTheCoverNeverALiveCameraFrame() {
+        val withCamIds = ids + ("camera.camera" to "cam") + ("image.cover_image" to "cov")
+        val states = mapOf(
+            "s" to Entity("s", "finish", JsonObject(emptyMap())),
+            "t" to Entity("t", "Benchy", JsonObject(emptyMap())),
+            "cam" to Entity("cam", "streaming", JsonObject(emptyMap())),
+            "cov" to Entity("cov", "v1", JsonObject(emptyMap()))
+        )
+        fun p(status: String) = Printer(PrinterInfo("p", "SN", "X1C", "X1C", null, withCamIds, emptyList(), emptyList()), states + ("s" to Entity("s", status, JsonObject(emptyMap()))))
+        for (end in listOf("finish", "failed")) {
+            val ev = printEvent(p("running"), p(end))!!
+            assertEquals("/api/image_proxy/cov?v=v1", ev.imagePath)
+        }
+        val hmsAttrs = json.parseToJsonElement("""{"Count":"1","1-Code":"HMS_0300_0100_0002_0007","1-Error":"Problem 1"}""") as JsonObject
+        val att = Printer(PrinterInfo("p", "SN", "X1C", "X1C", null, withCamIds, emptyList(), emptyList()),
+            states + ("s" to Entity("s", "pause", JsonObject(emptyMap()))) + ("h" to Entity("h", "on", hmsAttrs)))
+        assertEquals("/api/image_proxy/cov?v=v1", printEvent(p("running"), att)!!.imagePath)
+    }
 }
