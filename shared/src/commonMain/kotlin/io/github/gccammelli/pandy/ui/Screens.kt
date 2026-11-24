@@ -601,20 +601,6 @@ fun DryingGlyph(modifier: Modifier = Modifier, color: Color = C.Sub) {
 }
 
 @Composable
-private fun StepButton(icon: ImageVector, enabled: Boolean, desc: String? = null, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            .background(if (enabled) C.Card else C.Fill)
-            .clickable(enabled = enabled, onClickLabel = desc, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(icon, desc, Modifier.size(18.dp), tint = if (enabled) C.Text else C.Faint)
-    }
-}
-
-@Composable
 fun AmsDryingSheet(
     p: Printer,
     ams: io.github.gccammelli.pandy.AmsInfo,

@@ -1951,6 +1951,90 @@ class ScreenTest {
         assertEquals(listOf(65,0),set)
     }
 
+    @Test fun temperatureEntrySteppersIncrementAndDecrementInFiveDegreeSteps() {
+        val set=mutableListOf<Int>(); var closed=0
+        show("Temperature") { TempSheet("Temperature","Test heater",listOf(0,40),215.0,0..300,{closed++}) { set+=it } }
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.onNodeWithContentDescription("Decrease temperature").performClick()
+        compose.onNodeWithContentDescription("Decrease temperature").performClick()
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(listOf(210),set)
+        assertEquals(1,closed)
+    }
+
+    @Test fun temperatureEntryStepsFromTheNearestLimitWhenTheTypedValueIsOutOfRange() {
+        val set=mutableListOf<Int>()
+        show("Temperature") { TempSheet("Temperature","Test heater",listOf(40),215.0,0..300,{}) { set+=it } }
+        compose.onNode(hasSetTextAction()).performTextReplacement("999")
+        compose.onNodeWithContentDescription("Increase temperature").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Decrease temperature").performClick()
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(listOf(295),set)
+    }
+
+    @Test fun temperatureEntrySteppersClampToRangeLimits() {
+        val set=mutableListOf<Int>()
+        show("Temperature") { TempSheet("Temperature","Test heater",listOf(0,40),0.0,0..50,{}) { set+=it } }
+        compose.onNodeWithContentDescription("Decrease temperature").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.onNode(hasSetTextAction()).performTextReplacement("")
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.onNode(hasSetTextAction()).performTextReplacement("48")
+        compose.onNodeWithContentDescription("Increase temperature").performClick()
+        compose.onNodeWithContentDescription("Increase temperature").assertIsNotEnabled()
+        compose.onNodeWithText("Done").performClick()
+        assertEquals(listOf(50),set)
+    }
+
+    @Test fun dualNozzleWithoutChamberRendersTempChipsOnDevicesAndControl() {
+        val noChamberDualRight = variant(
+            info = printer.info.copy(
+                model = "X2D",
+                ids = printer.info.ids - "sensor.chamber_temp" - "sensor.left_nozzle_temp" - "sensor.right_nozzle_temp" + ("sensor.active_nozzle" to "act_n")
+            ),
+            set = arrayOf("sensor.print_status" to entity("idle"), "act_n" to entity("right"))
+        )
+        val noChamberDualLeft = variant(
+            info = printer.info.copy(
+                model = "X2D",
+                ids = printer.info.ids - "sensor.chamber_temp" - "sensor.left_nozzle_temp" - "sensor.right_nozzle_temp" + ("sensor.active_nozzle" to "act_n")
+            ),
+            set = arrayOf("sensor.print_status" to entity("idle"), "act_n" to entity("left"))
+        )
+        val withChamberDual = variant(
+            info = printer.info.copy(
+                model = "X2D",
+                ids = printer.info.ids + ("sensor.left_nozzle_temp" to "l_t") + ("sensor.right_nozzle_temp" to "r_t")
+            ),
+            set = arrayOf("sensor.print_status" to entity("idle"), "l_t" to entity("180"), "r_t" to entity("210"))
+        )
+        val noChamberSingle = variant(
+            info = printer.info.copy(model = "A1", ids = printer.info.ids - "sensor.chamber_temp"),
+            set = arrayOf("sensor.print_status" to entity("idle"))
+        )
+        val current = androidx.compose.runtime.mutableStateOf(noChamberDualRight)
+        val showControl = androidx.compose.runtime.mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalPlatform provides platform) {
+                AppTheme {
+                    if (showControl.value) ControlScreen(current.value) else DevicesTab(st.copy(printers = listOf(current.value)), current.value)
+                }
+            }
+        }
+        for (p in listOf(noChamberDualRight, noChamberDualLeft, withChamberDual, noChamberSingle)) {
+            compose.runOnIdle { current.value = p; showControl.value = false }
+            compose.waitForIdle()
+            val dual = p.isDualNozzle
+            // L/R labels exist only for a dual nozzle, on the Devices card and again on the Control screen.
+            assertEquals(dual, compose.onAllNodesWithText("L").fetchSemanticsNodes().isNotEmpty())
+            assertEquals(dual, compose.onAllNodesWithText("R").fetchSemanticsNodes().isNotEmpty())
+            compose.runOnIdle { showControl.value = true }
+            compose.waitForIdle()
+            assertEquals(dual, compose.onAllNodesWithText("L").fetchSemanticsNodes().isNotEmpty())
+            assertEquals(dual, compose.onAllNodesWithText("R").fetchSemanticsNodes().isNotEmpty())
+        }
+    }
+
     @Test fun heatedChamberUsesItsOwnTarget() {
         val id="number.chamber_target"
         val info=printer.info.copy(ids=printer.info.ids+("number.target_chamber_temperature" to id))
