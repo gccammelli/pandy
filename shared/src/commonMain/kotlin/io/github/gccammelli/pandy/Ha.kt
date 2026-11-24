@@ -279,7 +279,7 @@ fun printersFrom(devs: JsonArray, ents: JsonArray): List<PrinterInfo> {
         val u = r.s("unique_id")
         val key = r.s("translation_key")
             ?: dryingKey(u, eid)
-            ?: (if (serial != null && u != null && u.startsWith("${serial}_")) u.removePrefix("${serial}_") else null)
+            ?: (if (serial != null && u != null && u.startsWith("${serial}_", ignoreCase = true)) u.substring(serial.length + 1) else null)
             ?: u?.substringAfterLast('_')
             ?: return@mapNotNull null
         "${eid.substringBefore('.')}.$key" to eid
@@ -388,8 +388,16 @@ class Printer(val info: PrinterInfo, private val states: Map<String, Entity>) {
     val hasChamberHeater get() = info.ids.containsKey("number.target_chamber_temperature")
     val doorOpen get() = get("binary_sensor.door_open")?.on
     val camera get() = info.ids["camera.camera"]
-    val coverImage get() = get("image.cover_image")?.let { "/api/image_proxy/${it.id}?v=${it.state}" }
-    val pickImage get() = get("image.pick_image")?.let { "/api/image_proxy/${it.id}?v=${it.state}" }
+    /**
+     * The image path for [it]: its `entity_picture` only when that is an image-proxy path on the HA server itself. The
+     * path is fetched with the HA bearer token, so anything else (`@host/…`, `//host/…`, an absolute URL) is ignored.
+     */
+    private fun imagePath(it: Entity): String {
+        val picture = it.attrs.s("entity_picture")?.takeIf { p -> p.startsWith("/api/image_proxy/") && !p.contains("://") && !p.contains('@') && !p.contains("..") && !p.contains('\\') }
+        return picture ?: "/api/image_proxy/${it.id}?v=${it.state}"
+    }
+    val coverImage get() = (get("image.cover_image") ?: get("image.image"))?.takeIf { it.ok && it.state.isNotBlank() }?.let { imagePath(it) }
+    val pickImage get() = get("image.pick_image")?.takeIf { it.ok && it.state.isNotBlank() }?.let { imagePath(it) }
     /** Objects on the plate: id → name (for Skip Parts). */
     val objects: Map<Int, String> get() = get("sensor.printable_objects")?.attrs?.o("objects")
         ?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { it to ((v as? JsonPrimitive)?.contentOrNull ?: "") } }?.toMap().orEmpty()
