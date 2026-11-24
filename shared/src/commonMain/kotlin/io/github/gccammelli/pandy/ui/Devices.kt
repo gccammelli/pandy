@@ -59,6 +59,9 @@ import io.github.gccammelli.pandy.Spool
 import io.github.gccammelli.pandy.UiState
 import io.github.gccammelli.pandy.button
 import io.github.gccammelli.pandy.displayName
+import io.github.gccammelli.pandy.externalBadge
+import io.github.gccammelli.pandy.externalTitle
+import io.github.gccammelli.pandy.visibleExternalSpools
 import io.github.gccammelli.pandy.modelBadge
 import io.github.gccammelli.pandy.isSingleSlot
 import io.github.gccammelli.pandy.light
@@ -475,8 +478,10 @@ fun LightCard(p: Printer, modifier: Modifier, err: (String) -> Unit) =
 
 @Composable
 private fun FilamentCard(p: Printer, onClick: () -> Unit) = Card(padding = androidx.compose.foundation.layout.PaddingValues(14.dp), onClick = onClick) {
-    if (p.ams.isEmpty() && p.external.isEmpty()) { T("No AMS or external spool in Home Assistant", 13.sp, C.Sub); return@Card }
-    p.ams.forEach { (a, trays) ->
+    val visibleExt = p.visibleExternalSpools()
+    if (p.ams.isEmpty() && visibleExt.isEmpty()) { T("No AMS or external spool in Home Assistant", 13.sp, C.Sub); return@Card }
+    p.ams.forEachIndexed { idx, (a, trays) ->
+        if (idx > 0) Gap(12.dp)
         Row(verticalAlignment = Alignment.CenterVertically) {
             T(a.displayName(), 13.sp, C.Sub)
             a.modelBadge()?.let { badge ->
@@ -502,20 +507,16 @@ private fun FilamentCard(p: Printer, onClick: () -> Unit) = Card(padding = andro
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             trays.forEachIndexed { i, s -> SlotTile(s, "${'A' + a.index - 1}${i + 1}", Modifier.weight(1f)) }
         }
-        Gap(12.dp)
     }
-    p.external.forEachIndexed { i, s ->
-        if (i > 0) Gap(8.dp)
+    if (p.ams.isNotEmpty() && visibleExt.isNotEmpty()) Gap(12.dp)
+    visibleExt.forEachIndexed { rowIdx, entry ->
+        val (i, s) = entry
+        if (rowIdx > 0) Gap(8.dp)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            val badge = if (p.external.size > 1) "Ext ${i + 1}" else "Ext"
-            SlotTile(s, badge, Modifier.width(64.dp))
+            SlotTile(s, p.externalBadge(i), Modifier.width(64.dp))
             Spacer(Modifier.width(12.dp))
             Column {
-                val title = if (p.external.size > 1) {
-                    val side = if (i == 0) "Left / Main" else "Right / Aux"
-                    "External Spool ${i + 1} ($side)"
-                } else "External Spool"
-                T(title, 14.sp, weight = FontWeight.Medium)
+                T(p.externalTitle(i), 14.sp, weight = FontWeight.Medium)
                 T(if (s.known) s.name else "Not set", 12.sp, C.Sub)
             }
         }
