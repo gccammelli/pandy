@@ -111,4 +111,18 @@ class StudioPresetEdgeTest {
         assertTrue(s.loadError!!.isNotBlank()); assertNull(s.engine)
         assertEquals("Engine selection is unavailable.", assertFailsWith<IllegalStateException> { s.chooseEngine("bambu") }.message)
     }
+
+    @Test fun missingMachineFilesReportClearErrorAndAllowRememberedFallback() = runBlocking<Unit> {
+        val indexOnly = mapOf("profiles/BBL.json" to """{"machine_list":[{"name":"Bambu Lab Mochi 0.4 nozzle","sub_path":"m.json"}],"process_list":[],"filament_list":[]}""")
+        val s = Studio(StudioTestHost(indexOnly), this); s.load().join()
+        assertEquals("No printer profiles were found.", s.loadError); assertNull(s.engine)
+        val fallbackHost = object : Platform by Engines(files, saved = "orca", orcaWorks = true) {
+            override fun forEngine(id: String): Platform = if (id != "orca") this else object : Platform by this {
+                override suspend fun engineInfo() = EngineInfo("2", "e2", "r2", "orca", "OrcaSlicer")
+                override suspend fun profiles(): ProfileSource = ProfileSource { indexOnly[it] }
+            }
+        }
+        val recovered = Studio(fallbackHost, this); recovered.load().join()
+        assertEquals("bambu", recovered.engine?.id); assertNull(recovered.loadError)
+    }
 }

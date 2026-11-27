@@ -104,7 +104,7 @@ class Studio(private var platform: Platform, private val scope: CoroutineScope) 
             }
             // A remembered engine that no longer loads must not lock the tab: open with the plugin's own
             // default instead. The choice stays saved, so the engine is back once it works again.
-            val (lib, loadedSchema) = try {
+            val (lib, loadedPrinters, loadedSchema) = try {
                 if (remembered) info = platform.engineInfo()
                 open()
             } catch (e: Exception) {
@@ -115,14 +115,16 @@ class Studio(private var platform: Platform, private val scope: CoroutineScope) 
             }
             schema = loadedSchema
             library = lib
-            printers = lib.printers()
+            printers = loadedPrinters
             plate = BuildPlate.values().firstOrNull { it.slicerName == platform.loadSetting("plate") } ?: BuildPlate.TEXTURED_PEI
             val saved = platform.loadSetting("printer")
             val requested = printers.flatMap { it.nozzles }.firstOrNull { it.name == preferredPrinter }
             val p = (if (preferRequested) requested else null)
                 ?: printers.flatMap { it.nozzles }.firstOrNull { it.name == saved }
                 ?: printers.flatMap { it.nozzles }.firstOrNull { it.name == preferredPrinter }
-                ?: printers.flatMap { it.nozzles }.firstOrNull { it.name == "Bambu Lab X1 Carbon 0.4 nozzle" } ?: printers.first().nozzles.first()
+                ?: printers.flatMap { it.nozzles }.firstOrNull { it.name == "Bambu Lab X1 Carbon 0.4 nozzle" }
+                ?: printers.firstOrNull()?.nozzles?.firstOrNull()
+                ?: error("No printer profiles were found.")
             choosePrinter(p)
             engine = info
             if (!remembered || platform !== root) root.saveSetting("engine", info.id)
@@ -130,10 +132,15 @@ class Studio(private var platform: Platform, private val scope: CoroutineScope) 
         loading = false
     }
 
-    private suspend fun open(): Pair<PresetLibrary, io.github.gccammelli.pandy.studio.slicer.Schema> {
+    private suspend fun open(): Triple<PresetLibrary, List<PrinterModel>, io.github.gccammelli.pandy.studio.slicer.Schema> {
         val source = platform.profiles()
-        val lib = withContext(Dispatchers.Default) { PresetLibrary(source).also { it.printers() } }
-        return lib to withContext(Dispatchers.Default) { io.github.gccammelli.pandy.studio.slicer.Schema.load(source) }
+        val (lib, loadedPrinters) = withContext(Dispatchers.Default) {
+            val l = PresetLibrary(source)
+            val p = l.printers()
+            require(p.isNotEmpty()) { "No printer profiles were found." }
+            l to p
+        }
+        return Triple(lib, loadedPrinters, withContext(Dispatchers.Default) { io.github.gccammelli.pandy.studio.slicer.Schema.load(source) })
     }
 
     fun choosePrinter(p: Preset) {

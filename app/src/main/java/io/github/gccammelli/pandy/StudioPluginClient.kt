@@ -20,6 +20,8 @@ import io.github.gccammelli.pandy.studio.slicer.StudioEngine
 import io.github.gccammelli.pandy.studio.slicer.pluginRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -104,7 +106,8 @@ class StudioPluginClient(private val context: Context, val engineId: String = "b
     }
 
     suspend fun resources(): File {
-        val dir = File(context.cacheDir, "studio-profiles/$engineId")
+        // Keep extracted profiles out of cacheDir so Android cannot silently evict preset files behind .complete.
+        val dir = File(context.noBackupFilesDir, "studio-profiles/$engineId")
         val archive = File(context.cacheDir, "studio-resources-${UUID.randomUUID()}.zip")
         try {
             val pfd = ParcelFileDescriptor.open(archive, ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_TRUNCATE or ParcelFileDescriptor.MODE_READ_WRITE)
@@ -116,26 +119,30 @@ class StudioPluginClient(private val context: Context, val engineId: String = "b
                 val hash = digest.digest().joinToString("") { "%02x".format(it) }
                 val version = studioResourceVersion(engineId, metadata, hash, advertisedResourceVersion)
                 val target = File(dir, hash)
-                if (!File(target, ".complete").exists()) {
-                    val partial = File(dir, "$hash.tmp"); partial.deleteRecursively(); partial.mkdirs()
-                    try {
-                        var count = 0; var total = 0L
-                        ZipInputStream(archive.inputStream().buffered()).use { zip ->
-                            while (true) {
-                                val entry = zip.nextEntry ?: break
-                                require(++count <= 10_000) { "Too many profile files." }
-                                val dest = File(partial, entry.name).canonicalFile
-                                require(dest.path.startsWith(partial.canonicalPath + File.separator)) { "Invalid profile path." }
-                                if (entry.isDirectory) dest.mkdirs() else {
-                                    dest.parentFile?.mkdirs()
-                                    dest.outputStream().use { out -> val buf = ByteArray(65536); while (true) { val n = zip.read(buf); if (n < 0) break; total += n; require(total <= 250_000_000) { "Profiles are too large." }; out.write(buf, 0, n) } }
+                resourceInstallLock.withLock {
+                    if (!studioProfileTreeComplete(target, engineId)) {
+                        val partial = File(dir, "$hash-${UUID.randomUUID()}.tmp"); partial.deleteRecursively(); partial.mkdirs()
+                        try {
+                            var count = 0; var total = 0L
+                            ZipInputStream(archive.inputStream().buffered()).use { zip ->
+                                while (true) {
+                                    val entry = zip.nextEntry ?: break
+                                    require(++count <= 10_000) { "Too many profile files." }
+                                    val dest = File(partial, entry.name).canonicalFile
+                                    require(dest.path.startsWith(partial.canonicalPath + File.separator)) { "Invalid profile path." }
+                                    if (entry.isDirectory) dest.mkdirs() else {
+                                        dest.parentFile?.mkdirs()
+                                        dest.outputStream().use { out -> val buf = ByteArray(65536); while (true) { val n = zip.read(buf); if (n < 0) break; total += n; require(total <= 250_000_000) { "Profiles are too large." }; out.write(buf, 0, n) } }
+                                    }
+                                    zip.closeEntry()
                                 }
-                                zip.closeEntry()
                             }
-                        }
-                        File(partial, ".complete").writeText(hash)
-                        target.deleteRecursively(); check(partial.renameTo(target)) { "Could not install slicer profiles." }
-                    } finally { partial.deleteRecursively() }
+                            File(partial, ".complete").writeText(hash)
+                            check(studioProfileTreeComplete(partial, engineId)) { "Slicer profiles are incomplete." }
+                            target.deleteRecursively(); check(partial.renameTo(target)) { "Could not install slicer profiles." }
+                        } finally { partial.deleteRecursively() }
+                    }
+                    runCatching { File(context.cacheDir, "studio-profiles").takeIf { it.exists() }?.deleteRecursively() }
                 }
                 loadedResourceVersion = version
                 target
@@ -192,5 +199,8 @@ class StudioPluginClient(private val context: Context, val engineId: String = "b
             return withContext(Dispatchers.IO) { require(output.length() in 1..100_000_000L) { "Invalid sliced file." }; output.readBytes() to response }
         } finally { input.delete(); output.delete() }
     }
-    companion object { private const val ACTION = "io.github.gccammelli.pandy.slicer.BIND_V1" }
+    companion object {
+        private const val ACTION = "io.github.gccammelli.pandy.slicer.BIND_V1"
+        private val resourceInstallLock = Mutex()
+    }
 }
