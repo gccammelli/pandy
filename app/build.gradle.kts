@@ -13,8 +13,8 @@ android {
         manifestPlaceholders["slicerPackage"] = "io.github.gccammelli.pandy.slicer" + if (providers.gradleProperty("pandy.testbed").isPresent) ".testbed" else ""
         minSdk = 26
         targetSdk = 36
-        versionCode = 35
-        versionName = "1.3.5"
+        versionCode = 36
+        versionName = "1.3.6"
     }
 
     buildTypes {
